@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "created_at": "2026-05-07T00:00:00.000Z",
-  "updated_at": "2026-05-07T18:51:48.686Z",
+  "updated_at": "2026-05-07T19:06:27.891Z",
   "project_key": "babylon-2026",
   "mission_layer": "Persistent Production Memory + Cinematic Video Intelligence",
   "roadmap_systems": [
@@ -411,7 +411,10 @@
     "Preserve continuity context for sequence-wave-transition-001-return while keeping local execution disabled.",
     "Keep loader-wan-2.1-t2v-q8 activation simulated-only and governance-bound.",
     "Keep loader-ltx-video-img2vid-int8 activation simulated-only and governance-bound.",
-    "Keep loader-hunyuan-video-13b-planned activation simulated-only and governance-bound."
+    "Keep loader-hunyuan-video-13b-planned activation simulated-only and governance-bound.",
+    "Keep loader-wan-2.1-t2v-q8 inside dry bootstrap boundaries with inference and rendering disabled.",
+    "Keep loader-ltx-video-img2vid-int8 inside dry bootstrap boundaries with inference and rendering disabled.",
+    "Keep loader-hunyuan-video-13b-planned inside dry bootstrap boundaries with inference and rendering disabled."
   ],
   "generation_jobs": [],
   "generation_job_history": [],
@@ -678,6 +681,58 @@
       "status": "dependency-review"
     }
   ],
+  "controlled_runtime_profiles": [
+    {
+      "profile_id": "low_vram_safe",
+      "display_name": "Low VRAM Safe",
+      "summary": "Favor serialized, low-footprint dry initialization checks when VRAM headroom is constrained.",
+      "routing_mode": "offline-planning-mode",
+      "governance_notes": [
+        "Keep VRAM reservation dry only.",
+        "Do not promote beyond dry initialization while VRAM blockers remain."
+      ]
+    },
+    {
+      "profile_id": "offline_safe",
+      "display_name": "Offline Safe",
+      "summary": "Prefer bounded offline bootstrap validation when local-only readiness is still incomplete.",
+      "routing_mode": "offline-planning-mode",
+      "governance_notes": [
+        "No network dependency should be introduced.",
+        "Execution remains blocked even if bootstrap checks pass."
+      ]
+    },
+    {
+      "profile_id": "continuity_priority",
+      "display_name": "Continuity Priority",
+      "summary": "Bias future bridge planning toward continuity-preserving loaders and pipelines.",
+      "routing_mode": "future-local-inference-mode",
+      "governance_notes": [
+        "Continuity blockers override speed optimizations.",
+        "Rendering remains disabled until continuity-safe activation is reviewed."
+      ]
+    },
+    {
+      "profile_id": "cloud_hybrid_safe",
+      "display_name": "Cloud Hybrid Safe",
+      "summary": "Preserve a safe cloud-hybrid fallback when local bootstrap integrity remains incomplete.",
+      "routing_mode": "balanced-comparison-mode",
+      "governance_notes": [
+        "Hybrid planning must remain advisory only.",
+        "Do not bypass local governance or approval flow."
+      ]
+    },
+    {
+      "profile_id": "cpu_fallback_safe",
+      "display_name": "CPU Fallback Safe",
+      "summary": "Keep a non-accelerated fallback profile visible for conservative dry initialization planning.",
+      "routing_mode": "offline-planning-mode",
+      "governance_notes": [
+        "CPU fallback is planning-only for this layer.",
+        "No inference or rendering may start from the fallback profile."
+      ]
+    }
+  ],
   "local_runtime_capability_registry": [
     {
       "runtime_id": "comfyui-local-video-lane",
@@ -786,7 +841,8 @@
     ],
     "ffmpeg_paths": [
       "C:/ffmpeg/bin/ffmpeg.exe",
-      "C:/Program Files/ffmpeg/bin/ffmpeg.exe"
+      "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
+      "tools/ffmpeg/ffmpeg.exe"
     ],
     "python_paths": [
       ".venv/Scripts/python.exe",
@@ -804,7 +860,119 @@
       "runner_artifacts/models"
     ]
   },
-  "local_runtime_probe_snapshots": [],
+  "local_runtime_probe_snapshots": [
+    {
+      "snapshot_id": "runtime-probe-20260507190627",
+      "recorded_at": "2026-05-07T19:06:27.847Z",
+      "runtime_launch_enabled": false,
+      "gpu_vendor": "windows-gpu-visible",
+      "storage_free_gb_estimate": 180,
+      "results": [
+        {
+          "probe_id": "cuda-installation",
+          "status": "not-detected",
+          "detail": "CUDA installation paths were not detected.",
+          "candidate_paths": [
+            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA",
+            "C:\\Program Files\\NVIDIA GPU Computing Toolkit"
+          ],
+          "detected_paths": [],
+          "observed_value": null,
+          "blockers": [
+            "CUDA install root not found in bounded hints."
+          ]
+        },
+        {
+          "probe_id": "gpu-vendor-visibility",
+          "status": "derived",
+          "detail": "GPU vendor visibility is inferred as windows-gpu-visible.",
+          "candidate_paths": [],
+          "detected_paths": [],
+          "observed_value": "windows-gpu-visible",
+          "blockers": []
+        },
+        {
+          "probe_id": "vram-reporting-capability",
+          "status": "derived",
+          "detail": "Stored hardware profiles expose up to 12GB VRAM.",
+          "candidate_paths": [],
+          "detected_paths": [],
+          "observed_value": "12GB",
+          "blockers": []
+        },
+        {
+          "probe_id": "ffmpeg-availability",
+          "status": "not-detected",
+          "detail": "FFmpeg executable was not detected in bounded paths or PATH.",
+          "candidate_paths": [
+            "C:\\ffmpeg\\bin\\ffmpeg.exe",
+            "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+            "E:\\AI projects 2025\\AI-E\\tools\\ffmpeg\\ffmpeg.exe"
+          ],
+          "detected_paths": [],
+          "observed_value": null,
+          "blockers": [
+            "FFmpeg executable is missing from bounded search paths."
+          ]
+        },
+        {
+          "probe_id": "python-runtime-presence",
+          "status": "detected",
+          "detail": "Detected 2 Python runtime path hint(s).",
+          "candidate_paths": [
+            "E:\\AI projects 2025\\AI-E\\.venv\\Scripts\\python.exe",
+            "C:\\Python312\\python.exe",
+            "C:\\Python311\\python.exe"
+          ],
+          "detected_paths": [
+            "E:\\AI projects 2025\\AI-E\\.venv\\Scripts\\python.exe",
+            "E:\\Users\\Fred C\\AppData\\Local\\Programs\\Python\\Python311\\python.exe"
+          ],
+          "observed_value": "E:\\AI projects 2025\\AI-E\\.venv\\Scripts\\python.exe",
+          "blockers": []
+        },
+        {
+          "probe_id": "inference-runtime-presence",
+          "status": "not-detected",
+          "detail": "Inference runtime folders were not detected in bounded configured paths.",
+          "candidate_paths": [
+            "E:\\AI projects 2025\\AI-E\\ComfyUI",
+            "E:\\AI projects 2025\\AI-E\\.venv\\Lib\\site-packages\\diffusers",
+            "E:\\AI projects 2025\\AI-E\\.venv\\Lib\\site-packages\\torch"
+          ],
+          "detected_paths": [],
+          "observed_value": null,
+          "blockers": [
+            "Inference runtime folder is not visible to bounded inspection."
+          ]
+        },
+        {
+          "probe_id": "local-model-directory-presence",
+          "status": "not-detected",
+          "detail": "Local model directories were not detected in bounded configured paths.",
+          "candidate_paths": [
+            "E:\\AI projects 2025\\AI-E\\models",
+            "E:\\AI projects 2025\\AI-E\\data\\models",
+            "E:\\AI projects 2025\\AI-E\\runner_artifacts\\models"
+          ],
+          "detected_paths": [],
+          "observed_value": null,
+          "blockers": [
+            "Local model directory is not visible to bounded inspection."
+          ]
+        },
+        {
+          "probe_id": "storage-space-estimate",
+          "status": "derived",
+          "detail": "Stored hardware profiles expose up to 180GB free storage.",
+          "candidate_paths": [],
+          "detected_paths": [],
+          "observed_value": "180GB",
+          "blockers": []
+        }
+      ]
+    }
+  ],
   "frame_generation_stage_registry": [
     {
       "stage_id": "prompt-compilation",
@@ -1121,6 +1289,135 @@
     }
   ],
   "readiness_delta_tracking_history": [
+    {
+      "tracking_id": "readiness-delta-20260507190627",
+      "source": "controlled-local-inference-bootstrap",
+      "recorded_at": "2026-05-07T19:06:27.882Z",
+      "milestones": [
+        {
+          "milestone": "local-inference-readiness",
+          "previous_percentage": 54,
+          "current_percentage": 70,
+          "delta": 16,
+          "previous_confidence": "medium",
+          "current_confidence": "high",
+          "blockers_cleared": [
+            "python runtime detection"
+          ],
+          "blockers_introduced": [
+            "dry runtime bootstrap evidence"
+          ],
+          "confidence_trend": "up",
+          "architectural_readiness_notes": [
+            "runtime probe normalization -> local readiness gate -> manual local bridge preview",
+            "Next milestone: undefined",
+            "Missing dependencies: inference runtime detection, local model directory detection, activation-ready loader, dry runtime bootstrap evidence"
+          ]
+        },
+        {
+          "milestone": "local-runtime-readiness",
+          "previous_percentage": 8,
+          "current_percentage": 55,
+          "delta": 47,
+          "previous_confidence": "low",
+          "current_confidence": "medium",
+          "blockers_cleared": [
+            "VRAM reporting evidence",
+            "storage estimate evidence",
+            "runtime activation simulation evidence"
+          ],
+          "blockers_introduced": [
+            "controlled bootstrap evidence"
+          ],
+          "confidence_trend": "up",
+          "architectural_readiness_notes": [
+            "path hints -> runtime probe snapshot -> constraint modeling",
+            "Next milestone: undefined",
+            "Missing dependencies: controlled bootstrap evidence"
+          ]
+        },
+        {
+          "milestone": "local-frame-generation-readiness",
+          "previous_percentage": 68,
+          "current_percentage": 75,
+          "delta": 7,
+          "previous_confidence": "medium",
+          "current_confidence": "high",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "up",
+          "architectural_readiness_notes": [
+            "frame stage registry -> runtime constraints -> manual-only frame bridge",
+            "Next milestone: undefined",
+            "Missing dependencies: frame synthesis contract, frame interpolation contract"
+          ]
+        },
+        {
+          "milestone": "local-renderer-readiness",
+          "previous_percentage": 54,
+          "current_percentage": 67,
+          "delta": 13,
+          "previous_confidence": "medium",
+          "current_confidence": "medium",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "renderer roadmap -> ffmpeg evidence -> offline packaging manifest",
+            "Next milestone: undefined",
+            "Missing dependencies: local upscaling scaffold"
+          ]
+        },
+        {
+          "milestone": "continuity-preserving-local-generation",
+          "previous_percentage": 73,
+          "current_percentage": 73,
+          "delta": 0,
+          "previous_confidence": "high",
+          "current_confidence": "high",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "continuity rules -> temporal stage registry -> continuity-state reuse roadmap",
+            "Next milestone: undefined",
+            "No missing dependencies currently recorded."
+          ]
+        },
+        {
+          "milestone": "hybrid-local-cloud-orchestration",
+          "previous_percentage": 81,
+          "current_percentage": 86,
+          "delta": 5,
+          "previous_confidence": "high",
+          "current_confidence": "high",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "runtime probes -> constraints -> hybrid routing plans -> governed escalation",
+            "Next milestone: undefined",
+            "Missing dependencies: verified local provider evidence"
+          ]
+        },
+        {
+          "milestone": "self-sustaining-generation-readiness",
+          "previous_percentage": 36,
+          "current_percentage": 42,
+          "delta": 6,
+          "previous_confidence": "low",
+          "current_confidence": "low",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "manual-only local bridge -> reviewed execution receipts -> separate policy approval",
+            "Next milestone: undefined",
+            "Missing dependencies: policy approval for autonomy, reviewed execution bridge, governed recovery loop"
+          ]
+        }
+      ]
+    },
     {
       "tracking_id": "readiness-delta-20260507185148",
       "source": "runtime-activation-simulation",
@@ -1514,6 +1811,44 @@
             "Missing dependencies: policy approval for autonomy, reviewed execution bridge, governed recovery loop"
           ]
         }
+      ]
+    }
+  ],
+  "execution_boundary_status_history": [
+    {
+      "boundary_id": "execution-boundary-20260507190627",
+      "source": "controlled-local-inference-bootstrap",
+      "recorded_at": "2026-05-07T19:06:27.881Z",
+      "current_status": "partially_activated",
+      "tracked_statuses": [
+        "simulated",
+        "partially_activated",
+        "inference_disabled",
+        "rendering_disabled",
+        "execution_blocked"
+      ],
+      "activation_blockers": [
+        "No configured runtime path is visible for dry bootstrap review.",
+        "FFmpeg visibility is still missing for dry bootstrap review.",
+        "No model directory is visible for dry initialization checks.",
+        "No modeled loader path currently resolves to a visible model directory.",
+        "One or more loader/runtime dependency sets remain incompatible or incomplete."
+      ],
+      "disabled_execution_reasons": [
+        "Actual inference execution remains disabled in this layer.",
+        "Frame rendering remains disabled in this layer.",
+        "Sandbox-only governance explicitly blocks execution."
+      ],
+      "next_activation_milestone": "Clear dry bootstrap and integrity blockers before any reviewed bridge can attempt dry model initialization.",
+      "missing_dependencies": [
+        "runtime path visibility",
+        "validated model path",
+        "compatible dependency set"
+      ],
+      "governance_restrictions": [
+        "Local execution planning remains manual-only and non-autonomous.",
+        "No runtime launch, model download, or render job may happen from readiness helpers.",
+        "Append-only approval and continuity governance must remain unchanged before any future local bridge is considered."
       ]
     }
   ],
@@ -2174,6 +2509,452 @@
       "readiness_tracking_id": "readiness-delta-20260507185148",
       "hybrid_escalation": null,
       "recorded_at": "2026-05-07T18:51:48.683Z"
+    },
+    {
+      "simulation_id": "bootstrap-sandbox-1778180787887",
+      "sandbox_kind": "controlled-local-inference-bootstrap",
+      "sequence_id": "controlled-local-bootstrap-planning-only",
+      "routing_mode": "offline-planning-mode",
+      "provider": "LocalFutureProvider",
+      "execution_enabled": false,
+      "queued_job_ids": [
+        "loader-wan-2.1-t2v-q8",
+        "loader-ltx-video-img2vid-int8",
+        "loader-hunyuan-video-13b-planned"
+      ],
+      "approved_job_ids": [],
+      "failed_job_ids": [
+        "invalid-model-paths-1",
+        "incompatible-dependency-sets-2"
+      ],
+      "retry_job_ids": [
+        "loader-wan-2.1-t2v-q8",
+        "loader-ltx-video-img2vid-int8",
+        "loader-hunyuan-video-13b-planned"
+      ],
+      "continuity_issue_count": 1,
+      "asset_reuse_decisions": [
+        "Keep loader-wan-2.1-t2v-q8 inside dry bootstrap boundaries with inference and rendering disabled.",
+        "Keep loader-ltx-video-img2vid-int8 inside dry bootstrap boundaries with inference and rendering disabled.",
+        "Keep loader-hunyuan-video-13b-planned inside dry bootstrap boundaries with inference and rendering disabled."
+      ],
+      "loader_registry": [
+        {
+          "loader_id": "loader-wan-2.1-t2v-q8",
+          "model_name": "Wan 2.1 Text-to-Video Q8",
+          "model_type": "text-to-video",
+          "model_path": "models/wan-2.1-t2v-q8",
+          "runtime_target": "comfyui-local-video-lane",
+          "estimated_vram": 12,
+          "estimated_load_time": 45,
+          "dependency_requirements": [
+            "python-runtime",
+            "comfyui-runtime",
+            "model-weights",
+            "ffmpeg"
+          ],
+          "supported_resolution": [
+            "720p",
+            "1080p"
+          ],
+          "supported_duration": 6,
+          "continuity_support": "partial",
+          "offline_viability": true,
+          "status": "dependency-review"
+        },
+        {
+          "loader_id": "loader-ltx-video-img2vid-int8",
+          "model_name": "LTX Video Image-to-Video INT8",
+          "model_type": "image-to-video",
+          "model_path": "models/ltx-video-img2vid-int8",
+          "runtime_target": "diffusers-python-pipeline",
+          "estimated_vram": 10,
+          "estimated_load_time": 35,
+          "dependency_requirements": [
+            "python-runtime",
+            "diffusers-runtime",
+            "model-weights"
+          ],
+          "supported_resolution": [
+            "720p",
+            "1080p"
+          ],
+          "supported_duration": 8,
+          "continuity_support": "limited",
+          "offline_viability": true,
+          "status": "dependency-review"
+        },
+        {
+          "loader_id": "loader-hunyuan-video-13b-planned",
+          "model_name": "Hunyuan Video 13B Planned Slot",
+          "model_type": "text-to-video",
+          "model_path": "models/hunyuan-video-13b-planned",
+          "runtime_target": "comfyui-local-video-lane",
+          "estimated_vram": 16,
+          "estimated_load_time": 80,
+          "dependency_requirements": [
+            "python-runtime",
+            "comfyui-runtime",
+            "model-weights",
+            "cuda-runtime"
+          ],
+          "supported_resolution": [
+            "720p"
+          ],
+          "supported_duration": 5,
+          "continuity_support": "partial",
+          "offline_viability": false,
+          "status": "dependency-review"
+        }
+      ],
+      "dry_runtime_bootstrap": {
+        "valid": false,
+        "checks": [
+          {
+            "check": "runtime-path-validity",
+            "passed": false,
+            "detail": "No configured runtime path is visible for dry bootstrap review.",
+            "candidate_paths": [
+              "E:\\AI projects 2025\\AI-E\\ComfyUI",
+              "E:\\AI projects 2025\\AI-E\\.venv\\Lib\\site-packages\\diffusers",
+              "E:\\AI projects 2025\\AI-E\\.venv\\Lib\\site-packages\\torch"
+            ],
+            "detected_paths": []
+          },
+          {
+            "check": "runtime-binary-presence",
+            "passed": true,
+            "detail": "Detected 2 runtime binary candidate(s) for dry initialization review.",
+            "candidate_paths": [
+              "E:\\AI projects 2025\\AI-E\\.venv\\Scripts\\python.exe",
+              "C:\\Python312\\python.exe",
+              "C:\\Python311\\python.exe",
+              "E:\\AI projects 2025\\AI-E\\ComfyUI\\main.py"
+            ],
+            "detected_paths": [
+              "E:\\AI projects 2025\\AI-E\\.venv\\Scripts\\python.exe",
+              "E:\\Users\\Fred C\\AppData\\Local\\Programs\\Python\\Python311\\python.exe"
+            ]
+          },
+          {
+            "check": "python-environment-visibility",
+            "passed": true,
+            "detail": "A Python environment is visible to bounded dry bootstrap checks.",
+            "candidate_paths": [
+              "E:\\AI projects 2025\\AI-E\\.venv\\Scripts\\python.exe",
+              "C:\\Python312\\python.exe",
+              "C:\\Python311\\python.exe"
+            ],
+            "detected_paths": [
+              "E:\\AI projects 2025\\AI-E\\.venv\\Scripts\\python.exe",
+              "E:\\Users\\Fred C\\AppData\\Local\\Programs\\Python\\Python311\\python.exe"
+            ]
+          },
+          {
+            "check": "ffmpeg-visibility",
+            "passed": false,
+            "detail": "FFmpeg visibility is still missing for dry bootstrap review.",
+            "candidate_paths": [
+              "C:\\ffmpeg\\bin\\ffmpeg.exe",
+              "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+              "E:\\AI projects 2025\\AI-E\\tools\\ffmpeg\\ffmpeg.exe"
+            ],
+            "detected_paths": []
+          },
+          {
+            "check": "model-directory-visibility",
+            "passed": false,
+            "detail": "No model directory is visible for dry initialization checks.",
+            "candidate_paths": [
+              "E:\\AI projects 2025\\AI-E\\models",
+              "E:\\AI projects 2025\\AI-E\\data\\models",
+              "E:\\AI projects 2025\\AI-E\\runner_artifacts\\models",
+              "E:\\AI projects 2025\\AI-E\\models\\wan-2.1-t2v-q8",
+              "E:\\AI projects 2025\\AI-E\\models\\ltx-video-img2vid-int8",
+              "E:\\AI projects 2025\\AI-E\\models\\hunyuan-video-13b-planned"
+            ],
+            "detected_paths": []
+          },
+          {
+            "check": "dependency-file-visibility",
+            "passed": true,
+            "detail": "Detected 2 dependency file candidate(s) for integrity review.",
+            "candidate_paths": [
+              "E:\\AI projects 2025\\AI-E\\requirements.txt",
+              "E:\\AI projects 2025\\AI-E\\web\\package.json",
+              "E:\\AI projects 2025\\AI-E\\package.json"
+            ],
+            "detected_paths": [
+              "E:\\AI projects 2025\\AI-E\\requirements.txt",
+              "E:\\AI projects 2025\\AI-E\\web\\package.json"
+            ]
+          },
+          {
+            "check": "storage-readiness",
+            "passed": true,
+            "detail": "Stored hardware estimates indicate storage headroom for dry bootstrap planning.",
+            "candidate_paths": [],
+            "detected_paths": [
+              "stored-hardware-estimate"
+            ]
+          },
+          {
+            "check": "writable-cache-locations",
+            "passed": true,
+            "detail": "Detected 1 writable cache location(s) for dry bootstrap planning.",
+            "candidate_paths": [
+              "E:\\AI projects 2025\\AI-E\\models",
+              "E:\\AI projects 2025\\AI-E\\data\\models",
+              "E:\\AI projects 2025\\AI-E\\runner_artifacts\\models",
+              "E:\\AI projects 2025\\AI-E\\.aie",
+              "E:\\AI projects 2025\\AI-E\\runner_artifacts"
+            ],
+            "detected_paths": [
+              "E:\\AI projects 2025\\AI-E\\runner_artifacts"
+            ]
+          }
+        ],
+        "activation_blockers": [
+          "No configured runtime path is visible for dry bootstrap review.",
+          "FFmpeg visibility is still missing for dry bootstrap review.",
+          "No model directory is visible for dry initialization checks."
+        ],
+        "missing_dependencies": [
+          "runtime path visibility"
+        ]
+      },
+      "execution_boundary_status": {
+        "boundary_id": "execution-boundary-20260507190627",
+        "source": "controlled-local-inference-bootstrap",
+        "recorded_at": "2026-05-07T19:06:27.881Z",
+        "current_status": "partially_activated",
+        "tracked_statuses": [
+          "simulated",
+          "partially_activated",
+          "inference_disabled",
+          "rendering_disabled",
+          "execution_blocked"
+        ],
+        "activation_blockers": [
+          "No configured runtime path is visible for dry bootstrap review.",
+          "FFmpeg visibility is still missing for dry bootstrap review.",
+          "No model directory is visible for dry initialization checks.",
+          "No modeled loader path currently resolves to a visible model directory.",
+          "One or more loader/runtime dependency sets remain incompatible or incomplete."
+        ],
+        "disabled_execution_reasons": [
+          "Actual inference execution remains disabled in this layer.",
+          "Frame rendering remains disabled in this layer.",
+          "Sandbox-only governance explicitly blocks execution."
+        ],
+        "next_activation_milestone": "Clear dry bootstrap and integrity blockers before any reviewed bridge can attempt dry model initialization.",
+        "missing_dependencies": [
+          "runtime path visibility",
+          "validated model path",
+          "compatible dependency set"
+        ],
+        "governance_restrictions": [
+          "Local execution planning remains manual-only and non-autonomous.",
+          "No runtime launch, model download, or render job may happen from readiness helpers.",
+          "Append-only approval and continuity governance must remain unchanged before any future local bridge is considered."
+        ]
+      },
+      "runtime_integrity_validation": {
+        "valid": false,
+        "issues": [
+          {
+            "code": "invalid-model-paths",
+            "detail": "No modeled loader path currently resolves to a visible model directory."
+          },
+          {
+            "code": "incompatible-dependency-sets",
+            "detail": "One or more loader/runtime dependency sets remain incompatible or incomplete."
+          }
+        ],
+        "blockers": [
+          "No modeled loader path currently resolves to a visible model directory.",
+          "One or more loader/runtime dependency sets remain incompatible or incomplete."
+        ],
+        "missing_dependencies": [
+          "validated model path",
+          "compatible dependency set"
+        ]
+      },
+      "activation_readiness_scoring": {
+        "recorded_at": "2026-05-07T19:06:27.888Z",
+        "scores": [
+          {
+            "dimension": "runtime-readiness",
+            "score": 55,
+            "confidence": "medium",
+            "blockers": [
+              "No configured runtime path is visible for dry bootstrap review.",
+              "FFmpeg visibility is still missing for dry bootstrap review.",
+              "No model directory is visible for dry initialization checks."
+            ],
+            "risk_level": "critical",
+            "trend": "accelerating"
+          },
+          {
+            "dimension": "loader-readiness",
+            "score": 35,
+            "confidence": "medium",
+            "blockers": [
+              "loader-wan-2.1-t2v-q8 remains dependency-review.",
+              "loader-ltx-video-img2vid-int8 remains dependency-review.",
+              "loader-hunyuan-video-13b-planned remains dependency-review."
+            ],
+            "risk_level": "critical",
+            "trend": "decelerating"
+          },
+          {
+            "dimension": "inference-readiness",
+            "score": 55,
+            "confidence": "high",
+            "blockers": [
+              "Actual inference execution remains disabled in this layer.",
+              "Frame rendering remains disabled in this layer.",
+              "Sandbox-only governance explicitly blocks execution."
+            ],
+            "risk_level": "critical",
+            "trend": "decelerating"
+          },
+          {
+            "dimension": "renderer-readiness",
+            "score": 67,
+            "confidence": "medium",
+            "blockers": [
+              "FFmpeg visibility is still missing for renderer packaging.",
+              "Actual inference execution remains disabled in this layer.",
+              "Frame rendering remains disabled in this layer.",
+              "Sandbox-only governance explicitly blocks execution."
+            ],
+            "risk_level": "critical",
+            "trend": "flat"
+          },
+          {
+            "dimension": "continuity-readiness",
+            "score": 73,
+            "confidence": "high",
+            "blockers": [
+              "loader-ltx-video-img2vid-int8 only has limited continuity support."
+            ],
+            "risk_level": "medium",
+            "trend": "flat"
+          },
+          {
+            "dimension": "offline-readiness",
+            "score": 65,
+            "confidence": "medium",
+            "blockers": [
+              "loader-hunyuan-video-13b-planned is not marked offline-viable."
+            ],
+            "risk_level": "medium",
+            "trend": "flat"
+          }
+        ]
+      },
+      "controlled_runtime_profiles": [
+        {
+          "profile_id": "low_vram_safe",
+          "display_name": "Low VRAM Safe",
+          "summary": "Favor serialized, low-footprint dry initialization checks when VRAM headroom is constrained.",
+          "routing_mode": "offline-planning-mode",
+          "governance_notes": [
+            "Keep VRAM reservation dry only.",
+            "Do not promote beyond dry initialization while VRAM blockers remain."
+          ],
+          "viable": true,
+          "reasons": [
+            "Keep VRAM reservation dry only.",
+            "Do not promote beyond dry initialization while VRAM blockers remain."
+          ],
+          "execution_boundary_status": "partially_activated"
+        },
+        {
+          "profile_id": "offline_safe",
+          "display_name": "Offline Safe",
+          "summary": "Prefer bounded offline bootstrap validation when local-only readiness is still incomplete.",
+          "routing_mode": "offline-planning-mode",
+          "governance_notes": [
+            "No network dependency should be introduced.",
+            "Execution remains blocked even if bootstrap checks pass."
+          ],
+          "viable": true,
+          "reasons": [
+            "No network dependency should be introduced.",
+            "Execution remains blocked even if bootstrap checks pass."
+          ],
+          "execution_boundary_status": "partially_activated"
+        },
+        {
+          "profile_id": "continuity_priority",
+          "display_name": "Continuity Priority",
+          "summary": "Bias future bridge planning toward continuity-preserving loaders and pipelines.",
+          "routing_mode": "future-local-inference-mode",
+          "governance_notes": [
+            "Continuity blockers override speed optimizations.",
+            "Rendering remains disabled until continuity-safe activation is reviewed."
+          ],
+          "viable": true,
+          "reasons": [
+            "Continuity blockers override speed optimizations.",
+            "Rendering remains disabled until continuity-safe activation is reviewed."
+          ],
+          "execution_boundary_status": "partially_activated"
+        },
+        {
+          "profile_id": "cloud_hybrid_safe",
+          "display_name": "Cloud Hybrid Safe",
+          "summary": "Preserve a safe cloud-hybrid fallback when local bootstrap integrity remains incomplete.",
+          "routing_mode": "balanced-comparison-mode",
+          "governance_notes": [
+            "Hybrid planning must remain advisory only.",
+            "Do not bypass local governance or approval flow."
+          ],
+          "viable": true,
+          "reasons": [
+            "Hybrid planning must remain advisory only.",
+            "Do not bypass local governance or approval flow."
+          ],
+          "execution_boundary_status": "partially_activated"
+        },
+        {
+          "profile_id": "cpu_fallback_safe",
+          "display_name": "CPU Fallback Safe",
+          "summary": "Keep a non-accelerated fallback profile visible for conservative dry initialization planning.",
+          "routing_mode": "offline-planning-mode",
+          "governance_notes": [
+            "CPU fallback is planning-only for this layer.",
+            "No inference or rendering may start from the fallback profile."
+          ],
+          "viable": true,
+          "reasons": [
+            "CPU fallback is planning-only for this layer.",
+            "No inference or rendering may start from the fallback profile."
+          ],
+          "execution_boundary_status": "partially_activated"
+        }
+      ],
+      "future_inference_activation": {
+        "dry_model_initialization": true,
+        "dry_vram_reservation": true,
+        "dry_scheduler_initialization": true,
+        "dry_pipeline_binding": true,
+        "dry_render_packaging": true,
+        "notes": [
+          "Dry model initialization remains non-executing and review-only.",
+          "Dry VRAM reservation remains a bookkeeping scaffold, not a real allocation.",
+          "Dry scheduler initialization remains simulated without constructing a live pipeline.",
+          "Dry pipeline binding remains descriptive until execution boundaries are explicitly relaxed.",
+          "Dry render packaging remains disabled behind FFmpeg visibility and governance review.",
+          "Current boundary status: partially_activated.",
+          "Integrity blockers must clear before any future dry initialization bridge expands."
+        ]
+      },
+      "readiness_tracking_id": "readiness-delta-20260507190627",
+      "hybrid_escalation": null,
+      "recorded_at": "2026-05-07T19:06:27.888Z"
     }
   ],
   "failed_generations": [

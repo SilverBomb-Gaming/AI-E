@@ -39,8 +39,10 @@ import {
   recordCinematicShotHistory,
   selectCinematicGenerationProviderRoute,
   simulateCinematicExecutionSandbox,
+  simulateCinematicControlledLocalInferenceBootstrap,
   simulateCinematicLocalInferenceExecutionSandbox,
   simulateCinematicLocalModelLoaderRuntimeActivation,
+  validateCinematicControlledLocalInferenceBootstrap,
   validateCinematicLocalExecutionSandbox,
   validateCinematicLocalRuntimeActivationSimulation,
   validateCinematicProviderPayload,
@@ -722,6 +724,84 @@ test("local model loader activation simulation remains deterministic and executi
     assert.equal(simulation.simulation.readiness_tracking_id, afterRecord.readiness_delta_tracking_history[0]?.tracking_id ?? null);
     assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "local-model-loader-runtime-activation-simulation"));
     assert.ok(afterRecord.readiness_delta_tracking_history.length >= 2);
+    assert.deepEqual(afterRecord.approval_audit_trail, beforeRecord.approval_audit_trail);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("controlled local inference bootstrap persists execution boundaries while keeping inference disabled", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-controlled-bootstrap-"));
+
+  try {
+    await ensureCinematicProductionMemoryInitialized(tempRoot);
+    await mkdir(path.join(tempRoot, ".venv", "Scripts"), { recursive: true });
+    await mkdir(path.join(tempRoot, "ComfyUI"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "wan-2.1-t2v-q8"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "ltx-video-img2vid-int8"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "hunyuan-video-13b-planned"), { recursive: true });
+    await mkdir(path.join(tempRoot, "tools", "ffmpeg"), { recursive: true });
+    await mkdir(path.join(tempRoot, ".aie"), { recursive: true });
+    await writeFile(path.join(tempRoot, ".venv", "Scripts", "python.exe"), "", "utf8");
+    await writeFile(path.join(tempRoot, "ComfyUI", "main.py"), "", "utf8");
+    await writeFile(path.join(tempRoot, "tools", "ffmpeg", "ffmpeg.exe"), "", "utf8");
+    await writeFile(path.join(tempRoot, "requirements.txt"), "torch\ndiffusers\n", "utf8");
+
+    await inspectCinematicLocalRuntimeEnvironment({
+      root: tempRoot,
+      persist: true,
+      pathHints: {
+        python_paths: [".venv/Scripts/python.exe"],
+        ffmpeg_paths: ["tools/ffmpeg/ffmpeg.exe"],
+        inference_runtime_paths: ["ComfyUI"],
+        local_model_paths: ["models"],
+      },
+    });
+
+    const beforeRecord = await readCinematicProductionMemory({ root: tempRoot });
+    const validation = await validateCinematicControlledLocalInferenceBootstrap({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const simulation = await simulateCinematicControlledLocalInferenceBootstrap({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const afterRecord = await readCinematicProductionMemory({ root: tempRoot });
+
+    assert.equal(validation.execution_enabled, false);
+    assert.equal(validation.readiness_delta.source, "controlled-local-inference-bootstrap");
+    assert.equal(validation.dry_runtime_bootstrap.valid, true);
+    assert.ok(validation.dry_runtime_bootstrap.checks.some((entry) => entry.check === "runtime-binary-presence" && entry.passed));
+    assert.ok(validation.execution_boundary_state.tracked_statuses.includes("simulated"));
+    assert.ok(validation.execution_boundary_state.tracked_statuses.includes("inference_disabled"));
+    assert.ok(validation.execution_boundary_state.tracked_statuses.includes("rendering_disabled"));
+    assert.ok(validation.execution_boundary_state.disabled_execution_reasons.length > 0);
+    assert.ok(validation.execution_boundary_state.next_activation_milestone.length > 0);
+    assert.equal(validation.runtime_integrity_validation.valid, false);
+    assert.ok(validation.runtime_integrity_validation.issues.some((entry) => entry.code === "incompatible-dependency-sets"));
+    assert.equal(validation.activation_readiness_scores.length, 6);
+    assert.ok(validation.activation_readiness_scores.some((entry) => entry.dimension === "offline-readiness"));
+    assert.ok(validation.controlled_runtime_profiles.some((entry) => entry.profile_id === "offline_safe"));
+    assert.ok(validation.future_inference_activation.dry_model_initialization);
+    assert.ok(validation.future_inference_activation.dry_pipeline_binding);
+
+    assert.equal(simulation.validation.execution_enabled, false);
+    assert.equal(simulation.simulation.sandbox_kind, "controlled-local-inference-bootstrap");
+    assert.equal(simulation.simulation.execution_enabled, false);
+    assert.ok(simulation.simulation.dry_runtime_bootstrap);
+    assert.ok(simulation.simulation.execution_boundary_status);
+    assert.ok(simulation.simulation.runtime_integrity_validation);
+    assert.ok(simulation.simulation.activation_readiness_scoring);
+    assert.ok(simulation.simulation.controlled_runtime_profiles);
+    assert.ok(simulation.simulation.future_inference_activation);
+    assert.equal(simulation.simulation.readiness_tracking_id, afterRecord.readiness_delta_tracking_history[0]?.tracking_id ?? null);
+    assert.ok(afterRecord.execution_boundary_status_history.length >= 2);
+    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap"));
     assert.deepEqual(afterRecord.approval_audit_trail, beforeRecord.approval_audit_trail);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

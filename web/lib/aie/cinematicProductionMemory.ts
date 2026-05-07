@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { constants, existsSync, readFileSync } from "node:fs";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { resolveRepoRoot, resolveRepoRootSync } from "./repoContext";
@@ -503,7 +503,7 @@ export type CinematicGenerationJobHistoryEntry = {
 
 export type CinematicSandboxSimulationRecord = {
   simulation_id: string;
-  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation";
+  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation" | "controlled-local-inference-bootstrap";
   sequence_id: string;
   routing_mode: CinematicProviderRoutingMode;
   provider: CinematicGenerationProvider;
@@ -523,6 +523,12 @@ export type CinematicSandboxSimulationRecord = {
   compatibility_validation?: CinematicModelRuntimeCompatibilityValidation;
   activation_recovery_plan?: CinematicActivationFailureRecoveryPlan;
   future_activation_plan?: CinematicFutureActivationPlan;
+  dry_runtime_bootstrap?: CinematicDryRuntimeBootstrapValidation;
+  execution_boundary_status?: CinematicExecutionBoundaryState;
+  runtime_integrity_validation?: CinematicRuntimeIntegrityValidation;
+  activation_readiness_scoring?: CinematicActivationReadinessScoring;
+  controlled_runtime_profiles?: CinematicControlledRuntimeProfileEvaluation[];
+  future_inference_activation?: CinematicFutureInferenceActivationPlan;
   readiness_tracking_id?: string | null;
   hybrid_escalation?: CinematicHybridEscalationSimulation | null;
   recorded_at: string;
@@ -797,6 +803,129 @@ export type CinematicActivationFailureRecoveryPlan = {
   next_safe_steps: CinematicActivationRecoveryStep[];
 };
 
+export type CinematicExecutionBoundaryStatus =
+  | "simulated"
+  | "dry_initialized"
+  | "partially_activated"
+  | "inference_disabled"
+  | "rendering_disabled"
+  | "execution_blocked";
+
+export type CinematicExecutionBoundaryState = {
+  boundary_id: string;
+  source: "controlled-local-inference-bootstrap" | "runtime-activation-simulation";
+  recorded_at: string;
+  current_status: CinematicExecutionBoundaryStatus;
+  tracked_statuses: CinematicExecutionBoundaryStatus[];
+  activation_blockers: string[];
+  disabled_execution_reasons: string[];
+  next_activation_milestone: string;
+  missing_dependencies: string[];
+  governance_restrictions: string[];
+};
+
+export type CinematicDryRuntimeBootstrapCheckName =
+  | "runtime-path-validity"
+  | "runtime-binary-presence"
+  | "python-environment-visibility"
+  | "ffmpeg-visibility"
+  | "model-directory-visibility"
+  | "dependency-file-visibility"
+  | "storage-readiness"
+  | "writable-cache-locations";
+
+export type CinematicDryRuntimeBootstrapCheck = {
+  check: CinematicDryRuntimeBootstrapCheckName;
+  passed: boolean;
+  detail: string;
+  candidate_paths: string[];
+  detected_paths: string[];
+};
+
+export type CinematicDryRuntimeBootstrapValidation = {
+  valid: boolean;
+  checks: CinematicDryRuntimeBootstrapCheck[];
+  activation_blockers: string[];
+  missing_dependencies: string[];
+};
+
+export type CinematicRuntimeIntegrityIssueCode =
+  | "missing-runtime-binaries"
+  | "invalid-model-paths"
+  | "unsupported-runtime-versions"
+  | "incompatible-dependency-sets"
+  | "invalid-cache-locations"
+  | "unsupported-hardware-profiles";
+
+export type CinematicRuntimeIntegrityIssue = {
+  code: CinematicRuntimeIntegrityIssueCode;
+  detail: string;
+};
+
+export type CinematicRuntimeIntegrityValidation = {
+  valid: boolean;
+  issues: CinematicRuntimeIntegrityIssue[];
+  blockers: string[];
+  missing_dependencies: string[];
+};
+
+export type CinematicActivationReadinessDimension =
+  | "runtime-readiness"
+  | "loader-readiness"
+  | "inference-readiness"
+  | "renderer-readiness"
+  | "continuity-readiness"
+  | "offline-readiness";
+
+export type CinematicActivationReadinessRiskLevel = "low" | "medium" | "high" | "critical";
+
+export type CinematicActivationReadinessTrend = "accelerating" | "flat" | "decelerating" | "new";
+
+export type CinematicActivationReadinessScore = {
+  dimension: CinematicActivationReadinessDimension;
+  score: number;
+  confidence: CinematicReadinessConfidence;
+  blockers: string[];
+  risk_level: CinematicActivationReadinessRiskLevel;
+  trend: CinematicActivationReadinessTrend;
+};
+
+export type CinematicActivationReadinessScoring = {
+  recorded_at: string;
+  scores: CinematicActivationReadinessScore[];
+};
+
+export type CinematicControlledRuntimeProfileId =
+  | "low_vram_safe"
+  | "offline_safe"
+  | "continuity_priority"
+  | "cloud_hybrid_safe"
+  | "cpu_fallback_safe";
+
+export type CinematicControlledRuntimeProfile = {
+  profile_id: CinematicControlledRuntimeProfileId;
+  display_name: string;
+  summary: string;
+  routing_mode: CinematicProviderRoutingMode;
+  governance_notes: string[];
+};
+
+export type CinematicControlledRuntimeProfileEvaluation = {
+  profile_id: CinematicControlledRuntimeProfileId;
+  viable: boolean;
+  reasons: string[];
+  execution_boundary_status: CinematicExecutionBoundaryStatus;
+};
+
+export type CinematicFutureInferenceActivationPlan = {
+  dry_model_initialization: boolean;
+  dry_vram_reservation: boolean;
+  dry_scheduler_initialization: boolean;
+  dry_pipeline_binding: boolean;
+  dry_render_packaging: boolean;
+  notes: string[];
+};
+
 export type CinematicFutureActivationPlan = {
   future_frame_synthesis_activation: boolean;
   future_temporal_pipeline_activation: boolean;
@@ -815,6 +944,27 @@ export type CinematicRuntimeActivationSimulationValidation = {
   activation_recovery_plan: CinematicActivationFailureRecoveryPlan;
   future_activation_plan: CinematicFutureActivationPlan;
   execution_enabled: false;
+};
+
+export type CinematicControlledLocalInferenceBootstrapValidation = {
+  readiness: CinematicLocalInferenceReadinessReport;
+  readiness_delta: CinematicReadinessDeltaTrackingRecord;
+  loader_registry: CinematicLocalModelLoaderRecord[];
+  activation_lifecycle_states: CinematicRuntimeActivationSimulationState[];
+  compatibility_validation: CinematicModelRuntimeCompatibilityValidation;
+  activation_recovery_plan: CinematicActivationFailureRecoveryPlan;
+  dry_runtime_bootstrap: CinematicDryRuntimeBootstrapValidation;
+  execution_boundary_status: CinematicExecutionBoundaryState;
+  runtime_integrity_validation: CinematicRuntimeIntegrityValidation;
+  activation_readiness_scoring: CinematicActivationReadinessScoring;
+  controlled_runtime_profiles: CinematicControlledRuntimeProfileEvaluation[];
+  future_inference_activation: CinematicFutureInferenceActivationPlan;
+  execution_enabled: false;
+};
+
+export type CinematicControlledLocalInferenceBootstrapResult = {
+  validation: CinematicControlledLocalInferenceBootstrapValidation;
+  simulation: CinematicSandboxSimulationRecord;
 };
 
 export type CinematicLocalModelLoaderRuntimeActivationResult = {
@@ -1073,7 +1223,7 @@ export type CinematicReadinessMilestoneDelta = {
 
 export type CinematicReadinessDeltaTrackingRecord = {
   tracking_id: string;
-  source: "local-readiness-validation" | "local-execution-sandbox" | "runtime-activation-simulation";
+  source: "local-readiness-validation" | "local-execution-sandbox" | "runtime-activation-simulation" | "controlled-local-inference-bootstrap";
   recorded_at: string;
   milestones: CinematicReadinessMilestoneDelta[];
 };
@@ -1246,6 +1396,7 @@ export type CinematicProductionMemoryRecord = {
   local_model_registry: CinematicLocalVideoModelProfile[];
   local_model_loader_registry: CinematicLocalModelLoaderRecord[];
   local_runtime_capability_registry: CinematicLocalRuntimeCapability[];
+  controlled_runtime_profiles: CinematicControlledRuntimeProfile[];
   local_hardware_profiles: CinematicLocalHardwareProfile[];
   local_runtime_readiness_rules: string[];
   local_provider_routing_rules: string[];
@@ -1259,6 +1410,7 @@ export type CinematicProductionMemoryRecord = {
   runtime_constraint_models: CinematicRuntimeConstraintModel[];
   hybrid_local_cloud_strategies: CinematicHybridLocalCloudStrategy[];
   readiness_delta_tracking_history: CinematicReadinessDeltaTrackingRecord[];
+  execution_boundary_status_history: CinematicExecutionBoundaryState[];
   provider_routing_rules: string[];
   prompt_normalization_rules: string[];
   provider_validation_rules: string[];
@@ -1828,6 +1980,43 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
       status: "blocked",
     },
   ],
+  controlled_runtime_profiles: [
+    {
+      profile_id: "low_vram_safe",
+      display_name: "Low VRAM Safe",
+      summary: "Favor serialized, low-footprint dry initialization checks when VRAM headroom is constrained.",
+      routing_mode: "offline-planning-mode",
+      governance_notes: ["Keep VRAM reservation dry only.", "Do not promote beyond dry initialization while VRAM blockers remain."],
+    },
+    {
+      profile_id: "offline_safe",
+      display_name: "Offline Safe",
+      summary: "Prefer bounded offline bootstrap validation when local-only readiness is still incomplete.",
+      routing_mode: "offline-planning-mode",
+      governance_notes: ["No network dependency should be introduced.", "Execution remains blocked even if bootstrap checks pass."],
+    },
+    {
+      profile_id: "continuity_priority",
+      display_name: "Continuity Priority",
+      summary: "Bias future bridge planning toward continuity-preserving loaders and pipelines.",
+      routing_mode: "future-local-inference-mode",
+      governance_notes: ["Continuity blockers override speed optimizations.", "Rendering remains disabled until continuity-safe activation is reviewed."],
+    },
+    {
+      profile_id: "cloud_hybrid_safe",
+      display_name: "Cloud Hybrid Safe",
+      summary: "Preserve a safe cloud-hybrid fallback when local bootstrap integrity remains incomplete.",
+      routing_mode: "balanced-comparison-mode",
+      governance_notes: ["Hybrid planning must remain advisory only.", "Do not bypass local governance or approval flow."],
+    },
+    {
+      profile_id: "cpu_fallback_safe",
+      display_name: "CPU Fallback Safe",
+      summary: "Keep a non-accelerated fallback profile visible for conservative dry initialization planning.",
+      routing_mode: "offline-planning-mode",
+      governance_notes: ["CPU fallback is planning-only for this layer.", "No inference or rendering may start from the fallback profile."],
+    },
+  ],
   local_runtime_capability_registry: [
     {
       runtime_id: "comfyui-local-video-lane",
@@ -2149,6 +2338,7 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
     },
   ],
   readiness_delta_tracking_history: [],
+  execution_boundary_status_history: [],
   provider_routing_rules: [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
@@ -2295,6 +2485,7 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     local_model_registry: nextRecord.local_model_registry ?? defaults.local_model_registry,
     local_model_loader_registry: nextRecord.local_model_loader_registry ?? defaults.local_model_loader_registry,
     local_runtime_capability_registry: nextRecord.local_runtime_capability_registry ?? defaults.local_runtime_capability_registry,
+    controlled_runtime_profiles: nextRecord.controlled_runtime_profiles ?? defaults.controlled_runtime_profiles,
     local_hardware_profiles: nextRecord.local_hardware_profiles ?? defaults.local_hardware_profiles,
     local_runtime_readiness_rules: nextRecord.local_runtime_readiness_rules ?? defaults.local_runtime_readiness_rules,
     local_provider_routing_rules: nextRecord.local_provider_routing_rules ?? defaults.local_provider_routing_rules,
@@ -2308,6 +2499,7 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     runtime_constraint_models: nextRecord.runtime_constraint_models ?? defaults.runtime_constraint_models,
     hybrid_local_cloud_strategies: nextRecord.hybrid_local_cloud_strategies ?? defaults.hybrid_local_cloud_strategies,
     readiness_delta_tracking_history: nextRecord.readiness_delta_tracking_history ?? defaults.readiness_delta_tracking_history,
+    execution_boundary_status_history: nextRecord.execution_boundary_status_history ?? defaults.execution_boundary_status_history,
     provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
     prompt_normalization_rules: nextRecord.prompt_normalization_rules ?? defaults.prompt_normalization_rules,
     provider_validation_rules: nextRecord.provider_validation_rules ?? defaults.provider_validation_rules,
@@ -3088,6 +3280,12 @@ function buildReadinessMilestoneProgress(input: {
   const activationSimulationPresent = input.record.sandbox_simulations.some(
     (entry) => entry.sandbox_kind === "local-model-loader-runtime-activation-simulation",
   );
+  const bootstrapSimulationPresent = input.record.sandbox_simulations.some(
+    (entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap",
+  );
+  const dryInitializedBootstrap = input.record.sandbox_simulations.some(
+    (entry) => entry.execution_boundary_status?.current_status === "dry_initialized",
+  );
   const activationReadyLoaders = input.record.local_model_loader_registry.filter((entry) => entry.status === "activation-ready").length;
   const registeredLoaders = input.record.local_model_loader_registry.length;
   const readinessChecks = {
@@ -3114,7 +3312,9 @@ function buildReadinessMilestoneProgress(input: {
     { passed: input.record.local_asset_cache_strategy.length > 0, weight: 5 },
     { passed: input.record.local_inference_governance_rules.length > 0, weight: 5 },
     { passed: input.record.frame_generation_stage_registry.length > 0, weight: 5 },
-    { passed: activationSimulationPresent, weight: 10 },
+    { passed: activationSimulationPresent, weight: 8 },
+    { passed: bootstrapSimulationPresent, weight: 8 },
+    { passed: dryInitializedBootstrap, weight: 4 },
   ]);
   const localRuntimePercentage = percentageFromChecks([
     { passed: input.snapshot !== null, weight: 15 },
@@ -3127,34 +3327,41 @@ function buildReadinessMilestoneProgress(input: {
     { passed: readinessChecks.inference, weight: 15 },
     { passed: readinessChecks.models, weight: 8 },
     { passed: readinessChecks.storage, weight: 5 },
-    { passed: activationSimulationPresent, weight: 10 },
+    { passed: activationSimulationPresent, weight: 8 },
+    { passed: bootstrapSimulationPresent, weight: 8 },
+    { passed: dryInitializedBootstrap, weight: 6 },
   ]);
   const frameGenerationPercentage = clampPercentage((frameStageAverage * 75)
     + (input.record.local_model_registry.length > 0 ? 10 : 0)
     + (input.record.runtime_constraint_models.length > 0 ? 8 : 0)
     + (input.snapshot ? 7 : 0)
-    + (registeredLoaders > 0 ? 5 : 0));
+    + (registeredLoaders > 0 ? 5 : 0)
+    + (bootstrapSimulationPresent ? 6 : 0));
   const rendererPercentage = clampPercentage((rendererAverage * 75)
     + (readinessChecks.ffmpeg ? 10 : 0)
     + (readinessChecks.storage ? 8 : 0)
     + (input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "render-packaging" && entry.status !== "planned") ? 7 : 0)
-    + (activationSimulationPresent ? 5 : 0));
+    + (activationSimulationPresent ? 5 : 0)
+    + (bootstrapSimulationPresent ? 6 : 0));
   const continuityPercentage = clampPercentage((continuityStrength * 35)
     + (input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "temporal-continuity" && entry.status !== "planned") ? 20 : 0)
     + (input.record.renderer_capability_roadmap.some((entry) => entry.capability_id === "continuity-state-reuse" && entry.status !== "planned") ? 15 : 0)
     + (input.record.continuity_rules.length > 0 ? 15 : 0)
     + (input.localProviderAvailable ? 15 : 0)
-    + (activationReadyLoaders > 0 ? 10 : 0));
+    + (activationReadyLoaders > 0 ? 10 : 0)
+    + (bootstrapSimulationPresent ? 5 : 0));
   const hybridPercentage = clampPercentage((hybridAverage * 70)
     + (input.record.provider_routing_rules.length > 0 ? 10 : 0)
     + (input.record.runtime_constraint_models.length > 0 ? 10 : 0)
     + (input.record.local_provider_routing_rules.length > 0 ? 10 : 0)
-    + (activationSimulationPresent ? 5 : 0));
+    + (activationSimulationPresent ? 5 : 0)
+    + (bootstrapSimulationPresent ? 5 : 0));
   const selfSustainingPercentage = percentageFromChecks([
     { passed: input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "output-archival" && entry.status !== "planned"), weight: 20 },
     { passed: input.record.local_inference_governance_rules.length > 0, weight: 10 },
     { passed: input.record.approval_audit_trail.length >= 0, weight: 10 },
     { passed: activationSimulationPresent, weight: 10 },
+    { passed: bootstrapSimulationPresent, weight: 10 },
     { passed: false, weight: 60 },
   ]);
   return [
@@ -3175,6 +3382,7 @@ function buildReadinessMilestoneProgress(input: {
         ...(readinessChecks.models ? [] : ["local model directory detection"]),
         ...(registeredLoaders > 0 ? [] : ["model loader registry"]),
         ...(activationReadyLoaders > 0 ? [] : ["activation-ready loader"]),
+        ...(dryInitializedBootstrap ? [] : ["dry runtime bootstrap evidence"]),
       ],
     },
     {
@@ -3193,6 +3401,7 @@ function buildReadinessMilestoneProgress(input: {
         ...(readinessChecks.vram ? [] : ["VRAM reporting evidence"]),
         ...(readinessChecks.storage ? [] : ["storage estimate evidence"]),
         ...(activationSimulationPresent ? [] : ["runtime activation simulation evidence"]),
+        ...(bootstrapSimulationPresent ? [] : ["controlled bootstrap evidence"]),
       ],
     },
     {
@@ -3793,6 +4002,422 @@ function buildFutureActivationPlan(input: {
       input.compatibility.valid
         ? "Compatibility is sufficient for future reviewed activation planning, not live runtime activation."
         : "Compatibility blockers still prevent any future activation bridge promotion.",
+    ]),
+  };
+}
+
+async function writablePathsFromCandidates(root: string, candidates: string[]): Promise<string[]> {
+  const resolved = resolveCandidatePaths(root, candidates).filter((entry) => existsSync(entry));
+  const writable: string[] = [];
+  for (const candidate of resolved) {
+    try {
+      await access(candidate, constants.W_OK);
+      writable.push(candidate);
+    } catch {
+      continue;
+    }
+  }
+  return uniqueNormalizedStrings(writable);
+}
+
+async function buildDryRuntimeBootstrapValidation(input: {
+  root: string;
+  record: CinematicProductionMemoryRecord;
+  loaderRegistry: CinematicLocalModelLoaderRecord[];
+}): Promise<CinematicDryRuntimeBootstrapValidation> {
+  const snapshot = latestLocalRuntimeProbeSnapshot(input.record);
+  const runtimePaths = existingPathsFromCandidates(input.root, input.record.local_runtime_probe_path_hints.inference_runtime_paths);
+  const runtimeBinaryCandidates = [
+    ...input.record.local_runtime_probe_path_hints.python_paths,
+    ".venv/Scripts/python.exe",
+    "ComfyUI/main.py",
+  ];
+  const runtimeBinaries = uniqueNormalizedStrings([
+    ...existingPathsFromCandidates(input.root, runtimeBinaryCandidates),
+    ...findExecutablesInPath(["python.exe", "python"]),
+  ]);
+  const pythonPaths = uniqueNormalizedStrings([
+    ...existingPathsFromCandidates(input.root, input.record.local_runtime_probe_path_hints.python_paths),
+    ...findExecutablesInPath(["python.exe", "python"]),
+  ]);
+  const ffmpegPaths = uniqueNormalizedStrings([
+    ...existingPathsFromCandidates(input.root, input.record.local_runtime_probe_path_hints.ffmpeg_paths),
+    ...findExecutablesInPath(["ffmpeg.exe", "ffmpeg"]),
+  ]);
+  const modelPaths = uniqueNormalizedStrings([
+    ...existingPathsFromCandidates(input.root, input.record.local_runtime_probe_path_hints.local_model_paths),
+    ...existingPathsFromCandidates(input.root, input.loaderRegistry.map((entry) => entry.model_path)),
+  ]);
+  const dependencyFiles = existingPathsFromCandidates(input.root, ["requirements.txt", "web/package.json", "package.json"]);
+  const writableCaches = await writablePathsFromCandidates(input.root, [
+    ...input.record.local_runtime_probe_path_hints.local_model_paths,
+    "models",
+    ".aie",
+    "runner_artifacts",
+  ]);
+  const preferredStorageRequired = Math.max(...input.record.local_model_registry.map((entry) => entry.storage_requirement_gb), 0);
+  const storageReady = input.record.local_hardware_profiles.some((entry) => entry.storage_free_gb >= preferredStorageRequired && entry.status !== "planned");
+  const checks: CinematicDryRuntimeBootstrapCheck[] = [
+    {
+      check: "runtime-path-validity",
+      passed: runtimePaths.length > 0,
+      detail: runtimePaths.length > 0
+        ? `Detected ${runtimePaths.length} runtime path candidate(s) without launching anything.`
+        : "No configured runtime path is visible for dry bootstrap review.",
+      candidate_paths: resolveCandidatePaths(input.root, input.record.local_runtime_probe_path_hints.inference_runtime_paths),
+      detected_paths: runtimePaths,
+    },
+    {
+      check: "runtime-binary-presence",
+      passed: runtimeBinaries.length > 0,
+      detail: runtimeBinaries.length > 0
+        ? `Detected ${runtimeBinaries.length} runtime binary candidate(s) for dry initialization review.`
+        : "No runtime bootstrap binary or entry script is visible for dry review.",
+      candidate_paths: resolveCandidatePaths(input.root, runtimeBinaryCandidates),
+      detected_paths: runtimeBinaries,
+    },
+    {
+      check: "python-environment-visibility",
+      passed: pythonPaths.length > 0 || runtimeProbeDetected(snapshot, "python-runtime-presence"),
+      detail: pythonPaths.length > 0 || runtimeProbeDetected(snapshot, "python-runtime-presence")
+        ? "A Python environment is visible to bounded dry bootstrap checks."
+        : "Python environment visibility is still unverified for dry bootstrap.",
+      candidate_paths: resolveCandidatePaths(input.root, input.record.local_runtime_probe_path_hints.python_paths),
+      detected_paths: pythonPaths,
+    },
+    {
+      check: "ffmpeg-visibility",
+      passed: ffmpegPaths.length > 0 || runtimeProbeDetected(snapshot, "ffmpeg-availability"),
+      detail: ffmpegPaths.length > 0 || runtimeProbeDetected(snapshot, "ffmpeg-availability")
+        ? "FFmpeg visibility is available for dry packaging bootstrap checks."
+        : "FFmpeg visibility is still missing for dry bootstrap review.",
+      candidate_paths: resolveCandidatePaths(input.root, input.record.local_runtime_probe_path_hints.ffmpeg_paths),
+      detected_paths: ffmpegPaths,
+    },
+    {
+      check: "model-directory-visibility",
+      passed: modelPaths.length > 0 || runtimeProbeDetected(snapshot, "local-model-directory-presence"),
+      detail: modelPaths.length > 0 || runtimeProbeDetected(snapshot, "local-model-directory-presence")
+        ? "Model directories are visible for dry initialization checks."
+        : "No model directory is visible for dry initialization checks.",
+      candidate_paths: resolveCandidatePaths(input.root, [...input.record.local_runtime_probe_path_hints.local_model_paths, ...input.loaderRegistry.map((entry) => entry.model_path)]),
+      detected_paths: modelPaths,
+    },
+    {
+      check: "dependency-file-visibility",
+      passed: dependencyFiles.length > 0,
+      detail: dependencyFiles.length > 0
+        ? `Detected ${dependencyFiles.length} dependency file candidate(s) for integrity review.`
+        : "No dependency file is visible for dry bootstrap integrity review.",
+      candidate_paths: resolveCandidatePaths(input.root, ["requirements.txt", "web/package.json", "package.json"]),
+      detected_paths: dependencyFiles,
+    },
+    {
+      check: "storage-readiness",
+      passed: storageReady || runtimeProbeDetected(snapshot, "storage-space-estimate"),
+      detail: storageReady || runtimeProbeDetected(snapshot, "storage-space-estimate")
+        ? "Stored hardware estimates indicate storage headroom for dry bootstrap planning."
+        : "Storage readiness is still below the modeled threshold for dry bootstrap planning.",
+      candidate_paths: [],
+      detected_paths: storageReady ? ["stored-hardware-estimate"] : [],
+    },
+    {
+      check: "writable-cache-locations",
+      passed: writableCaches.length > 0,
+      detail: writableCaches.length > 0
+        ? `Detected ${writableCaches.length} writable cache location(s) for dry bootstrap planning.`
+        : "No writable cache location is visible for dry bootstrap planning.",
+      candidate_paths: resolveCandidatePaths(input.root, [...input.record.local_runtime_probe_path_hints.local_model_paths, "models", ".aie", "runner_artifacts"]),
+      detected_paths: writableCaches,
+    },
+  ];
+  const blockers = uniqueNormalizedStrings(checks.filter((entry) => !entry.passed).map((entry) => entry.detail));
+  const missingDependencies = uniqueNormalizedStrings([
+    ...(checks.find((entry) => entry.check === "runtime-path-validity")?.passed ? [] : ["runtime path visibility"]),
+    ...(checks.find((entry) => entry.check === "runtime-binary-presence")?.passed ? [] : ["runtime bootstrap binary"]),
+    ...(checks.find((entry) => entry.check === "dependency-file-visibility")?.passed ? [] : ["dependency file visibility"]),
+    ...(checks.find((entry) => entry.check === "writable-cache-locations")?.passed ? [] : ["writable cache location"]),
+  ]);
+  return {
+    valid: blockers.length === 0,
+    checks,
+    activation_blockers: blockers,
+    missing_dependencies: missingDependencies,
+  };
+}
+
+function buildExecutionBoundaryState(input: {
+  record: CinematicProductionMemoryRecord;
+  bootstrap: CinematicDryRuntimeBootstrapValidation;
+  integrity: CinematicRuntimeIntegrityValidation;
+}): CinematicExecutionBoundaryState {
+  const blocked = !input.bootstrap.valid || !input.integrity.valid || input.record.generation_budget_policy.sandbox_only_mode;
+  const currentStatus: CinematicExecutionBoundaryStatus = blocked
+    ? input.bootstrap.checks.some((entry) => entry.passed)
+      ? "partially_activated"
+      : "execution_blocked"
+    : "dry_initialized";
+  return {
+    boundary_id: `execution-boundary-${new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14)}`,
+    source: "controlled-local-inference-bootstrap",
+    recorded_at: new Date().toISOString(),
+    current_status: currentStatus,
+    tracked_statuses: uniqueNormalizedStrings([
+      "simulated",
+      currentStatus,
+      "inference_disabled",
+      "rendering_disabled",
+      blocked ? "execution_blocked" : null,
+    ]) as CinematicExecutionBoundaryStatus[],
+    activation_blockers: uniqueNormalizedStrings([...input.bootstrap.activation_blockers, ...input.integrity.blockers]),
+    disabled_execution_reasons: uniqueNormalizedStrings([
+      "Actual inference execution remains disabled in this layer.",
+      "Frame rendering remains disabled in this layer.",
+      ...(input.record.generation_budget_policy.sandbox_only_mode ? ["Sandbox-only governance explicitly blocks execution."] : []),
+    ]),
+    next_activation_milestone: blocked
+      ? "Clear dry bootstrap and integrity blockers before any reviewed bridge can attempt dry model initialization."
+      : "Dry model initialization scaffold may be reviewed next, but live inference remains disabled.",
+    missing_dependencies: uniqueNormalizedStrings([...input.bootstrap.missing_dependencies, ...input.integrity.missing_dependencies]),
+    governance_restrictions: input.record.local_inference_governance_rules,
+  };
+}
+
+async function buildRuntimeIntegrityValidation(input: {
+  root: string;
+  record: CinematicProductionMemoryRecord;
+  loaderRegistry: CinematicLocalModelLoaderRecord[];
+  bootstrap: CinematicDryRuntimeBootstrapValidation;
+  desiredResolution: CinematicVideoResolution;
+  desiredDurationSeconds: number;
+}): Promise<CinematicRuntimeIntegrityValidation> {
+  const preferredHardware = resolvePreferredLocalHardware({
+    record: input.record,
+    model: null,
+    desiredResolution: input.desiredResolution,
+    desiredDurationSeconds: input.desiredDurationSeconds,
+  });
+  const preferredRuntime = resolvePreferredLocalRuntime({
+    record: input.record,
+    hardware: preferredHardware,
+  });
+  const modelPaths = existingPathsFromCandidates(input.root, input.loaderRegistry.map((entry) => entry.model_path));
+  const cachePaths = await writablePathsFromCandidates(input.root, ["models", ".aie", "runner_artifacts"]);
+  const issues: CinematicRuntimeIntegrityIssue[] = [];
+  if (!input.bootstrap.checks.find((entry) => entry.check === "runtime-binary-presence")?.passed) {
+    issues.push({ code: "missing-runtime-binaries", detail: "Runtime bootstrap binary presence is not verified." });
+  }
+  if (modelPaths.length === 0) {
+    issues.push({ code: "invalid-model-paths", detail: "No modeled loader path currently resolves to a visible model directory." });
+  }
+  if (preferredRuntime?.status === "candidate" || preferredRuntime?.detection_method === "future-runtime-probe") {
+    issues.push({ code: "unsupported-runtime-versions", detail: `${preferredRuntime?.display_name ?? "Preferred runtime"} is still version-unverified for dry bootstrap.` });
+  }
+  if (input.loaderRegistry.some((entry) => entry.status === "dependency-review" || entry.status === "blocked")) {
+    issues.push({ code: "incompatible-dependency-sets", detail: "One or more loader/runtime dependency sets remain incompatible or incomplete." });
+  }
+  if (cachePaths.length === 0) {
+    issues.push({ code: "invalid-cache-locations", detail: "No writable cache location is available for dry bootstrap planning." });
+  }
+  if (!preferredHardware || preferredHardware.status === "planned") {
+    issues.push({ code: "unsupported-hardware-profile", detail: "Preferred hardware profile remains unvalidated for the requested bootstrap profile." });
+  }
+  const blockers = uniqueNormalizedStrings(issues.map((entry) => entry.detail));
+  const missingDependencies = uniqueNormalizedStrings([
+    ...(issues.some((entry) => entry.code === "missing-runtime-binaries") ? ["runtime bootstrap binary"] : []),
+    ...(issues.some((entry) => entry.code === "invalid-model-paths") ? ["validated model path"] : []),
+    ...(issues.some((entry) => entry.code === "unsupported-runtime-versions") ? ["runtime version evidence"] : []),
+    ...(issues.some((entry) => entry.code === "incompatible-dependency-sets") ? ["compatible dependency set"] : []),
+    ...(issues.some((entry) => entry.code === "invalid-cache-locations") ? ["writable cache path"] : []),
+    ...(issues.some((entry) => entry.code === "unsupported-hardware-profile") ? ["validated hardware profile"] : []),
+  ]);
+  return {
+    valid: issues.length === 0,
+    issues,
+    blockers,
+    missing_dependencies: missingDependencies,
+  };
+}
+
+function previousMilestoneDelta(record: CinematicProductionMemoryRecord, milestone: CinematicReadinessMilestoneKey): number | null {
+  return record.readiness_delta_tracking_history[0]?.milestones.find((entry) => entry.milestone === milestone)?.delta ?? null;
+}
+
+function readinessScoreRiskLevel(score: number, blockerCount: number): CinematicActivationReadinessRiskLevel {
+  if (blockerCount >= 3 || score < 35) {
+    return "critical";
+  }
+  if (blockerCount >= 2 || score < 50) {
+    return "high";
+  }
+  if (blockerCount >= 1 || score < 70) {
+    return "medium";
+  }
+  return "low";
+}
+
+function readinessScoreTrend(delta: number | null): CinematicActivationReadinessTrend {
+  if (delta === null) {
+    return "new";
+  }
+  if (delta > 0) {
+    return "accelerating";
+  }
+  if (delta < 0) {
+    return "decelerating";
+  }
+  return "flat";
+}
+
+function buildActivationReadinessScores(input: {
+  record: CinematicProductionMemoryRecord;
+  readiness: CinematicLocalInferenceReadinessReport;
+  bootstrap: CinematicDryRuntimeBootstrapValidation;
+  integrity: CinematicRuntimeIntegrityValidation;
+  boundary: CinematicExecutionBoundaryState;
+  loaderRegistry: CinematicLocalModelLoaderRecord[];
+}): CinematicActivationReadinessScoring {
+  const milestoneMap: Record<CinematicActivationReadinessDimension, CinematicReadinessMilestoneKey> = {
+    "runtime-readiness": "local-runtime-readiness",
+    "loader-readiness": "local-inference-readiness",
+    "inference-readiness": "local-inference-readiness",
+    "renderer-readiness": "local-renderer-readiness",
+    "continuity-readiness": "continuity-preserving-local-generation",
+    "offline-readiness": "hybrid-local-cloud-orchestration",
+  };
+  const progressByMilestone = new Map(input.readiness.milestone_progress.map((entry) => [entry.milestone, entry]));
+  const loaderReadyCount = input.loaderRegistry.filter((entry) => entry.status === "activation-ready").length;
+  const scores: CinematicActivationReadinessScore[] = [
+    {
+      dimension: "runtime-readiness",
+      score: clampPercentage((progressByMilestone.get("local-runtime-readiness")?.percentage ?? 0) + (input.bootstrap.valid ? 10 : 0)),
+      confidence: progressByMilestone.get("local-runtime-readiness")?.confidence ?? "low",
+      blockers: uniqueNormalizedStrings([...input.bootstrap.activation_blockers, ...input.integrity.issues.filter((entry) => entry.code === "missing-runtime-binaries" || entry.code === "unsupported-runtime-versions").map((entry) => entry.detail)]),
+      risk_level: readinessScoreRiskLevel(progressByMilestone.get("local-runtime-readiness")?.percentage ?? 0, input.bootstrap.activation_blockers.length),
+      trend: readinessScoreTrend(previousMilestoneDelta(input.record, milestoneMap["runtime-readiness"])),
+    },
+    {
+      dimension: "loader-readiness",
+      score: percentageFromChecks([
+        { passed: input.loaderRegistry.length > 0, weight: 35 },
+        { passed: loaderReadyCount > 0, weight: 45 },
+        { passed: input.bootstrap.checks.find((entry) => entry.check === "model-directory-visibility")?.passed ?? false, weight: 20 },
+      ]),
+      confidence: readinessConfidenceFromPercentage(loaderReadyCount > 0 ? 70 : 35, input.loaderRegistry.length),
+      blockers: uniqueNormalizedStrings(input.loaderRegistry.filter((entry) => entry.status !== "activation-ready").map((entry) => `${entry.loader_id} remains ${entry.status}.`)),
+      risk_level: readinessScoreRiskLevel(loaderReadyCount > 0 ? 70 : 35, input.loaderRegistry.filter((entry) => entry.status !== "activation-ready").length),
+      trend: readinessScoreTrend(previousMilestoneDelta(input.record, milestoneMap["loader-readiness"])),
+    },
+    {
+      dimension: "inference-readiness",
+      score: clampPercentage(Math.max(0, (progressByMilestone.get("local-inference-readiness")?.percentage ?? 0) - 15)),
+      confidence: progressByMilestone.get("local-inference-readiness")?.confidence ?? "low",
+      blockers: input.boundary.disabled_execution_reasons,
+      risk_level: readinessScoreRiskLevel(progressByMilestone.get("local-inference-readiness")?.percentage ?? 0, input.boundary.activation_blockers.length),
+      trend: readinessScoreTrend(previousMilestoneDelta(input.record, milestoneMap["inference-readiness"])),
+    },
+    {
+      dimension: "renderer-readiness",
+      score: clampPercentage((progressByMilestone.get("local-renderer-readiness")?.percentage ?? 0) + ((input.bootstrap.checks.find((entry) => entry.check === "ffmpeg-visibility")?.passed ?? false) ? 5 : 0)),
+      confidence: progressByMilestone.get("local-renderer-readiness")?.confidence ?? "low",
+      blockers: uniqueNormalizedStrings([
+        ...(input.bootstrap.checks.find((entry) => entry.check === "ffmpeg-visibility")?.passed ? [] : ["FFmpeg visibility is still missing for renderer packaging."]),
+        ...input.boundary.disabled_execution_reasons,
+      ]),
+      risk_level: readinessScoreRiskLevel(progressByMilestone.get("local-renderer-readiness")?.percentage ?? 0, input.boundary.activation_blockers.length),
+      trend: readinessScoreTrend(previousMilestoneDelta(input.record, milestoneMap["renderer-readiness"])),
+    },
+    {
+      dimension: "continuity-readiness",
+      score: progressByMilestone.get("continuity-preserving-local-generation")?.percentage ?? 0,
+      confidence: progressByMilestone.get("continuity-preserving-local-generation")?.confidence ?? "low",
+      blockers: uniqueNormalizedStrings([
+        ...input.loaderRegistry.filter((entry) => entry.continuity_support === "limited").map((entry) => `${entry.loader_id} only has limited continuity support.`),
+      ]),
+      risk_level: readinessScoreRiskLevel(progressByMilestone.get("continuity-preserving-local-generation")?.percentage ?? 0, input.loaderRegistry.filter((entry) => entry.continuity_support === "limited").length),
+      trend: readinessScoreTrend(previousMilestoneDelta(input.record, milestoneMap["continuity-readiness"])),
+    },
+    {
+      dimension: "offline-readiness",
+      score: percentageFromChecks([
+        { passed: input.loaderRegistry.some((entry) => entry.offline_viability), weight: 40 },
+        { passed: input.bootstrap.valid, weight: 35 },
+        { passed: input.readiness.recommended_routing_mode === "offline-planning-mode" || input.readiness.recommended_routing_mode === "future-local-inference-mode", weight: 25 },
+      ]),
+      confidence: readinessConfidenceFromPercentage(input.loaderRegistry.some((entry) => entry.offline_viability) ? 70 : 40, input.loaderRegistry.length),
+      blockers: uniqueNormalizedStrings(input.loaderRegistry.filter((entry) => !entry.offline_viability).map((entry) => `${entry.loader_id} is not marked offline-viable.`)),
+      risk_level: readinessScoreRiskLevel(input.loaderRegistry.some((entry) => entry.offline_viability) ? 70 : 40, input.loaderRegistry.filter((entry) => !entry.offline_viability).length),
+      trend: readinessScoreTrend(previousMilestoneDelta(input.record, milestoneMap["offline-readiness"])),
+    },
+  ];
+  return {
+    recorded_at: new Date().toISOString(),
+    scores,
+  };
+}
+
+function buildControlledRuntimeProfiles(input: {
+  record: CinematicProductionMemoryRecord;
+  readiness: CinematicLocalInferenceReadinessReport;
+  boundary: CinematicExecutionBoundaryState;
+  integrity: CinematicRuntimeIntegrityValidation;
+}): CinematicControlledRuntimeProfileEvaluation[] {
+  return input.record.controlled_runtime_profiles.map((profile) => {
+    const reasons: string[] = [];
+    let viable = true;
+    switch (profile.profile_id) {
+      case "low_vram_safe":
+        viable = input.record.local_hardware_profiles.some((entry) => entry.gpu_vram_gb > 0 && entry.gpu_vram_gb <= 12);
+        if (!viable) reasons.push("No bounded low-VRAM hardware profile is currently recorded.");
+        break;
+      case "offline_safe":
+        viable = input.readiness.recommended_routing_mode === "offline-planning-mode" || input.readiness.recommended_routing_mode === "future-local-inference-mode";
+        if (!viable) reasons.push("Current routing recommendation is not offline-safe.");
+        break;
+      case "continuity_priority":
+        viable = input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation")?.percentage !== undefined;
+        if (!viable) reasons.push("Continuity readiness is not available.");
+        break;
+      case "cloud_hybrid_safe":
+        viable = input.readiness.milestone_progress.find((entry) => entry.milestone === "hybrid-local-cloud-orchestration")?.percentage !== undefined;
+        if (!viable) reasons.push("Hybrid orchestration readiness is not available.");
+        break;
+      case "cpu_fallback_safe":
+        viable = input.record.local_hardware_profiles.some((entry) => entry.accelerator_backend === "cpu");
+        if (!viable) reasons.push("No CPU fallback planning profile is currently recorded.");
+        break;
+    }
+    if (input.integrity.issues.some((entry) => entry.code === "unsupported-hardware-profile")) {
+      viable = profile.profile_id === "offline_safe" || profile.profile_id === "cloud_hybrid_safe";
+      reasons.push("Hardware integrity blockers limit this profile.");
+    }
+    return {
+      ...profile,
+      viable,
+      reasons: uniqueNormalizedStrings([...profile.governance_notes, ...reasons]),
+      execution_boundary_status: input.boundary.current_status,
+    };
+  });
+}
+
+function buildFutureInferenceActivationScaffold(input: {
+  boundary: CinematicExecutionBoundaryState;
+  integrity: CinematicRuntimeIntegrityValidation;
+}): CinematicFutureInferenceActivationPlan {
+  return {
+    dry_model_initialization: true,
+    dry_vram_reservation: true,
+    dry_scheduler_initialization: true,
+    dry_pipeline_binding: true,
+    dry_render_packaging: true,
+    notes: uniqueNormalizedStrings([
+      "Dry model initialization remains non-executing and review-only.",
+      "Dry VRAM reservation remains a bookkeeping scaffold, not a real allocation.",
+      "Dry scheduler initialization remains simulated without constructing a live pipeline.",
+      "Dry pipeline binding remains descriptive until execution boundaries are explicitly relaxed.",
+      "Dry render packaging remains disabled behind FFmpeg visibility and governance review.",
+      `Current boundary status: ${input.boundary.current_status}.`,
+      ...(input.integrity.valid ? [] : ["Integrity blockers must clear before any future dry initialization bridge expands."]),
     ]),
   };
 }
@@ -4967,6 +5592,142 @@ export async function simulateCinematicLocalModelLoaderRuntimeActivation(input?:
     compatibility_validation: validation.compatibility_validation,
     activation_recovery_plan: validation.activation_recovery_plan,
     future_activation_plan: validation.future_activation_plan,
+    readiness_tracking_id: validation.readiness_delta.tracking_id,
+    hybrid_escalation: null,
+    recorded_at: new Date().toISOString(),
+  };
+  await writeCinematicProductionMemory({
+    root: input?.root,
+    value: {
+      sandbox_simulations: [...record.sandbox_simulations, simulation].slice(-40),
+      asset_reuse_decisions: [...record.asset_reuse_decisions, ...simulation.asset_reuse_decisions].slice(-40),
+    },
+  });
+  return {
+    validation,
+    simulation,
+  };
+}
+
+export async function validateCinematicControlledLocalInferenceBootstrap(input?: {
+  root?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+}): Promise<CinematicControlledLocalInferenceBootstrapValidation> {
+  const initialization = await loadProductionMemory(input?.root);
+  const record = initialization.record;
+  const desiredResolution = input?.desiredResolution ?? DEFAULT_TARGET_RESOLUTION;
+  const desiredDurationSeconds = input?.desiredDurationSeconds ?? DEFAULT_TARGET_DURATION_SECONDS;
+  const continuityPriority = input?.continuityPriority ?? "medium";
+  const loaderRegistry = buildLocalModelLoaderRegistry({
+    record,
+    desiredResolution,
+    desiredDurationSeconds,
+    continuityPriority,
+  });
+  const nextRecord = {
+    ...record,
+    local_model_loader_registry: loaderRegistry,
+  };
+  const readiness = summarizeLocalReadiness({
+    record: nextRecord,
+    desiredResolution,
+    desiredDurationSeconds,
+    continuityPriority,
+  });
+  const dryRuntimeBootstrap = await buildDryRuntimeBootstrapValidation({
+    root: initialization.repoRoot,
+    record: nextRecord,
+    loaderRegistry,
+  });
+  const runtimeIntegrityValidation = await buildRuntimeIntegrityValidation({
+    root: initialization.repoRoot,
+    record: nextRecord,
+    loaderRegistry,
+    bootstrap: dryRuntimeBootstrap,
+    desiredResolution,
+    desiredDurationSeconds,
+  });
+  const executionBoundaryState = buildExecutionBoundaryState({
+    record: nextRecord,
+    bootstrap: dryRuntimeBootstrap,
+    integrity: runtimeIntegrityValidation,
+  });
+  const activationReadinessScoring = buildActivationReadinessScores({
+    record: nextRecord,
+    readiness,
+    bootstrap: dryRuntimeBootstrap,
+    integrity: runtimeIntegrityValidation,
+    boundary: executionBoundaryState,
+    loaderRegistry,
+  });
+  const controlledRuntimeProfiles = buildControlledRuntimeProfiles({
+    record: nextRecord,
+    readiness,
+    boundary: executionBoundaryState,
+    integrity: runtimeIntegrityValidation,
+  });
+  const futureInferenceActivation = buildFutureInferenceActivationScaffold({
+    boundary: executionBoundaryState,
+    integrity: runtimeIntegrityValidation,
+  });
+  const trackingUpdate = appendReadinessDeltaTracking({
+    record: nextRecord,
+    readiness,
+    source: "controlled-local-inference-bootstrap",
+  });
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, {
+    ...trackingUpdate.record,
+    execution_boundary_status_history: [executionBoundaryState, ...trackingUpdate.record.execution_boundary_status_history].slice(0, 24),
+  });
+  return {
+    readiness,
+    readiness_delta: trackingUpdate.tracking,
+    loader_registry: loaderRegistry,
+    dry_runtime_bootstrap: dryRuntimeBootstrap,
+    execution_boundary_state: executionBoundaryState,
+    runtime_integrity_validation: runtimeIntegrityValidation,
+    activation_readiness_scores: activationReadinessScoring.scores,
+    controlled_runtime_profiles: controlledRuntimeProfiles,
+    future_inference_activation: futureInferenceActivation,
+    execution_enabled: false,
+  };
+}
+
+export async function simulateCinematicControlledLocalInferenceBootstrap(input?: {
+  root?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+}): Promise<CinematicControlledLocalInferenceBootstrapResult> {
+  const validation = await validateCinematicControlledLocalInferenceBootstrap(input);
+  const record = await readCinematicProductionMemory({ root: input?.root });
+  const simulation: CinematicSandboxSimulationRecord = {
+    simulation_id: `bootstrap-sandbox-${Date.now()}`,
+    sandbox_kind: "controlled-local-inference-bootstrap",
+    sequence_id: "controlled-local-bootstrap-planning-only",
+    routing_mode: validation.readiness.recommended_routing_mode,
+    provider: "LocalFutureProvider",
+    execution_enabled: false,
+    queued_job_ids: validation.loader_registry.map((entry) => entry.loader_id),
+    approved_job_ids: validation.loader_registry.filter((entry) => entry.status === "activation-ready").map((entry) => entry.loader_id),
+    failed_job_ids: validation.runtime_integrity_validation.issues.map((entry, index) => `${entry.code}-${index + 1}`),
+    retry_job_ids: validation.execution_boundary_state.current_status === "dry_initialized"
+      ? []
+      : validation.loader_registry.filter((entry) => entry.status !== "activation-ready").map((entry) => entry.loader_id),
+    continuity_issue_count: validation.activation_readiness_scores.find((entry) => entry.dimension === "continuity-readiness")?.blockers.length ?? 0,
+    asset_reuse_decisions: validation.loader_registry.map((entry) => `Keep ${entry.loader_id} inside dry bootstrap boundaries with inference and rendering disabled.`),
+    loader_registry: validation.loader_registry,
+    dry_runtime_bootstrap: validation.dry_runtime_bootstrap,
+    execution_boundary_status: validation.execution_boundary_state,
+    runtime_integrity_validation: validation.runtime_integrity_validation,
+    activation_readiness_scoring: {
+      recorded_at: new Date().toISOString(),
+      scores: validation.activation_readiness_scores,
+    },
+    controlled_runtime_profiles: validation.controlled_runtime_profiles,
+    future_inference_activation: validation.future_inference_activation,
     readiness_tracking_id: validation.readiness_delta.tracking_id,
     hybrid_escalation: null,
     recorded_at: new Date().toISOString(),

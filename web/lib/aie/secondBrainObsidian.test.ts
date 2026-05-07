@@ -9,6 +9,7 @@ import {
   ensureCinematicProductionMemoryInitialized,
   inspectCinematicLocalRuntimeEnvironment,
   planCinematicSequence,
+  simulateCinematicControlledLocalInferenceBootstrap,
   simulateCinematicLocalInferenceExecutionSandbox,
   simulateCinematicLocalModelLoaderRuntimeActivation,
 } from "./cinematicProductionMemory";
@@ -101,6 +102,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Architecture/Model Runtime Compatibility.md"));
     assert.ok(files.includes("Architecture/Readiness Delta Tracking.md"));
     assert.ok(files.includes("Architecture/Updated Readiness Progress.md"));
+    assert.ok(files.includes("Architecture/Execution Boundary Status.md"));
+    assert.ok(files.includes("Architecture/Runtime Integrity Validation.md"));
+    assert.ok(files.includes("Architecture/Activation Readiness Scoring.md"));
     assert.ok(files.includes("Architecture/Manual Approval Workflow.md"));
     assert.ok(files.includes("Architecture/Continuity Review Notes.md"));
     assert.ok(files.includes("Architecture/Provider Constraint Matrix.md"));
@@ -121,6 +125,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Strategy/Local Execution Sandbox.md"));
     assert.ok(files.includes("Strategy/Renderer Lifecycle Simulation.md"));
     assert.ok(files.includes("Strategy/Runtime Activation Simulation.md"));
+    assert.ok(files.includes("Strategy/Dry Runtime Bootstrap.md"));
+    assert.ok(files.includes("Strategy/Controlled Runtime Profiles.md"));
+    assert.ok(files.includes("Strategy/Future Inference Activation.md"));
     assert.ok(files.includes("Strategy/Queue Orchestration Planning.md"));
     assert.ok(files.includes("Strategy/Generation Job Queue.md"));
     assert.ok(files.includes("Strategy/Operator Approval Queue.md"));
@@ -185,6 +192,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const modelCompatibilityText = await readFile(path.join(vaultRoot, "Architecture", "Model Runtime Compatibility.md"), "utf8");
     const readinessDeltaText = await readFile(path.join(vaultRoot, "Architecture", "Readiness Delta Tracking.md"), "utf8");
     const updatedReadinessText = await readFile(path.join(vaultRoot, "Architecture", "Updated Readiness Progress.md"), "utf8");
+    const executionBoundaryText = await readFile(path.join(vaultRoot, "Architecture", "Execution Boundary Status.md"), "utf8");
+    const runtimeIntegrityText = await readFile(path.join(vaultRoot, "Architecture", "Runtime Integrity Validation.md"), "utf8");
+    const activationReadinessText = await readFile(path.join(vaultRoot, "Architecture", "Activation Readiness Scoring.md"), "utf8");
     const lifecycleText = await readFile(path.join(vaultRoot, "Architecture", "Cinematic Execution Lifecycle.md"), "utf8");
     const retryRulesText = await readFile(path.join(vaultRoot, "Architecture", "Retry Planning Rules.md"), "utf8");
     const generationStrategyText = await readFile(path.join(vaultRoot, "Resources", "Cost-Aware Generation Strategy.md"), "utf8");
@@ -193,6 +203,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const providerComparisonNotesText = await readFile(path.join(vaultRoot, "Resources", "Provider Comparison Notes.md"), "utf8");
     const futureLocalInferenceText = await readFile(path.join(vaultRoot, "Strategy", "Future Local Inference Notes.md"), "utf8");
     const futureActivationPlanText = await readFile(path.join(vaultRoot, "Strategy", "Future Activation Plan.md"), "utf8");
+    const dryBootstrapText = await readFile(path.join(vaultRoot, "Strategy", "Dry Runtime Bootstrap.md"), "utf8");
+    const controlledProfilesText = await readFile(path.join(vaultRoot, "Strategy", "Controlled Runtime Profiles.md"), "utf8");
+    const futureInferenceText = await readFile(path.join(vaultRoot, "Strategy", "Future Inference Activation.md"), "utf8");
     const framePipelineText = await readFile(path.join(vaultRoot, "Strategy", "Frame Generation Pipeline Planning.md"), "utf8");
     const rendererRoadmapText = await readFile(path.join(vaultRoot, "Strategy", "Renderer Capability Roadmap.md"), "utf8");
     const hybridStrategyText = await readFile(path.join(vaultRoot, "Strategy", "Hybrid Local Cloud Strategy.md"), "utf8");
@@ -249,6 +262,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(modelCompatibilityText, /No model\/runtime compatibility validation recorded yet\./i);
     assert.match(readinessDeltaText, /No readiness delta tracking entries recorded yet\./i);
     assert.match(updatedReadinessText, /Local Inference Readiness:/i);
+    assert.match(executionBoundaryText, /No execution boundary status recorded yet\./i);
+    assert.match(runtimeIntegrityText, /No runtime integrity validations recorded yet\./i);
+    assert.match(activationReadinessText, /No activation readiness scores recorded yet\./i);
     assert.match(lifecycleText, /Execution lifecycle remains append-only/i);
     assert.match(retryRulesText, /Retry planning must preserve successful shot outputs/i);
     assert.match(generationStrategyText, /Use cheap draft routing for first-pass framing validation/i);
@@ -257,6 +273,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(providerComparisonNotesText, /Compare providers by cost, duration support, continuity support/i);
     assert.match(futureLocalInferenceText, /Use LocalFutureProvider as a stable abstraction over future open-source backends/i);
     assert.match(futureActivationPlanText, /No future activation plan recorded yet\./i);
+    assert.match(dryBootstrapText, /No dry runtime bootstrap validations recorded yet\./i);
+    assert.match(controlledProfilesText, /Low VRAM Safe|Offline Safe/i);
+    assert.match(futureInferenceText, /No future inference activation scaffolds recorded yet\./i);
     assert.match(framePipelineText, /Prompt Compilation/i);
     assert.match(rendererRoadmapText, /Image Sequence Rendering/i);
     assert.match(hybridStrategyText, /Local Draft Rendering/i);
@@ -404,6 +423,66 @@ test("exportSecondBrainToObsidian projects runtime activation simulation into th
     assert.match(futureActivationPlanText, /Future frame synthesis activation: yes/i);
     assert.match(futureActivationPlanText, /Future local-only execution mode: no/i);
     assert.match(activationRecoveryText, /unsupported-provider-route|missing-runtime|dependency-mismatch/i);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("exportSecondBrainToObsidian projects controlled local bootstrap into the new deterministic notes", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-second-brain-controlled-bootstrap-"));
+  const vaultRoot = path.join(tempRoot, "Second Brain");
+
+  try {
+    await ensureCinematicProductionMemoryInitialized(tempRoot);
+    await mkdir(path.join(tempRoot, ".venv", "Scripts"), { recursive: true });
+    await mkdir(path.join(tempRoot, "ComfyUI"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "wan-2.1-t2v-q8"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "ltx-video-img2vid-int8"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "hunyuan-video-13b-planned"), { recursive: true });
+    await mkdir(path.join(tempRoot, "tools", "ffmpeg"), { recursive: true });
+    await mkdir(path.join(tempRoot, ".aie"), { recursive: true });
+    await writeFile(path.join(tempRoot, ".venv", "Scripts", "python.exe"), "", "utf8");
+    await writeFile(path.join(tempRoot, "ComfyUI", "main.py"), "", "utf8");
+    await writeFile(path.join(tempRoot, "tools", "ffmpeg", "ffmpeg.exe"), "", "utf8");
+    await writeFile(path.join(tempRoot, "requirements.txt"), "torch\ndiffusers\n", "utf8");
+
+    await inspectCinematicLocalRuntimeEnvironment({
+      root: tempRoot,
+      persist: true,
+      pathHints: {
+        python_paths: [".venv/Scripts/python.exe"],
+        ffmpeg_paths: ["tools/ffmpeg/ffmpeg.exe"],
+        inference_runtime_paths: ["ComfyUI"],
+        local_model_paths: ["models"],
+      },
+    });
+    await simulateCinematicControlledLocalInferenceBootstrap({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+
+    await exportSecondBrainToObsidian({ root: tempRoot, vaultRoot });
+
+    const dryBootstrapText = await readFile(path.join(vaultRoot, "Strategy", "Dry Runtime Bootstrap.md"), "utf8");
+    const executionBoundaryText = await readFile(path.join(vaultRoot, "Architecture", "Execution Boundary Status.md"), "utf8");
+    const runtimeIntegrityText = await readFile(path.join(vaultRoot, "Architecture", "Runtime Integrity Validation.md"), "utf8");
+    const activationReadinessText = await readFile(path.join(vaultRoot, "Architecture", "Activation Readiness Scoring.md"), "utf8");
+    const controlledProfilesText = await readFile(path.join(vaultRoot, "Strategy", "Controlled Runtime Profiles.md"), "utf8");
+    const futureInferenceText = await readFile(path.join(vaultRoot, "Strategy", "Future Inference Activation.md"), "utf8");
+
+    assert.match(dryBootstrapText, /Valid: yes/i);
+    assert.match(dryBootstrapText, /runtime-binary-presence: passed=yes/i);
+    assert.match(executionBoundaryText, /Current status: partially_activated|dry_initialized/i);
+    assert.match(executionBoundaryText, /inference_disabled/i);
+    assert.match(runtimeIntegrityText, /incompatible-dependency-sets|unsupported-hardware-profile/i);
+    assert.match(activationReadinessText, /runtime-readiness:/i);
+    assert.match(activationReadinessText, /offline-readiness:/i);
+    assert.match(controlledProfilesText, /Low VRAM Safe|Offline Safe/i);
+    assert.match(controlledProfilesText, /viable=yes|viable=no/i);
+    assert.match(futureInferenceText, /Dry model initialization: yes/i);
+    assert.match(futureInferenceText, /Dry pipeline binding: yes/i);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

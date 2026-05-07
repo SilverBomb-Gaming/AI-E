@@ -2572,6 +2572,268 @@ function buildUpdatedReadinessProgressNote(input: {
   };
 }
 
+function latestControlledBootstrapSimulation(production: CinematicProductionMemoryRecord): CinematicProductionMemoryRecord["sandbox_simulations"][number] | null {
+  return [...production.sandbox_simulations]
+    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap")
+    .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+}
+
+function buildDryRuntimeBootstrapNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const bootstrap = latestBootstrap?.dry_runtime_bootstrap ?? null;
+  return {
+    title: "Dry Runtime Bootstrap",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_dry_runtime_bootstrap",
+      tags: ["second-brain", "dry-bootstrap", "runtime", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Bootstrap Summary",
+      bootstrap
+        ? asBulletList([
+          `Valid: ${bootstrap.valid ? "yes" : "no"}`,
+          `Blockers: ${bootstrap.activation_blockers.join(", ") || "none"}`,
+          `Missing dependencies: ${bootstrap.missing_dependencies.join(", ") || "none"}`,
+        ])
+        : "- No dry runtime bootstrap validations recorded yet.",
+      "",
+      "## Bootstrap Checks",
+      bootstrap?.checks?.length
+        ? asBulletList(bootstrap.checks.map((entry) => `${entry.check}: passed=${entry.passed ? "yes" : "no"} | detected=${entry.detected_paths.join(", ") || "none"}`))
+        : "- No dry bootstrap checks recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Execution Boundary Status"),
+        toLink("Runtime Integrity Validation"),
+        toLink("Future Inference Activation"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildExecutionBoundaryStatusNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const boundary = latestBootstrap?.execution_boundary_status ?? production.execution_boundary_status_history[0] ?? null;
+  return {
+    title: "Execution Boundary Status",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_execution_boundary_status",
+      tags: ["second-brain", "execution-boundary", "runtime", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Boundary Summary",
+      boundary
+        ? asBulletList([
+          `Current status: ${boundary.current_status}`,
+          `Tracked statuses: ${boundary.tracked_statuses.join(", ")}`,
+          `Next activation milestone: ${boundary.next_activation_milestone}`,
+        ])
+        : "- No execution boundary status recorded yet.",
+      "",
+      "## Disabled Execution Reasons",
+      boundary?.disabled_execution_reasons?.length
+        ? asBulletList(boundary.disabled_execution_reasons)
+        : "- No disabled execution reasons recorded yet.",
+      "",
+      "## Governance Restrictions",
+      boundary?.governance_restrictions?.length
+        ? asBulletList(boundary.governance_restrictions)
+        : "- No governance restrictions recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Dry Runtime Bootstrap"),
+        toLink("Runtime Integrity Validation"),
+        toLink("Activation Readiness Scoring"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildRuntimeIntegrityValidationNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const integrity = latestBootstrap?.runtime_integrity_validation ?? null;
+  return {
+    title: "Runtime Integrity Validation",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_runtime_integrity_validation",
+      tags: ["second-brain", "runtime-integrity", "bootstrap", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Integrity Summary",
+      integrity
+        ? asBulletList([
+          `Valid: ${integrity.valid ? "yes" : "no"}`,
+          `Blockers: ${integrity.blockers.join(", ") || "none"}`,
+          `Missing dependencies: ${integrity.missing_dependencies.join(", ") || "none"}`,
+        ])
+        : "- No runtime integrity validations recorded yet.",
+      "",
+      "## Integrity Issues",
+      integrity?.issues?.length
+        ? asBulletList(integrity.issues.map((entry) => `${entry.code}: ${entry.detail}`))
+        : "- No runtime integrity issues recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Dry Runtime Bootstrap"),
+        toLink("Execution Boundary Status"),
+        toLink("Controlled Runtime Profiles"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildActivationReadinessScoringNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const readinessScoring = latestBootstrap?.activation_readiness_scoring ?? null;
+  return {
+    title: "Activation Readiness Scoring",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_activation_readiness_scoring",
+      tags: ["second-brain", "readiness-scoring", "bootstrap", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Readiness Scores",
+      readinessScoring?.scores?.length
+        ? asBulletList(readinessScoring.scores.map((entry) => `${entry.dimension}: ${entry.score}% | confidence=${entry.confidence} | risk=${entry.risk_level} | trend=${entry.trend}`))
+        : "- No activation readiness scores recorded yet.",
+      "",
+      "## Readiness Blockers",
+      readinessScoring?.scores?.length
+        ? asBulletList(readinessScoring.scores.flatMap((entry) => entry.blockers.map((blocker) => `${entry.dimension}: ${blocker}`)))
+        : "- No readiness blockers recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Execution Boundary Status"),
+        toLink("Updated Readiness Progress"),
+        toLink("Controlled Runtime Profiles"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildControlledRuntimeProfilesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const profiles = latestBootstrap?.controlled_runtime_profiles ?? production.controlled_runtime_profiles;
+  return {
+    title: "Controlled Runtime Profiles",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_controlled_runtime_profiles",
+      tags: ["second-brain", "runtime-profiles", "bootstrap", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Profiles",
+      profiles.length > 0
+        ? asBulletList(profiles.map((entry) => {
+          if ("viable" in entry) {
+            return `${entry.display_name}: viable=${entry.viable ? "yes" : "no"} | mode=${entry.routing_mode}`;
+          }
+          return `${entry.display_name}: mode=${entry.routing_mode}`;
+        }))
+        : "- No controlled runtime profiles recorded yet.",
+      "",
+      "## Profile Notes",
+      profiles.length > 0
+        ? asBulletList(profiles.flatMap((entry) => ("reasons" in entry ? entry.reasons : entry.governance_notes).map((note) => `${entry.profile_id}: ${note}`)))
+        : "- No controlled runtime profile notes recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Activation Readiness Scoring"),
+        toLink("Runtime Integrity Validation"),
+        toLink("Execution Boundary Status"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFutureInferenceActivationNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const future = latestBootstrap?.future_inference_activation ?? null;
+  return {
+    title: "Future Inference Activation",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_future_inference_activation",
+      tags: ["second-brain", "future-inference", "bootstrap", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Scaffolded Future Steps",
+      future
+        ? asBulletList([
+          `Dry model initialization: ${future.dry_model_initialization ? "yes" : "no"}`,
+          `Dry VRAM reservation: ${future.dry_vram_reservation ? "yes" : "no"}`,
+          `Dry scheduler initialization: ${future.dry_scheduler_initialization ? "yes" : "no"}`,
+          `Dry pipeline binding: ${future.dry_pipeline_binding ? "yes" : "no"}`,
+          `Dry render packaging: ${future.dry_render_packaging ? "yes" : "no"}`,
+        ])
+        : "- No future inference activation scaffolds recorded yet.",
+      "",
+      "## Planning Notes",
+      future?.notes?.length
+        ? asBulletList(future.notes)
+        : "- No future inference activation notes recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Dry Runtime Bootstrap"),
+        toLink("Execution Boundary Status"),
+        toLink("Controlled Runtime Profiles"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildCinematicExecutionLifecycleNote(input: {
   productionMemory: CinematicProductionMemoryRecord;
   latestSessionId: string;
@@ -3058,6 +3320,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildActivationFailureRecoveryNote({ productionMemory, latestSessionId }),
     buildFutureActivationPlanNote({ productionMemory, latestSessionId }),
     buildUpdatedReadinessProgressNote({ productionMemory, latestSessionId, milestoneProgress: readinessMilestoneProgress }),
+    buildDryRuntimeBootstrapNote({ productionMemory, latestSessionId }),
+    buildExecutionBoundaryStatusNote({ productionMemory, latestSessionId }),
+    buildRuntimeIntegrityValidationNote({ productionMemory, latestSessionId }),
+    buildActivationReadinessScoringNote({ productionMemory, latestSessionId }),
+    buildControlledRuntimeProfilesNote({ productionMemory, latestSessionId }),
+    buildFutureInferenceActivationNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),
