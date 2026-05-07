@@ -67,11 +67,19 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Projects/Next Safe Task.md"));
     assert.ok(files.includes("Architecture/Architecture Rules.md"));
     assert.ok(files.includes("Architecture/Old BABYLON Anti-Patterns.md"));
+    assert.ok(files.includes("Architecture/Continuity Rules.md"));
     assert.ok(files.includes("Outcomes/Outcome History.md"));
+    assert.ok(files.includes("Outcomes/Failed Generations.md"));
+    assert.ok(files.includes("Outcomes/Successful Generations.md"));
     assert.ok(files.includes("Recovery/Recovery Procedures.md"));
+    assert.ok(files.includes("Resources/Asset Reuse Log.md"));
+    assert.ok(files.includes("Resources/Cost-Aware Iteration Notes.md"));
     assert.ok(files.includes("Strategy/Strategic Roadmap.md"));
+    assert.ok(files.includes("Strategy/Cinematic Production Memory.md"));
+    assert.ok(files.includes("Strategy/Shot Planning Rules.md"));
     assert.ok(files.includes("Resources/Resource Fallback State.md"));
     assert.ok(files.includes("Sessions/Session Continuity Summary.md"));
+    assert.ok(files.includes("Projects/BABYLON Cutscene Layer.md"));
 
     assert.match(homeText, /^---[\s\S]*project_key:/m);
     assert.match(homeText, /^---[\s\S]*updated_at:/m);
@@ -85,6 +93,15 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(currentStateText, /\[\[AI-E\]\]/);
     assert.match(outcomeText, /\[\[AI-E\]\]|\[\[BABYLON 2026\]\]/);
     assert.match(sessionText, /\[\[Outcome History\]\]/);
+
+    const cinematicMemoryText = await readFile(path.join(vaultRoot, "Strategy", "Cinematic Production Memory.md"), "utf8");
+    const cutsceneLayerText = await readFile(path.join(vaultRoot, "Projects", "BABYLON Cutscene Layer.md"), "utf8");
+    const costNotesText = await readFile(path.join(vaultRoot, "Resources", "Cost-Aware Iteration Notes.md"), "utf8");
+
+    assert.match(cinematicMemoryText, /Production Memory Manager/);
+    assert.match(cinematicMemoryText, /\[\[BABYLON Cutscene Layer\]\]/);
+    assert.match(cutsceneLayerText, /Wave Start Pressure Beat/);
+    assert.match(costNotesText, /Failed generations tracked:/);
 
     const existingTitles = new Set(files.map((file) => path.basename(file, ".md")));
     for (const file of files.filter((entry) => entry.endsWith(".md"))) {

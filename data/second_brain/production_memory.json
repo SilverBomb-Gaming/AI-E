@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-05-07T00:00:00.000Z",
+  "updated_at": "2026-05-07T00:00:00.000Z",
+  "project_key": "babylon-2026",
+  "mission_layer": "Persistent Production Memory + Cinematic Video Intelligence",
+  "roadmap_systems": [
+    {
+      "id": "production-memory-manager",
+      "title": "Production Memory Manager",
+      "status": "foundation",
+      "summary": "Persist characters, beats, style, continuity, and iteration outcomes as bounded production memory."
+    },
+    {
+      "id": "scene-graph-builder",
+      "title": "Scene Graph Builder",
+      "status": "planned",
+      "summary": "Map playable scenes, cinematic spaces, and asset relationships into reusable scene context."
+    },
+    {
+      "id": "shot-planner",
+      "title": "Shot Planner",
+      "status": "planned",
+      "summary": "Turn story beats and gameplay triggers into explicit shot plans with framing and pacing."
+    },
+    {
+      "id": "trailer-cutscene-director",
+      "title": "Trailer/Cutscene Director",
+      "status": "planned",
+      "summary": "Sequence beats, reveals, and gameplay-cinematic transitions into a coherent directing pass."
+    },
+    {
+      "id": "continuity-checker",
+      "title": "Continuity Checker",
+      "status": "planned",
+      "summary": "Guard tone, prop, costume, geography, and gameplay state continuity across generations."
+    },
+    {
+      "id": "asset-reuse-tracker",
+      "title": "Asset Reuse Tracker",
+      "status": "planned",
+      "summary": "Track reusable shots, prompts, edits, and source assets to reduce drift and cost."
+    },
+    {
+      "id": "gameplay-cutscene-trigger-system",
+      "title": "Gameplay Cutscene Trigger System",
+      "status": "planned",
+      "summary": "Bind gameplay conditions and state changes to cinematic beat activation points."
+    },
+    {
+      "id": "cinematic-prompt-compiler",
+      "title": "Cinematic Prompt Compiler",
+      "status": "foundation",
+      "summary": "Compile production memory into structured shot prompts without invoking generation yet."
+    },
+    {
+      "id": "cost-aware-iteration-system",
+      "title": "Cost-Aware Iteration System",
+      "status": "planned",
+      "summary": "Record failed/successful attempts with cost tiers and prioritize bounded iteration loops."
+    },
+    {
+      "id": "second-brain-obsidian-integration",
+      "title": "Second Brain + Obsidian integration",
+      "status": "foundation",
+      "summary": "Export human-readable cinematic planning notes while keeping machine memory authoritative."
+    }
+  ],
+  "characters": [
+    {
+      "character_id": "babylon-protagonist",
+      "name": "BABYLON Runner",
+      "role": "player-avatar",
+      "visual_signature": [
+        "compact armored silhouette",
+        "clear traversal gear",
+        "high contrast gameplay readability"
+      ],
+      "emotional_range": [
+        "resolve",
+        "pressure",
+        "recovery"
+      ],
+      "continuity_rules": [
+        "Keep silhouette readable in gameplay and cinematic framing.",
+        "Do not contradict currently implemented player abilities."
+      ]
+    }
+  ],
+  "environments": [
+    {
+      "environment_id": "babylon-arena-foundation",
+      "name": "BABYLON Arena Foundation",
+      "mood": "controlled tension",
+      "visual_markers": [
+        "clean arena lanes",
+        "clear enemy approach vectors",
+        "combat readability first"
+      ],
+      "lighting_rules": [
+        "Preserve readable player/enemy separation.",
+        "Avoid dramatic darkness that obscures gameplay state."
+      ],
+      "props": [
+        "spawn pads",
+        "weapon pickup silhouettes",
+        "impact debris accents"
+      ]
+    }
+  ],
+  "story_beats": [
+    {
+      "beat_id": "babylon-cutscene-proof",
+      "title": "Wave Start Pressure Beat",
+      "summary": "A short gameplay-adjacent cutscene establishes the next wave as pressure rises before control returns.",
+      "emotional_goal": "anticipation without losing tactical clarity",
+      "gameplay_trigger": "wave countdown enters final beat",
+      "continuity_dependencies": [
+        "Match current arena layout.",
+        "Do not imply weapons or enemies not present in the playable build."
+      ]
+    }
+  ],
+  "emotional_tone": [
+    "pressured",
+    "readable",
+    "confident",
+    "kinetic"
+  ],
+  "visual_style": [
+    "gameplay-first cinematic framing",
+    "clean sci-fi action",
+    "high legibility silhouettes"
+  ],
+  "camera_language": [
+    "push-ins for wave reveals",
+    "shoulder-height tactical framing",
+    "brief hero inserts between combat beats"
+  ],
+  "lighting": [
+    "rim light for subject separation",
+    "arena practicals over abstract mood lighting"
+  ],
+  "props": [
+    "arena barriers",
+    "weapon silhouettes",
+    "enemy spawn markers"
+  ],
+  "continuity_rules": [
+    "Cinematics must respect the live gameplay state and known-good BABYLON systems.",
+    "Do not invent props, locations, or powers that the current production case study does not support.",
+    "Shot-to-shot lighting must preserve player/enemy readability over dramatic stylization."
+  ],
+  "shot_history": [
+    {
+      "shot_id": "shot-wave-reveal-001",
+      "recorded_at": "2026-05-07T00:00:00.000Z",
+      "beat_id": "babylon-cutscene-proof",
+      "intent": "Establish incoming pressure before the next combat loop.",
+      "camera_framing": "wide arena reveal",
+      "camera_motion": "slow push-in",
+      "lens_language": "24mm gameplay-aware environment read",
+      "lighting_direction": "practicals plus subject rim separation",
+      "outcome": "baseline planning only"
+    }
+  ],
+  "generated_assets": [
+    {
+      "asset_id": "prompt-wave-reveal-001",
+      "kind": "prompt",
+      "label": "Wave reveal planning prompt",
+      "source": "ai-e cinematic production memory foundation",
+      "reusable": true,
+      "reuse_notes": [
+        "Use as a baseline for countdown-to-wave reveal beats."
+      ]
+    }
+  ],
+  "failed_generations": [
+    {
+      "generation_id": "failed-wave-overstyle-001",
+      "recorded_at": "2026-05-07T00:00:00.000Z",
+      "shot_id": "shot-wave-reveal-001",
+      "status": "failed",
+      "prompt_summary": "Attempted an overly dark, trailerized reveal that hid gameplay geography.",
+      "engine": "planning-placeholder",
+      "cost_tier": "low",
+      "asset_ids": [],
+      "notes": [
+        "Rejected because gameplay readability collapsed.",
+        "Keep arena geography visible."
+      ]
+    }
+  ],
+  "successful_generations": [
+    {
+      "generation_id": "success-wave-readable-001",
+      "recorded_at": "2026-05-07T00:00:00.000Z",
+      "shot_id": "shot-wave-reveal-001",
+      "status": "successful",
+      "prompt_summary": "Readable arena reveal with light motion and preserved tactical clarity.",
+      "engine": "planning-placeholder",
+      "cost_tier": "low",
+      "asset_ids": [
+        "prompt-wave-reveal-001"
+      ],
+      "notes": [
+        "Use as the canonical starting point for BABYLON cutscene proofs."
+      ]
+    }
+  ],
+  "edit_decisions": [
+    "Keep cutscene inserts short enough that they can hand control back to gameplay cleanly.",
+    "Prefer inserts that clarify upcoming threat state instead of abstract montage."
+  ],
+  "pacing_notes": [
+    "Pre-combat beats should feel brief and intentional, not like separate non-interactive scenes.",
+    "Use a quick rise in framing intensity just before the player regains control."
+  ],
+  "gameplay_context": {
+    "current_sequence": "Wave transition pressure beat",
+    "trigger_conditions": [
+      "wave countdown active",
+      "arena state stable",
+      "player not dead"
+    ],
+    "player_state_requirements": [
+      "player weapon equipped",
+      "camera ownership stable",
+      "HUD readable"
+    ],
+    "blocked_by": [
+      "combat still active",
+      "unresolved validation regressions"
+    ],
+    "downstream_payoffs": [
+      "clearer wave start anticipation",
+      "gameplay-cinematic continuity proof for BABYLON 2026"
+    ]
+  },
+  "cost_aware_iteration_notes": [
+    "Start with low-cost prompt and storyboard iterations before any expensive video generation pass.",
+    "Reuse approved prompts and shot language before introducing new stylistic branches."
+  ]
+}

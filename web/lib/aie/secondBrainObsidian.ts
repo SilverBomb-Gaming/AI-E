@@ -10,6 +10,7 @@ import {
   type OutcomeSummary,
   type SecondBrainRecord,
 } from "./secondBrainMemory";
+import { readCinematicProductionMemory, type CinematicProductionMemoryRecord } from "./cinematicProductionMemory";
 
 const OBSIDIAN_VAULT_DIRNAME = "Second Brain";
 
@@ -525,6 +526,301 @@ function buildSessionContinuitySummaryNote(input: {
   };
 }
 
+function buildCinematicProductionMemoryNote(input: {
+  record: SecondBrainRecord;
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Cinematic Production Memory",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_cinematic_memory_view",
+      tags: ["second-brain", "cinematic", "production-memory", "obsidian-export"],
+    },
+    body: [
+      "## Mission Layer",
+      asBulletList([
+        production.mission_layer,
+        `Primary case study: ${toLink("BABYLON Cutscene Layer")}`,
+      ]),
+      "",
+      "## Core Systems",
+      asBulletList(production.roadmap_systems.map((entry) => `${entry.title} (${entry.status}) - ${entry.summary}`)),
+      "",
+      "## Characters",
+      asBulletList(production.characters.map((entry) => `${entry.name}: ${entry.role}`)),
+      "",
+      "## Environments",
+      asBulletList(production.environments.map((entry) => `${entry.name}: ${entry.mood}`)),
+      "",
+      "## Story Beats",
+      asBulletList(production.story_beats.map((entry) => `${entry.title}: ${entry.summary}`)),
+      "",
+      "## Style Foundations",
+      asBulletList([
+        `Emotional tone: ${production.emotional_tone.join(", ")}`,
+        `Visual style: ${production.visual_style.join(", ")}`,
+        `Camera language: ${production.camera_language.join(", ")}`,
+        `Lighting: ${production.lighting.join(", ")}`,
+      ]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("BABYLON Cutscene Layer"),
+        toLink("Shot Planning Rules"),
+        toLink("Continuity Rules"),
+        toLink("Cost-Aware Iteration Notes"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildBabylonCutsceneLayerNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "BABYLON Cutscene Layer",
+    directory: "Projects",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_babylon_cutscene_layer",
+      tags: ["second-brain", "babylon-2026", "cutscene", "obsidian-export"],
+    },
+    body: [
+      "## Gameplay Context",
+      asBulletList([
+        `Current sequence: ${production.gameplay_context.current_sequence}`,
+        ...production.gameplay_context.trigger_conditions.map((entry) => `Trigger: ${entry}`),
+        ...production.gameplay_context.player_state_requirements.map((entry) => `Player state: ${entry}`),
+      ]),
+      "",
+      "## Story Beats",
+      asBulletList(production.story_beats.map((entry) => `${entry.title} -> ${entry.gameplay_trigger}`)),
+      "",
+      "## Pacing Notes",
+      asBulletList(production.pacing_notes),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Cinematic Production Memory"),
+        toLink("Shot Planning Rules"),
+        toLink("Successful Generations"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildShotPlanningRulesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Shot Planning Rules",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_shot_planning_rules",
+      tags: ["second-brain", "shot-planning", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Shot History",
+      asBulletList(production.shot_history.map((entry) => `${entry.shot_id}: ${entry.intent} | ${entry.camera_framing} | ${entry.camera_motion}`)),
+      "",
+      "## Camera Language",
+      asBulletList(production.camera_language),
+      "",
+      "## Edit Decisions",
+      asBulletList(production.edit_decisions),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("BABYLON Cutscene Layer"),
+        toLink("Continuity Rules"),
+        toLink("Cost-Aware Iteration Notes"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildCinematicContinuityRulesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Continuity Rules",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_cinematic_continuity_rules",
+      tags: ["second-brain", "continuity", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Core Rules",
+      asBulletList(production.continuity_rules),
+      "",
+      "## Beat Dependencies",
+      asBulletList(production.story_beats.flatMap((entry) => entry.continuity_dependencies.map((dependency) => `${entry.title}: ${dependency}`))),
+      "",
+      "## Character Safeguards",
+      asBulletList(production.characters.flatMap((entry) => entry.continuity_rules.map((rule) => `${entry.name}: ${rule}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Cinematic Production Memory"),
+        toLink("BABYLON Cutscene Layer"),
+        toLink("Failed Generations"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildAssetReuseLogNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Asset Reuse Log",
+    directory: "Resources",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_asset_reuse_log",
+      tags: ["second-brain", "asset-reuse", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Generated Assets",
+      asBulletList(production.generated_assets.map((entry) => `${entry.asset_id}: ${entry.label} (${entry.kind}) | reusable=${entry.reusable}`)),
+      "",
+      "## Reuse Notes",
+      asBulletList(production.generated_assets.flatMap((entry) => entry.reuse_notes.map((note) => `${entry.asset_id}: ${note}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Successful Generations"),
+        toLink("Cost-Aware Iteration Notes"),
+        toLink("Shot Planning Rules"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFailedGenerationsNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Failed Generations",
+    directory: "Outcomes",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_failed_generations",
+      tags: ["second-brain", "failed-generations", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Failed Attempts",
+      asBulletList(production.failed_generations.map((entry) => `${entry.generation_id}: ${entry.prompt_summary} | cost=${entry.cost_tier}`)),
+      "",
+      "## Failure Notes",
+      asBulletList(production.failed_generations.flatMap((entry) => entry.notes.map((note) => `${entry.generation_id}: ${note}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Continuity Rules"),
+        toLink("Cost-Aware Iteration Notes"),
+        toLink("Successful Generations"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildSuccessfulGenerationsNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Successful Generations",
+    directory: "Outcomes",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_successful_generations",
+      tags: ["second-brain", "successful-generations", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Approved Results",
+      asBulletList(production.successful_generations.map((entry) => `${entry.generation_id}: ${entry.prompt_summary} | cost=${entry.cost_tier}`)),
+      "",
+      "## Success Notes",
+      asBulletList(production.successful_generations.flatMap((entry) => entry.notes.map((note) => `${entry.generation_id}: ${note}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Asset Reuse Log"),
+        toLink("Shot Planning Rules"),
+        toLink("Cost-Aware Iteration Notes"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildCostAwareIterationNotes(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Cost-Aware Iteration Notes",
+    directory: "Resources",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_cost_aware_iteration_notes",
+      tags: ["second-brain", "cost-aware", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Iteration Notes",
+      asBulletList(production.cost_aware_iteration_notes),
+      "",
+      "## Cost Summary",
+      asBulletList([
+        `Failed generations tracked: ${production.failed_generations.length}`,
+        `Successful generations tracked: ${production.successful_generations.length}`,
+        `Reusable assets tracked: ${production.generated_assets.filter((entry) => entry.reusable).length}`,
+      ]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Failed Generations"),
+        toLink("Successful Generations"),
+        toLink("Asset Reuse Log"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildHomeNote(input: {
   record: SecondBrainRecord;
   authoritativeProjectContext: CurrentProjectContext;
@@ -683,6 +979,7 @@ export async function exportSecondBrainToObsidian(input?: {
 }): Promise<ExportSecondBrainToObsidianResult> {
   const initialization = await ensureSecondBrainInitialized(input?.root);
   const record = await readSecondBrainMemory({ root: initialization.repoRoot }) as SecondBrainRecord;
+  const productionMemory = await readCinematicProductionMemory({ root: initialization.repoRoot });
   const authoritativeProjectContext = await retrieveCurrentProjectContext({
     root: initialization.repoRoot,
     projectKey: record.current_project_key,
@@ -741,6 +1038,14 @@ export async function exportSecondBrainToObsidian(input?: {
     buildRecoveryProceduresNote({ record, latestSessionId }),
     buildResourceFallbackStateNote({ record, latestSessionId }),
     buildStrategicRoadmapNote({ record, latestSessionId }),
+    buildCinematicProductionMemoryNote({ record, productionMemory, latestSessionId }),
+    buildBabylonCutsceneLayerNote({ productionMemory, latestSessionId }),
+    buildShotPlanningRulesNote({ productionMemory, latestSessionId }),
+    buildCinematicContinuityRulesNote({ productionMemory, latestSessionId }),
+    buildAssetReuseLogNote({ productionMemory, latestSessionId }),
+    buildFailedGenerationsNote({ productionMemory, latestSessionId }),
+    buildSuccessfulGenerationsNote({ productionMemory, latestSessionId }),
+    buildCostAwareIterationNotes({ productionMemory, latestSessionId }),
     buildSessionContinuitySummaryNote({ record, repoProjectContext, latestSessionId }),
     buildHomeNote({
       record,
