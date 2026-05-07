@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import {
   assessCinematicLocalInferenceReadiness,
+  assessCinematicRuntimeConstraints,
   buildCinematicLocalExecutionPlan,
   compareCinematicProviderOutputs,
   compileCinematicProviderPayload,
@@ -17,11 +18,16 @@ import {
   getCinematicLocalHardwareProfiles,
   getCinematicLocalModelRegistry,
   getCinematicLocalRuntimeCapabilityRegistry,
+  getCinematicReadinessMilestoneProgress,
+  getCinematicRuntimeProbeAdapters,
   forecastCinematicSequenceCost,
   getCinematicProviderCapability,
   getCinematicProviderCapabilityRegistry,
+  inspectCinematicLocalRuntimeEnvironment,
   listCinematicProviderAdapters,
   planCinematicGenerationJobs,
+  planCinematicFrameGenerationPipeline,
+  planCinematicHybridLocalCloudStrategy,
   planCinematicLocalProviderRouting,
   planCinematicSequence,
   planFailedShotRegeneration,
@@ -186,10 +192,24 @@ test("local video inference readiness stays planning-only while exposing model, 
 
   try {
     await ensureCinematicProductionMemoryInitialized(tempRoot);
+    await mkdir(path.join(tempRoot, ".venv", "Scripts"), { recursive: true });
+    await mkdir(path.join(tempRoot, "ComfyUI"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models"), { recursive: true });
+    await mkdir(path.join(tempRoot, "tools", "ffmpeg"), { recursive: true });
+    await writeFile(path.join(tempRoot, ".venv", "Scripts", "python.exe"), "", "utf8");
+    await writeFile(path.join(tempRoot, "tools", "ffmpeg", "ffmpeg.exe"), "", "utf8");
 
     const models = getCinematicLocalModelRegistry();
     const runtimes = getCinematicLocalRuntimeCapabilityRegistry();
     const hardwareProfiles = getCinematicLocalHardwareProfiles();
+    const probeAdapters = getCinematicRuntimeProbeAdapters();
+    const probeSnapshot = await inspectCinematicLocalRuntimeEnvironment({
+      root: tempRoot,
+      persist: true,
+      pathHints: {
+        ffmpeg_paths: ["tools/ffmpeg/ffmpeg.exe"],
+      },
+    });
     const readiness = await assessCinematicLocalInferenceReadiness({
       root: tempRoot,
       desiredResolution: "1080p",
@@ -208,6 +228,25 @@ test("local video inference readiness stays planning-only while exposing model, 
       desiredDurationSeconds: 6,
       continuityPriority: "high",
     });
+    const pipelinePlan = await planCinematicFrameGenerationPipeline({ root: tempRoot });
+    const runtimeConstraints = await assessCinematicRuntimeConstraints({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const hybridPlan = await planCinematicHybridLocalCloudStrategy({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const milestoneProgress = await getCinematicReadinessMilestoneProgress({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
     const beforePlanRecord = await readCinematicProductionMemory({ root: tempRoot });
     const localPlan = await buildCinematicLocalExecutionPlan({
       root: tempRoot,
@@ -220,19 +259,39 @@ test("local video inference readiness stays planning-only while exposing model, 
     assert.ok(models.length >= 2);
     assert.ok(runtimes.length >= 1);
     assert.ok(hardwareProfiles.length >= 1);
+    assert.equal(probeAdapters.length, 8);
+    assert.equal(probeSnapshot.runtime_launch_enabled, false);
+    assert.ok(probeSnapshot.results.some((entry) => entry.probe_id === "python-runtime-presence" && entry.status === "detected"));
+    assert.ok(probeSnapshot.results.some((entry) => entry.probe_id === "inference-runtime-presence" && entry.status === "detected"));
+    assert.ok(probeSnapshot.results.some((entry) => entry.probe_id === "local-model-directory-presence" && entry.status === "detected"));
     assert.equal(readiness.foundation_ready, true);
     assert.equal(readiness.local_provider_available, true);
     assert.equal(readiness.ready_for_manual_local_execution, false);
     assert.equal(readiness.recommended_routing_mode, "future-local-inference-mode");
+    assert.ok(readiness.probe_snapshot);
+    assert.equal(readiness.probe_snapshot?.snapshot_id, probeSnapshot.snapshot_id);
+    assert.equal(readiness.milestone_progress.length, 7);
     assert.ok(readiness.blocked_reasons.some((entry) => /sandbox-only mode/i.test(entry)));
     assert.ok(hardwareEstimate);
     assert.equal(hardwareEstimate?.supported, true);
     assert.ok((hardwareEstimate?.estimated_generation_minutes ?? 0) >= 2);
     assert.equal(routing.selected_provider, "LocalFutureProvider");
     assert.equal(routing.routing_mode, "future-local-inference-mode");
+    assert.ok(routing.hybrid_strategy_ids.includes("local-draft-rendering"));
+    assert.ok(routing.hybrid_strategy_ids.includes("continuity-first-routing"));
+    assert.ok(pipelinePlan.blocked_stage_ids.includes("frame-synthesis"));
+    assert.ok(pipelinePlan.continuity_critical_stage_ids.includes("temporal-continuity"));
+    assert.equal(runtimeConstraints.selected_constraint_model_id, "windows-local-runtime-baseline");
+    assert.ok(runtimeConstraints.recommendations.some((entry) => /local draft previews/i.test(entry)));
+    assert.equal(hybridPlan.selected_strategy_id, "local-draft-rendering");
+    assert.ok(hybridPlan.candidate_strategy_ids.includes("continuity-first-routing"));
+    assert.equal(milestoneProgress.length, 7);
+    assert.ok(milestoneProgress.some((entry) => entry.milestone === "local-runtime-readiness" && entry.percentage > 50));
+    assert.ok(milestoneProgress.some((entry) => entry.milestone === "self-sustaining-generation-readiness" && entry.percentage < 50));
     assert.equal(localPlan.manual_execution_only, true);
     assert.equal(localPlan.execution_enabled, false);
     assert.ok(localPlan.steps.some((entry) => /sandbox-only mode/i.test(entry)));
+    assert.equal(localPlan.milestone_progress.length, 7);
     assert.deepEqual(afterPlanRecord.approval_audit_trail, beforePlanRecord.approval_audit_trail);
 
     await writeCinematicProductionMemory({
@@ -246,6 +305,7 @@ test("local video inference readiness stays planning-only while exposing model, 
           ...entry,
           status: "planned",
         })),
+        local_runtime_probe_snapshots: [],
       },
     });
 
@@ -265,6 +325,7 @@ test("local video inference readiness stays planning-only while exposing model, 
     assert.equal(blockedReadiness.local_provider_available, false);
     assert.equal(blockedRouting.selected_provider, "Sora");
     assert.equal(blockedRouting.routing_mode, "premium-cinematic-provider");
+    assert.ok(blockedReadiness.blocked_reasons.some((entry) => /runtime probe snapshot/i.test(entry)));
     assert.ok(blockedRouting.reasons.some((entry) => /fallback provider sora/i.test(entry)));
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

@@ -82,8 +82,11 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Architecture/Execution Readiness Checklist.md"));
     assert.ok(files.includes("Architecture/Local Model Registry.md"));
     assert.ok(files.includes("Architecture/Local Runtime Readiness.md"));
+    assert.ok(files.includes("Architecture/AI-E Readiness Percentages.md"));
+    assert.ok(files.includes("Architecture/Local Runtime Probe Results.md"));
     assert.ok(files.includes("Architecture/Hardware Capability Planning.md"));
     assert.ok(files.includes("Architecture/Local-vs-Cloud Routing.md"));
+    assert.ok(files.includes("Architecture/Runtime Constraint Modeling.md"));
     assert.ok(files.includes("Architecture/Manual Approval Workflow.md"));
     assert.ok(files.includes("Architecture/Continuity Review Notes.md"));
     assert.ok(files.includes("Architecture/Provider Constraint Matrix.md"));
@@ -96,7 +99,10 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Resources/Provider Comparison Notes.md"));
     assert.ok(files.includes("Strategy/Strategic Roadmap.md"));
     assert.ok(files.includes("Strategy/Cinematic Production Memory.md"));
+    assert.ok(files.includes("Strategy/Frame Generation Pipeline Planning.md"));
+    assert.ok(files.includes("Strategy/Renderer Capability Roadmap.md"));
     assert.ok(files.includes("Strategy/Future Local Inference Notes.md"));
+    assert.ok(files.includes("Strategy/Hybrid Local Cloud Strategy.md"));
     assert.ok(files.includes("Strategy/Generation Job Queue.md"));
     assert.ok(files.includes("Strategy/Operator Approval Queue.md"));
     assert.ok(files.includes("Strategy/Real Provider Dry Run.md"));
@@ -151,7 +157,10 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const localModelRegistryText = await readFile(path.join(vaultRoot, "Architecture", "Local Model Registry.md"), "utf8");
     const localRuntimeReadinessText = await readFile(path.join(vaultRoot, "Architecture", "Local Runtime Readiness.md"), "utf8");
     const hardwarePlanningText = await readFile(path.join(vaultRoot, "Architecture", "Hardware Capability Planning.md"), "utf8");
+    const readinessPercentagesText = await readFile(path.join(vaultRoot, "Architecture", "AI-E Readiness Percentages.md"), "utf8");
+    const runtimeProbeResultsText = await readFile(path.join(vaultRoot, "Architecture", "Local Runtime Probe Results.md"), "utf8");
     const localVsCloudRoutingText = await readFile(path.join(vaultRoot, "Architecture", "Local-vs-Cloud Routing.md"), "utf8");
+    const runtimeConstraintText = await readFile(path.join(vaultRoot, "Architecture", "Runtime Constraint Modeling.md"), "utf8");
     const lifecycleText = await readFile(path.join(vaultRoot, "Architecture", "Cinematic Execution Lifecycle.md"), "utf8");
     const retryRulesText = await readFile(path.join(vaultRoot, "Architecture", "Retry Planning Rules.md"), "utf8");
     const generationStrategyText = await readFile(path.join(vaultRoot, "Resources", "Cost-Aware Generation Strategy.md"), "utf8");
@@ -159,6 +168,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const localAssetCacheText = await readFile(path.join(vaultRoot, "Resources", "Local Asset Cache Strategy.md"), "utf8");
     const providerComparisonNotesText = await readFile(path.join(vaultRoot, "Resources", "Provider Comparison Notes.md"), "utf8");
     const futureLocalInferenceText = await readFile(path.join(vaultRoot, "Strategy", "Future Local Inference Notes.md"), "utf8");
+    const framePipelineText = await readFile(path.join(vaultRoot, "Strategy", "Frame Generation Pipeline Planning.md"), "utf8");
+    const rendererRoadmapText = await readFile(path.join(vaultRoot, "Strategy", "Renderer Capability Roadmap.md"), "utf8");
+    const hybridStrategyText = await readFile(path.join(vaultRoot, "Strategy", "Hybrid Local Cloud Strategy.md"), "utf8");
     const operatorQueueText = await readFile(path.join(vaultRoot, "Strategy", "Operator Approval Queue.md"), "utf8");
     const realProviderDryRunText = await readFile(path.join(vaultRoot, "Strategy", "Real Provider Dry Run.md"), "utf8");
     const submissionPackageExamplesText = await readFile(path.join(vaultRoot, "Strategy", "Submission Package Examples.md"), "utf8");
@@ -194,8 +206,12 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(providerConstraintMatrixText, /Sora: duration<=20s/i);
     assert.match(localModelRegistryText, /Wan 2\.1 Text-to-Video Q8/i);
     assert.match(localRuntimeReadinessText, /ComfyUI Local Video Lane/i);
+    assert.match(readinessPercentagesText, /Local Inference Readiness:/i);
+    assert.match(readinessPercentagesText, /Self Sustaining Generation Readiness:/i);
+    assert.match(runtimeProbeResultsText, /No runtime probe snapshots recorded yet\./i);
     assert.match(hardwarePlanningText, /Windows DirectML Baseline/i);
     assert.match(localVsCloudRoutingText, /Prefer LocalFutureProvider only when runtime, model, and hardware checks pass/i);
+    assert.match(runtimeConstraintText, /Windows Local Runtime Baseline/i);
     assert.match(lifecycleText, /Execution lifecycle remains append-only/i);
     assert.match(retryRulesText, /Retry planning must preserve successful shot outputs/i);
     assert.match(generationStrategyText, /Use cheap draft routing for first-pass framing validation/i);
@@ -203,6 +219,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(localAssetCacheText, /Cache model weights and VAE assets separately from generated outputs/i);
     assert.match(providerComparisonNotesText, /Compare providers by cost, duration support, continuity support/i);
     assert.match(futureLocalInferenceText, /Use LocalFutureProvider as a stable abstraction over future open-source backends/i);
+    assert.match(framePipelineText, /Prompt Compilation/i);
+    assert.match(rendererRoadmapText, /Image Sequence Rendering/i);
+    assert.match(hybridStrategyText, /Local Draft Rendering/i);
     assert.match(operatorQueueText, /No operator-facing jobs are queued yet\./i);
     assert.match(realProviderDryRunText, /No real-provider dry-run previews generated yet\./i);
     assert.match(submissionPackageExamplesText, /No submission packages prepared yet\./i);

@@ -754,9 +754,11 @@ export type CinematicLocalInferenceReadinessReport = {
   preferred_runtime_id: string | null;
   preferred_hardware_profile_id: string | null;
   recommended_routing_mode: CinematicProviderRoutingMode;
+  probe_snapshot: CinematicRuntimeProbeSnapshot | null;
   checks: CinematicLocalReadinessCheck[];
   blocked_reasons: string[];
   planning_notes: string[];
+  milestone_progress: CinematicReadinessMilestoneProgress[];
 };
 
 export type CinematicLocalHardwareEstimate = {
@@ -780,6 +782,7 @@ export type CinematicLocalProviderRoutingPlan = {
   reasons: string[];
   cache_strategy: string[];
   governance_requirements: string[];
+  hybrid_strategy_ids: CinematicHybridStrategyId[];
 };
 
 export type CinematicLocalExecutionPlan = {
@@ -791,6 +794,171 @@ export type CinematicLocalExecutionPlan = {
   execution_enabled: false;
   steps: string[];
   blocked_reasons: string[];
+  milestone_progress: CinematicReadinessMilestoneProgress[];
+};
+
+export type CinematicRuntimeProbeId =
+  | "cuda-installation"
+  | "gpu-vendor-visibility"
+  | "vram-reporting-capability"
+  | "ffmpeg-availability"
+  | "python-runtime-presence"
+  | "inference-runtime-presence"
+  | "local-model-directory-presence"
+  | "storage-space-estimate";
+
+export type CinematicRuntimeProbeStatus = "detected" | "not-detected" | "derived" | "blocked";
+
+export type CinematicRuntimeProbeAdapter = {
+  probe_id: CinematicRuntimeProbeId;
+  summary: string;
+  read_only: true;
+  signals: string[];
+};
+
+export type CinematicRuntimeProbePathHints = {
+  cuda_paths: string[];
+  ffmpeg_paths: string[];
+  python_paths: string[];
+  inference_runtime_paths: string[];
+  local_model_paths: string[];
+};
+
+export type CinematicRuntimeProbeResult = {
+  probe_id: CinematicRuntimeProbeId;
+  status: CinematicRuntimeProbeStatus;
+  detail: string;
+  candidate_paths: string[];
+  detected_paths: string[];
+  observed_value: string | null;
+  blockers: string[];
+};
+
+export type CinematicRuntimeProbeSnapshot = {
+  snapshot_id: string;
+  recorded_at: string;
+  runtime_launch_enabled: false;
+  gpu_vendor: string | null;
+  storage_free_gb_estimate: number | null;
+  results: CinematicRuntimeProbeResult[];
+};
+
+export type CinematicFrameGenerationStageName =
+  | "prompt-compilation"
+  | "latent-preparation"
+  | "frame-synthesis"
+  | "frame-interpolation"
+  | "temporal-continuity"
+  | "upscale-stage"
+  | "render-packaging"
+  | "output-archival";
+
+export type CinematicFrameGenerationStageStatus = "planned" | "foundation" | "modeled";
+
+export type CinematicFrameGenerationStage = {
+  stage_id: CinematicFrameGenerationStageName;
+  display_name: string;
+  status: CinematicFrameGenerationStageStatus;
+  description: string;
+  dependencies: string[];
+  continuity_critical: boolean;
+  notes: string[];
+};
+
+export type CinematicRendererCapabilityName =
+  | "image-sequence-rendering"
+  | "frame-interpolation"
+  | "temporal-coherence"
+  | "continuity-state-reuse"
+  | "local-upscaling"
+  | "offline-packaging";
+
+export type CinematicRendererCapabilityStatus = "planned" | "foundation" | "modeled";
+
+export type CinematicRendererCapabilityRoadmapEntry = {
+  capability_id: CinematicRendererCapabilityName;
+  display_name: string;
+  status: CinematicRendererCapabilityStatus;
+  description: string;
+  dependencies: string[];
+  notes: string[];
+};
+
+export type CinematicRuntimeConstraintModel = {
+  model_id: string;
+  title: string;
+  minimum_vram_tiers_gb: number[];
+  low_vram_fallback_viable: boolean;
+  storage_scaling: string[];
+  render_time_scaling: string[];
+  local_queue_pressure: string[];
+  hybrid_offload_recommendations: string[];
+};
+
+export type CinematicHybridStrategyId =
+  | "local-draft-rendering"
+  | "cloud-premium-rendering"
+  | "offline-safe-mode"
+  | "continuity-first-routing"
+  | "budget-first-routing"
+  | "hardware-aware-escalation";
+
+export type CinematicHybridStrategyStatus = "planned" | "foundation" | "modeled";
+
+export type CinematicHybridLocalCloudStrategy = {
+  strategy_id: CinematicHybridStrategyId;
+  display_name: string;
+  status: CinematicHybridStrategyStatus;
+  summary: string;
+  preferred_provider_mode: CinematicProviderRoutingMode;
+  governance_requirements: string[];
+  escalation_conditions: string[];
+};
+
+export type CinematicReadinessMilestoneKey =
+  | "local-inference-readiness"
+  | "local-runtime-readiness"
+  | "local-frame-generation-readiness"
+  | "local-renderer-readiness"
+  | "continuity-preserving-local-generation"
+  | "hybrid-local-cloud-orchestration"
+  | "self-sustaining-generation-readiness";
+
+export type CinematicReadinessConfidence = "low" | "medium" | "high";
+
+export type CinematicReadinessMilestoneProgress = {
+  milestone: CinematicReadinessMilestoneKey;
+  percentage: number;
+  confidence: CinematicReadinessConfidence;
+  blockers: string[];
+  next_required_milestone: string;
+  estimated_architectural_dependency: string;
+  missing_dependencies: string[];
+};
+
+export type CinematicFrameGenerationPipelinePlan = {
+  stages: CinematicFrameGenerationStage[];
+  blocked_stage_ids: string[];
+  continuity_critical_stage_ids: string[];
+  readiness_percentage: number;
+  notes: string[];
+};
+
+export type CinematicRuntimeConstraintAssessment = {
+  selected_constraint_model_id: string | null;
+  probe_snapshot_id: string | null;
+  preferred_hardware_profile_id: string | null;
+  limitations: string[];
+  recommendations: string[];
+};
+
+export type CinematicHybridRoutingStrategyPlan = {
+  selected_strategy_id: CinematicHybridStrategyId | null;
+  routing_mode: CinematicProviderRoutingMode;
+  fallback_provider: Exclude<CinematicGenerationProvider, "LocalFutureProvider">;
+  reasons: string[];
+  candidate_strategy_ids: CinematicHybridStrategyId[];
+  milestone_progress: CinematicReadinessMilestoneProgress[];
 };
 
 export type CinematicSandboxSimulationResult = {
@@ -839,6 +1007,12 @@ export type CinematicProductionMemoryRecord = {
   local_inference_governance_rules: string[];
   local_asset_cache_strategy: string[];
   local_inference_notes: string[];
+  local_runtime_probe_path_hints: CinematicRuntimeProbePathHints;
+  local_runtime_probe_snapshots: CinematicRuntimeProbeSnapshot[];
+  frame_generation_stage_registry: CinematicFrameGenerationStage[];
+  renderer_capability_roadmap: CinematicRendererCapabilityRoadmapEntry[];
+  runtime_constraint_models: CinematicRuntimeConstraintModel[];
+  hybrid_local_cloud_strategies: CinematicHybridLocalCloudStrategy[];
   provider_routing_rules: string[];
   prompt_normalization_rules: string[];
   provider_validation_rules: string[];
@@ -1451,6 +1625,236 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
     "Keep runtime detection, hardware profiling, and model registry decoupled so routing stays provider-agnostic.",
     "Plan for Windows-friendly backends first, with DirectML and CUDA both representable in the readiness layer.",
   ],
+  local_runtime_probe_path_hints: {
+    cuda_paths: [
+      "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA",
+      "C:/Program Files/NVIDIA GPU Computing Toolkit",
+    ],
+    ffmpeg_paths: [
+      "C:/ffmpeg/bin/ffmpeg.exe",
+      "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
+    ],
+    python_paths: [
+      ".venv/Scripts/python.exe",
+      "C:/Python312/python.exe",
+      "C:/Python311/python.exe",
+    ],
+    inference_runtime_paths: [
+      "ComfyUI",
+      ".venv/Lib/site-packages/diffusers",
+      ".venv/Lib/site-packages/torch",
+    ],
+    local_model_paths: [
+      "models",
+      "data/models",
+      "runner_artifacts/models",
+    ],
+  },
+  local_runtime_probe_snapshots: [],
+  frame_generation_stage_registry: [
+    {
+      stage_id: "prompt-compilation",
+      display_name: "Prompt Compilation",
+      status: "foundation",
+      description: "Compile bounded cinematic intent into a future local frame-generation payload.",
+      dependencies: ["cinematic production memory", "provider payload normalization"],
+      continuity_critical: true,
+      notes: ["Already aligned with LocalFutureProvider planning payload preparation."],
+    },
+    {
+      stage_id: "latent-preparation",
+      display_name: "Latent Preparation",
+      status: "modeled",
+      description: "Reserve a future stage for seed selection, conditioning tensors, and reusable latent context.",
+      dependencies: ["runtime probe results", "model registry"],
+      continuity_critical: true,
+      notes: ["Modeled only; no latent generation or runtime execution occurs in this phase."],
+    },
+    {
+      stage_id: "frame-synthesis",
+      display_name: "Frame Synthesis",
+      status: "planned",
+      description: "Future synthesis stage for local frame generation once a manual-only execution bridge exists.",
+      dependencies: ["local runtime readiness", "manual approval bridge"],
+      continuity_critical: true,
+      notes: ["Explicitly blocked from execution in this milestone."],
+    },
+    {
+      stage_id: "frame-interpolation",
+      display_name: "Frame Interpolation",
+      status: "planned",
+      description: "Future optional stage for smoothing sparse local frame sequences.",
+      dependencies: ["renderer capability roadmap", "runtime constraint models"],
+      continuity_critical: false,
+      notes: ["Planning-only interpolation lane."],
+    },
+    {
+      stage_id: "temporal-continuity",
+      display_name: "Temporal Continuity",
+      status: "modeled",
+      description: "Model the continuity-state handoff required to keep local sequences coherent across frames and shots.",
+      dependencies: ["continuity rules", "renderer continuity-state reuse"],
+      continuity_critical: true,
+      notes: ["Critical to any future local generation lane."],
+    },
+    {
+      stage_id: "upscale-stage",
+      display_name: "Upscale Stage",
+      status: "planned",
+      description: "Future local upscale planning for draft-to-review quality transitions.",
+      dependencies: ["renderer capability roadmap", "runtime probe ffmpeg/python support"],
+      continuity_critical: false,
+      notes: ["No upscaling runtime is launched in this phase."],
+    },
+    {
+      stage_id: "render-packaging",
+      display_name: "Render Packaging",
+      status: "modeled",
+      description: "Package future image sequences, sidecar metadata, and continuity notes into reviewable outputs.",
+      dependencies: ["ffmpeg availability", "offline packaging roadmap"],
+      continuity_critical: false,
+      notes: ["Covers non-executing packaging metadata only."],
+    },
+    {
+      stage_id: "output-archival",
+      display_name: "Output Archival",
+      status: "foundation",
+      description: "Reuse append-only governance and asset archival rules for any future local outputs.",
+      dependencies: ["approval audit trail", "asset cache strategy"],
+      continuity_critical: true,
+      notes: ["Archival remains append-only and operator-governed."],
+    },
+  ],
+  renderer_capability_roadmap: [
+    {
+      capability_id: "image-sequence-rendering",
+      display_name: "Image Sequence Rendering",
+      status: "modeled",
+      description: "Plan future image-sequence assembly from locally generated frame sets.",
+      dependencies: ["frame synthesis", "render packaging"],
+      notes: ["No renderer execution is enabled."],
+    },
+    {
+      capability_id: "frame-interpolation",
+      display_name: "Frame Interpolation",
+      status: "planned",
+      description: "Future interpolation lane for smoothing sparse local frame outputs.",
+      dependencies: ["frame interpolation", "runtime constraints"],
+      notes: ["Planning-only stage."],
+    },
+    {
+      capability_id: "temporal-coherence",
+      display_name: "Temporal Coherence",
+      status: "modeled",
+      description: "Preserve consistent visual state across successive frames and shots.",
+      dependencies: ["temporal continuity", "continuity validation"],
+      notes: ["Continuity-first requirement."],
+    },
+    {
+      capability_id: "continuity-state-reuse",
+      display_name: "Continuity-State Reuse",
+      status: "modeled",
+      description: "Reuse bounded state between local draft passes and premium cloud escalation.",
+      dependencies: ["asset reuse tracker", "continuity notes"],
+      notes: ["Remains non-executing."],
+    },
+    {
+      capability_id: "local-upscaling",
+      display_name: "Local Upscaling",
+      status: "planned",
+      description: "Future operator-approved upscale stage for local draft outputs.",
+      dependencies: ["upscale stage", "runtime probe ffmpeg/python support"],
+      notes: ["No upscale runtime activation in this phase."],
+    },
+    {
+      capability_id: "offline-packaging",
+      display_name: "Offline Packaging",
+      status: "foundation",
+      description: "Prepare non-executing packaging rules for outputs, metadata, and archival manifests.",
+      dependencies: ["render packaging", "output archival"],
+      notes: ["Packaging plans stay offline-safe."],
+    },
+  ],
+  runtime_constraint_models: [
+    {
+      model_id: "windows-local-runtime-baseline",
+      title: "Windows Local Runtime Baseline",
+      minimum_vram_tiers_gb: [8, 12, 16],
+      low_vram_fallback_viable: true,
+      storage_scaling: [
+        "Draft local lanes should reserve at least 24GB for weights and cache.",
+        "Higher-continuity models should reserve 40GB+ once multi-stage packaging is introduced.",
+      ],
+      render_time_scaling: [
+        "720p draft passes should be treated as the baseline timing tier.",
+        "1080p multi-stage passes may take roughly 2x the baseline planning estimate.",
+      ],
+      local_queue_pressure: [
+        "Single-job local queues remain the default assumption.",
+        "Queued local packaging and upscale stages should be serialized until runtime evidence improves.",
+      ],
+      hybrid_offload_recommendations: [
+        "Offload premium or long-duration shots to cloud providers when local VRAM or storage is tight.",
+        "Use local draft previews first when budget pressure is higher than fidelity pressure.",
+      ],
+    },
+  ],
+  hybrid_local_cloud_strategies: [
+    {
+      strategy_id: "local-draft-rendering",
+      display_name: "Local Draft Rendering",
+      status: "foundation",
+      summary: "Reserve local inference for future low-cost draft passes after runtime readiness improves.",
+      preferred_provider_mode: "future-local-inference-mode",
+      governance_requirements: ["manual approval", "sandbox-only until bridge approval"],
+      escalation_conditions: ["runtime readiness incomplete", "continuity pressure exceeds local support"],
+    },
+    {
+      strategy_id: "cloud-premium-rendering",
+      display_name: "Cloud Premium Rendering",
+      status: "foundation",
+      summary: "Use cloud providers for premium fidelity and longer continuity-sensitive renders.",
+      preferred_provider_mode: "premium-cinematic-provider",
+      governance_requirements: ["manual approval", "budget governance"],
+      escalation_conditions: ["premium fidelity required", "local hardware below model thresholds"],
+    },
+    {
+      strategy_id: "offline-safe-mode",
+      display_name: "Offline Safe Mode",
+      status: "foundation",
+      summary: "Keep orchestration and planning provider-agnostic without invoking any runtime or provider execution.",
+      preferred_provider_mode: "offline-planning-mode",
+      governance_requirements: ["sandbox-only mode", "no runtime launch"],
+      escalation_conditions: ["runtime probes missing", "operator requests planning-only review"],
+    },
+    {
+      strategy_id: "continuity-first-routing",
+      display_name: "Continuity-First Routing",
+      status: "modeled",
+      summary: "Escalate to the highest continuity-preserving lane when sequence coherence is at risk.",
+      preferred_provider_mode: "premium-cinematic-provider",
+      governance_requirements: ["continuity validation", "operator review"],
+      escalation_conditions: ["temporal continuity stage incomplete", "local model continuity support limited"],
+    },
+    {
+      strategy_id: "budget-first-routing",
+      display_name: "Budget-First Routing",
+      status: "modeled",
+      summary: "Prefer cheaper local or draft-capable lanes when cost pressure dominates fidelity pressure.",
+      preferred_provider_mode: "cheap-draft-provider",
+      governance_requirements: ["budget governance", "manual approval"],
+      escalation_conditions: ["budget cap exceeded", "storage or queue pressure rises"],
+    },
+    {
+      strategy_id: "hardware-aware-escalation",
+      display_name: "Hardware-Aware Escalation",
+      status: "modeled",
+      summary: "Escalate from local to cloud when hardware evidence cannot support the requested render profile.",
+      preferred_provider_mode: "balanced-comparison-mode",
+      governance_requirements: ["runtime constraint review", "manual escalation"],
+      escalation_conditions: ["low VRAM", "missing ffmpeg", "local runtime not detected"],
+    },
+  ],
   provider_routing_rules: [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
@@ -1602,6 +2006,12 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     local_inference_governance_rules: nextRecord.local_inference_governance_rules ?? defaults.local_inference_governance_rules,
     local_asset_cache_strategy: nextRecord.local_asset_cache_strategy ?? defaults.local_asset_cache_strategy,
     local_inference_notes: nextRecord.local_inference_notes ?? defaults.local_inference_notes,
+    local_runtime_probe_path_hints: nextRecord.local_runtime_probe_path_hints ?? defaults.local_runtime_probe_path_hints,
+    local_runtime_probe_snapshots: nextRecord.local_runtime_probe_snapshots ?? defaults.local_runtime_probe_snapshots,
+    frame_generation_stage_registry: nextRecord.frame_generation_stage_registry ?? defaults.frame_generation_stage_registry,
+    renderer_capability_roadmap: nextRecord.renderer_capability_roadmap ?? defaults.renderer_capability_roadmap,
+    runtime_constraint_models: nextRecord.runtime_constraint_models ?? defaults.runtime_constraint_models,
+    hybrid_local_cloud_strategies: nextRecord.hybrid_local_cloud_strategies ?? defaults.hybrid_local_cloud_strategies,
     provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
     prompt_normalization_rules: nextRecord.prompt_normalization_rules ?? defaults.prompt_normalization_rules,
     provider_validation_rules: nextRecord.provider_validation_rules ?? defaults.provider_validation_rules,
@@ -2189,6 +2599,398 @@ function localHardwareStatusWeight(status: CinematicLocalHardwareProfileStatus):
   }
 }
 
+function frameStageStatusScore(status: CinematicFrameGenerationStageStatus): number {
+  switch (status) {
+    case "foundation":
+      return 0.65;
+    case "modeled":
+      return 0.8;
+    case "planned":
+      return 0.35;
+  }
+}
+
+function rendererCapabilityStatusScore(status: CinematicRendererCapabilityStatus): number {
+  switch (status) {
+    case "foundation":
+      return 0.65;
+    case "modeled":
+      return 0.8;
+    case "planned":
+      return 0.35;
+  }
+}
+
+function hybridStrategyStatusScore(status: CinematicHybridStrategyStatus): number {
+  switch (status) {
+    case "foundation":
+      return 0.65;
+    case "modeled":
+      return 0.8;
+    case "planned":
+      return 0.35;
+  }
+}
+
+function uniqueNormalizedStrings(values: Array<string | null | undefined>): string[] {
+  return [...new Set(values.map((entry) => normalizeText(entry)).filter((entry) => entry.length > 0))];
+}
+
+function resolveCandidatePaths(root: string, candidates: string[]): string[] {
+  return uniqueNormalizedStrings(candidates).map((entry) => path.normalize(path.isAbsolute(entry) ? entry : path.join(root, entry)));
+}
+
+function existingPathsFromCandidates(root: string, candidates: string[]): string[] {
+  return resolveCandidatePaths(root, candidates).filter((entry) => existsSync(entry));
+}
+
+function findExecutablesInPath(names: string[]): string[] {
+  const directories = uniqueNormalizedStrings((process.env.PATH ?? "").split(path.delimiter));
+  const found: string[] = [];
+  for (const directory of directories) {
+    for (const name of names) {
+      const candidate = path.join(directory, name);
+      if (existsSync(candidate)) {
+        found.push(path.normalize(candidate));
+      }
+    }
+  }
+  return uniqueNormalizedStrings(found);
+}
+
+function latestLocalRuntimeProbeSnapshot(record: CinematicProductionMemoryRecord): CinematicRuntimeProbeSnapshot | null {
+  return [...record.local_runtime_probe_snapshots].sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+}
+
+function runtimeProbeResult(snapshot: CinematicRuntimeProbeSnapshot | null, probeId: CinematicRuntimeProbeId): CinematicRuntimeProbeResult | null {
+  return snapshot?.results.find((entry) => entry.probe_id === probeId) ?? null;
+}
+
+function runtimeProbeDetected(snapshot: CinematicRuntimeProbeSnapshot | null, probeId: CinematicRuntimeProbeId): boolean {
+  const result = runtimeProbeResult(snapshot, probeId);
+  return result?.status === "detected" || result?.status === "derived";
+}
+
+function clampPercentage(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function percentageFromChecks(checks: Array<{ passed: boolean; weight: number }>): number {
+  const totalWeight = checks.reduce((sum, entry) => sum + entry.weight, 0);
+  if (totalWeight <= 0) {
+    return 0;
+  }
+  const earned = checks.reduce((sum, entry) => sum + (entry.passed ? entry.weight : 0), 0);
+  return clampPercentage((earned / totalWeight) * 100);
+}
+
+function averageScore(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+  return values.reduce((sum, entry) => sum + entry, 0) / values.length;
+}
+
+function readinessConfidenceFromPercentage(percentage: number, evidenceCount: number): CinematicReadinessConfidence {
+  if (percentage >= 70 && evidenceCount >= 5) {
+    return "high";
+  }
+  if (percentage >= 35 && evidenceCount >= 2) {
+    return "medium";
+  }
+  return "low";
+}
+
+function buildRuntimeProbeAdapters(): CinematicRuntimeProbeAdapter[] {
+  return [
+    {
+      probe_id: "cuda-installation",
+      summary: "Detect CUDA installation roots through read-only filesystem and environment inspection.",
+      read_only: true,
+      signals: ["CUDA_PATH", "configured paths", "standard install directories"],
+    },
+    {
+      probe_id: "gpu-vendor-visibility",
+      summary: "Infer visible GPU vendor hints without launching any hardware query tools.",
+      read_only: true,
+      signals: ["environment hints", "hardware profiles", "configured backend families"],
+    },
+    {
+      probe_id: "vram-reporting-capability",
+      summary: "Check whether bounded VRAM reporting inputs are available from stored hardware profiles.",
+      read_only: true,
+      signals: ["hardware profiles", "probe hints"],
+    },
+    {
+      probe_id: "ffmpeg-availability",
+      summary: "Detect FFmpeg binaries via configured paths and PATH scanning only.",
+      read_only: true,
+      signals: ["configured ffmpeg paths", "PATH executable scan"],
+    },
+    {
+      probe_id: "python-runtime-presence",
+      summary: "Detect Python runtimes through configured paths, PATH scanning, and repo-local virtual environments.",
+      read_only: true,
+      signals: ["configured python paths", "PATH executable scan", ".venv"],
+    },
+    {
+      probe_id: "inference-runtime-presence",
+      summary: "Detect installed inference runtime folders without importing or launching them.",
+      read_only: true,
+      signals: ["ComfyUI folders", "diffusers package path", "torch package path"],
+    },
+    {
+      probe_id: "local-model-directory-presence",
+      summary: "Detect local model directories using configured bounded path hints.",
+      read_only: true,
+      signals: ["configured model directories", "repo-local model roots"],
+    },
+    {
+      probe_id: "storage-space-estimate",
+      summary: "Use bounded stored hardware estimates rather than live disk queries.",
+      read_only: true,
+      signals: ["hardware profile storage estimates", "manual estimate hint"],
+    },
+  ];
+}
+
+function resolveGpuVendor(input: {
+  hardwareProfiles: CinematicLocalHardwareProfile[];
+  gpuVendorHint?: string;
+}): string | null {
+  const vendorHint = normalizeText(input.gpuVendorHint).toLowerCase();
+  if (vendorHint.length > 0) {
+    return vendorHint;
+  }
+  if (process.env.CUDA_PATH || input.hardwareProfiles.some((entry) => entry.accelerator_backend === "cuda")) {
+    return "nvidia";
+  }
+  if (process.env.HIP_PATH || input.hardwareProfiles.some((entry) => entry.accelerator_backend === "rocm")) {
+    return "amd";
+  }
+  if (process.env.ONEAPI_ROOT) {
+    return "intel";
+  }
+  if (input.hardwareProfiles.some((entry) => entry.accelerator_backend === "directml")) {
+    return "windows-gpu-visible";
+  }
+  return null;
+}
+
+function buildReadinessMilestoneProgress(input: {
+  record: CinematicProductionMemoryRecord;
+  snapshot: CinematicRuntimeProbeSnapshot | null;
+  preferredModel: CinematicLocalVideoModelProfile | null;
+  preferredRuntime: CinematicLocalRuntimeCapability | null;
+  preferredHardware: CinematicLocalHardwareProfile | null;
+  localProviderAvailable: boolean;
+}): CinematicReadinessMilestoneProgress[] {
+  const frameStageAverage = averageScore(input.record.frame_generation_stage_registry.map((entry) => frameStageStatusScore(entry.status)));
+  const rendererAverage = averageScore(input.record.renderer_capability_roadmap.map((entry) => rendererCapabilityStatusScore(entry.status)));
+  const hybridAverage = averageScore(input.record.hybrid_local_cloud_strategies.map((entry) => hybridStrategyStatusScore(entry.status)));
+  const continuityStrength = input.preferredModel ? localContinuityWeight(input.preferredModel.continuity_support) / 3 : 0;
+  const readinessChecks = {
+    python: runtimeProbeDetected(input.snapshot, "python-runtime-presence"),
+    ffmpeg: runtimeProbeDetected(input.snapshot, "ffmpeg-availability"),
+    inference: runtimeProbeDetected(input.snapshot, "inference-runtime-presence"),
+    models: runtimeProbeDetected(input.snapshot, "local-model-directory-presence"),
+    storage: runtimeProbeDetected(input.snapshot, "storage-space-estimate"),
+    cuda: runtimeProbeDetected(input.snapshot, "cuda-installation"),
+    gpuVendor: runtimeProbeDetected(input.snapshot, "gpu-vendor-visibility"),
+    vram: runtimeProbeDetected(input.snapshot, "vram-reporting-capability"),
+  };
+  const localInferencePercentage = percentageFromChecks([
+    { passed: input.record.local_model_registry.length > 0, weight: 15 },
+    { passed: input.record.local_runtime_capability_registry.length > 0, weight: 10 },
+    { passed: input.record.local_hardware_profiles.length > 0, weight: 10 },
+    { passed: input.snapshot !== null, weight: 10 },
+    { passed: readinessChecks.python, weight: 10 },
+    { passed: readinessChecks.inference, weight: 10 },
+    { passed: readinessChecks.models, weight: 10 },
+    { passed: input.record.local_provider_routing_rules.length > 0, weight: 10 },
+    { passed: input.record.local_asset_cache_strategy.length > 0, weight: 5 },
+    { passed: input.record.local_inference_governance_rules.length > 0, weight: 5 },
+    { passed: input.record.frame_generation_stage_registry.length > 0, weight: 5 },
+  ]);
+  const localRuntimePercentage = percentageFromChecks([
+    { passed: input.snapshot !== null, weight: 15 },
+    { passed: readinessChecks.cuda, weight: 12 },
+    { passed: readinessChecks.gpuVendor, weight: 10 },
+    { passed: readinessChecks.vram, weight: 10 },
+    { passed: readinessChecks.ffmpeg, weight: 10 },
+    { passed: readinessChecks.python, weight: 15 },
+    { passed: readinessChecks.inference, weight: 15 },
+    { passed: readinessChecks.models, weight: 8 },
+    { passed: readinessChecks.storage, weight: 5 },
+  ]);
+  const frameGenerationPercentage = clampPercentage((frameStageAverage * 75)
+    + (input.record.local_model_registry.length > 0 ? 10 : 0)
+    + (input.record.runtime_constraint_models.length > 0 ? 8 : 0)
+    + (input.snapshot ? 7 : 0));
+  const rendererPercentage = clampPercentage((rendererAverage * 75)
+    + (readinessChecks.ffmpeg ? 10 : 0)
+    + (readinessChecks.storage ? 8 : 0)
+    + (input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "render-packaging" && entry.status !== "planned") ? 7 : 0));
+  const continuityPercentage = clampPercentage((continuityStrength * 35)
+    + (input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "temporal-continuity" && entry.status !== "planned") ? 20 : 0)
+    + (input.record.renderer_capability_roadmap.some((entry) => entry.capability_id === "continuity-state-reuse" && entry.status !== "planned") ? 15 : 0)
+    + (input.record.continuity_rules.length > 0 ? 15 : 0)
+    + (input.localProviderAvailable ? 15 : 0));
+  const hybridPercentage = clampPercentage((hybridAverage * 70)
+    + (input.record.provider_routing_rules.length > 0 ? 10 : 0)
+    + (input.record.runtime_constraint_models.length > 0 ? 10 : 0)
+    + (input.record.local_provider_routing_rules.length > 0 ? 10 : 0));
+  const selfSustainingPercentage = percentageFromChecks([
+    { passed: input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "output-archival" && entry.status !== "planned"), weight: 20 },
+    { passed: input.record.local_inference_governance_rules.length > 0, weight: 10 },
+    { passed: input.record.approval_audit_trail.length >= 0, weight: 10 },
+    { passed: false, weight: 60 },
+  ]);
+  return [
+    {
+      milestone: "local-inference-readiness",
+      percentage: localInferencePercentage,
+      confidence: readinessConfidenceFromPercentage(localInferencePercentage, 6 + (input.snapshot ? 2 : 0)),
+      blockers: [
+        ...(input.snapshot ? [] : ["No runtime probe snapshot has been recorded yet."]),
+        ...(readinessChecks.inference ? [] : ["Inference runtime presence has not been detected read-only."]),
+        ...(readinessChecks.models ? [] : ["Local model directories have not been detected read-only."]),
+      ],
+      next_required_milestone: "Record a normalized runtime probe snapshot and bind it into readiness review.",
+      estimated_architectural_dependency: "runtime probe normalization -> local readiness gate -> manual local bridge preview",
+      missing_dependencies: [
+        ...(readinessChecks.python ? [] : ["python runtime detection"]),
+        ...(readinessChecks.inference ? [] : ["inference runtime detection"]),
+        ...(readinessChecks.models ? [] : ["local model directory detection"]),
+      ],
+    },
+    {
+      milestone: "local-runtime-readiness",
+      percentage: localRuntimePercentage,
+      confidence: readinessConfidenceFromPercentage(localRuntimePercentage, input.snapshot ? 6 : 1),
+      blockers: [
+        ...(readinessChecks.cuda ? [] : ["CUDA installation is not detected read-only."]),
+        ...(readinessChecks.gpuVendor ? [] : ["GPU vendor visibility is not confirmed."]),
+        ...(readinessChecks.ffmpeg ? [] : ["FFmpeg is not detected in configured paths or PATH."]),
+        ...(readinessChecks.inference ? [] : ["Inference runtime folders are not detected."]),
+      ],
+      next_required_milestone: "Promote configured path hints into verified runtime probe evidence.",
+      estimated_architectural_dependency: "path hints -> runtime probe snapshot -> constraint modeling",
+      missing_dependencies: [
+        ...(readinessChecks.vram ? [] : ["VRAM reporting evidence"]),
+        ...(readinessChecks.storage ? [] : ["storage estimate evidence"]),
+      ],
+    },
+    {
+      milestone: "local-frame-generation-readiness",
+      percentage: frameGenerationPercentage,
+      confidence: readinessConfidenceFromPercentage(frameGenerationPercentage, input.record.frame_generation_stage_registry.length),
+      blockers: input.record.frame_generation_stage_registry
+        .filter((entry) => entry.status === "planned")
+        .map((entry) => `${entry.display_name} remains planning-only.`),
+      next_required_milestone: "Convert latent preparation and render packaging into verified non-executing precursor contracts.",
+      estimated_architectural_dependency: "frame stage registry -> runtime constraints -> manual-only frame bridge",
+      missing_dependencies: [
+        ...(input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "frame-synthesis" && entry.status !== "planned") ? [] : ["frame synthesis contract"]),
+        ...(input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "frame-interpolation" && entry.status !== "planned") ? [] : ["frame interpolation contract"]),
+      ],
+    },
+    {
+      milestone: "local-renderer-readiness",
+      percentage: rendererPercentage,
+      confidence: readinessConfidenceFromPercentage(rendererPercentage, input.record.renderer_capability_roadmap.length),
+      blockers: [
+        ...(readinessChecks.ffmpeg ? [] : ["FFmpeg packaging support is not yet detected."]),
+        ...input.record.renderer_capability_roadmap.filter((entry) => entry.status === "planned").map((entry) => `${entry.display_name} is not scaffolded beyond planning.`),
+      ],
+      next_required_milestone: "Bind renderer roadmap entries to verified probe evidence and packaging manifests.",
+      estimated_architectural_dependency: "renderer roadmap -> ffmpeg evidence -> offline packaging manifest",
+      missing_dependencies: [
+        ...(input.record.renderer_capability_roadmap.some((entry) => entry.capability_id === "image-sequence-rendering" && entry.status !== "planned") ? [] : ["image sequence rendering scaffold"]),
+        ...(input.record.renderer_capability_roadmap.some((entry) => entry.capability_id === "local-upscaling" && entry.status !== "planned") ? [] : ["local upscaling scaffold"]),
+      ],
+    },
+    {
+      milestone: "continuity-preserving-local-generation",
+      percentage: continuityPercentage,
+      confidence: readinessConfidenceFromPercentage(continuityPercentage, 4 + (input.preferredModel ? 1 : 0)),
+      blockers: [
+        ...(input.preferredModel && localContinuityWeight(input.preferredModel.continuity_support) >= 2 ? [] : ["Preferred local model continuity support is still limited."]),
+        ...(input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "temporal-continuity" && entry.status !== "planned") ? [] : ["Temporal continuity stage is not yet scaffolded strongly enough."]),
+      ],
+      next_required_milestone: "Strengthen temporal continuity and continuity-state reuse contracts before any local sequence generation bridge.",
+      estimated_architectural_dependency: "continuity rules -> temporal stage registry -> continuity-state reuse roadmap",
+      missing_dependencies: [
+        ...(input.record.renderer_capability_roadmap.some((entry) => entry.capability_id === "continuity-state-reuse" && entry.status !== "planned") ? [] : ["continuity-state reuse scaffold"]),
+      ],
+    },
+    {
+      milestone: "hybrid-local-cloud-orchestration",
+      percentage: hybridPercentage,
+      confidence: readinessConfidenceFromPercentage(hybridPercentage, input.record.hybrid_local_cloud_strategies.length),
+      blockers: [
+        ...(input.record.hybrid_local_cloud_strategies.some((entry) => entry.strategy_id === "hardware-aware-escalation" && entry.status !== "planned") ? [] : ["Hardware-aware escalation remains planning-only."]),
+        ...(input.record.runtime_constraint_models.length > 0 ? [] : ["Runtime constraint modeling is missing."]),
+      ],
+      next_required_milestone: "Bind hybrid strategy decisions to concrete probe and constraint evidence.",
+      estimated_architectural_dependency: "runtime probes -> constraints -> hybrid routing plans -> governed escalation",
+      missing_dependencies: [
+        ...(input.localProviderAvailable ? [] : ["verified local provider evidence"]),
+      ],
+    },
+    {
+      milestone: "self-sustaining-generation-readiness",
+      percentage: selfSustainingPercentage,
+      confidence: "low",
+      blockers: [
+        "Autonomous local execution remains intentionally disabled.",
+        "Manual approval and sandbox governance still block unattended inference.",
+        "No self-sustaining render loop is permitted in this architecture.",
+      ],
+      next_required_milestone: "Do not pursue this milestone until governance policy explicitly changes.",
+      estimated_architectural_dependency: "manual-only local bridge -> reviewed execution receipts -> separate policy approval",
+      missing_dependencies: [
+        "policy approval for autonomy",
+        "reviewed execution bridge",
+        "governed recovery loop",
+      ],
+    },
+  ].map((entry) => ({
+    ...entry,
+    blockers: uniqueNormalizedStrings(entry.blockers),
+    missing_dependencies: uniqueNormalizedStrings(entry.missing_dependencies),
+  }));
+}
+
+function selectHybridStrategyIds(input: {
+  record: CinematicProductionMemoryRecord;
+  readiness: CinematicLocalInferenceReadinessReport;
+  continuityPriority: "low" | "medium" | "high";
+  desiredDurationSeconds: number;
+  offline: boolean;
+}): CinematicHybridStrategyId[] {
+  const strategyIds: CinematicHybridStrategyId[] = [];
+  if (input.offline) {
+    strategyIds.push("offline-safe-mode");
+  }
+  if (input.readiness.local_provider_available) {
+    strategyIds.push("local-draft-rendering");
+  } else {
+    strategyIds.push("hardware-aware-escalation");
+  }
+  if (input.continuityPriority === "high") {
+    strategyIds.push("continuity-first-routing", "cloud-premium-rendering");
+  }
+  if (input.desiredDurationSeconds <= 8) {
+    strategyIds.push("budget-first-routing");
+  }
+  if (!input.readiness.local_provider_available && !input.offline && input.continuityPriority !== "high") {
+    strategyIds.push("cloud-premium-rendering");
+  }
+  const allowed = new Set(input.record.hybrid_local_cloud_strategies.map((entry) => entry.strategy_id));
+  return [...new Set(strategyIds)].filter((entry) => allowed.has(entry));
+}
+
 function localContinuityWeight(support: CinematicLocalVideoModelProfile["continuity_support"]): number {
   switch (support) {
     case "full":
@@ -2285,6 +3087,11 @@ function summarizeLocalReadiness(input: {
     record: input.record,
     hardware: preferredHardware,
   });
+  const probeSnapshot = latestLocalRuntimeProbeSnapshot(input.record);
+  const pythonDetected = runtimeProbeDetected(probeSnapshot, "python-runtime-presence");
+  const inferenceRuntimeDetected = runtimeProbeDetected(probeSnapshot, "inference-runtime-presence");
+  const localModelDirectoryDetected = runtimeProbeDetected(probeSnapshot, "local-model-directory-presence");
+  const ffmpegDetected = runtimeProbeDetected(probeSnapshot, "ffmpeg-availability");
   const checks: CinematicLocalReadinessCheck[] = [
     {
       check: "model-registry-populated",
@@ -2306,6 +3113,34 @@ function summarizeLocalReadiness(input: {
       detail: input.record.local_hardware_profiles.some((entry) => entry.status === "profiled" || entry.status === "validated")
         ? "At least one local hardware profile has been recorded."
         : "No profiled local hardware target is recorded yet.",
+    },
+    {
+      check: "runtime-probe-recorded",
+      passed: probeSnapshot !== null,
+      detail: probeSnapshot
+        ? `Runtime probe snapshot ${probeSnapshot.snapshot_id} was recorded at ${probeSnapshot.recorded_at}.`
+        : "No runtime probe snapshot has been recorded yet.",
+    },
+    {
+      check: "python-runtime-detected",
+      passed: pythonDetected,
+      detail: pythonDetected
+        ? "A Python runtime is visible through bounded read-only inspection."
+        : "Python runtime presence is not yet confirmed by a runtime probe snapshot.",
+    },
+    {
+      check: "inference-runtime-detected",
+      passed: inferenceRuntimeDetected,
+      detail: inferenceRuntimeDetected
+        ? "At least one inference runtime path is visible through bounded read-only inspection."
+        : "No inference runtime path is confirmed by the current runtime probe snapshot.",
+    },
+    {
+      check: "local-model-path-detected",
+      passed: localModelDirectoryDetected,
+      detail: localModelDirectoryDetected
+        ? "A local model directory is visible through bounded read-only inspection."
+        : "No local model directory is confirmed by the current runtime probe snapshot.",
     },
     {
       check: "routing-rules-defined",
@@ -2335,12 +3170,24 @@ function summarizeLocalReadiness(input: {
     && localRuntimeStatusWeight(preferredRuntime.status) >= 2
     && localHardwareStatusWeight(preferredHardware.status) >= 2
     && preferredHardware.gpu_vram_gb >= preferredModel.vram_requirement_gb
-    && preferredHardware.storage_free_gb >= preferredModel.storage_requirement_gb;
+    && preferredHardware.storage_free_gb >= preferredModel.storage_requirement_gb
+    && pythonDetected
+    && inferenceRuntimeDetected
+    && localModelDirectoryDetected;
+  const milestoneProgress = buildReadinessMilestoneProgress({
+    record: input.record,
+    snapshot: probeSnapshot,
+    preferredModel,
+    preferredRuntime,
+    preferredHardware,
+    localProviderAvailable,
+  });
   const blockedReasons = [
     ...checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
     ...(preferredModel ? [] : [`No local model currently satisfies ${input.desiredResolution} at ${input.desiredDurationSeconds}s.`]),
     ...(preferredRuntime ? [] : ["No local runtime matches the preferred hardware backend."]),
     ...(preferredHardware ? [] : ["No local hardware profile can satisfy the requested video profile."]),
+    ...(ffmpegDetected ? [] : ["FFmpeg has not been detected yet, so future renderer packaging remains incomplete."]),
     ...(localProviderAvailable ? [] : ["Preferred local model/runtime/hardware tuple is not yet ready for a manual bridge review."]),
     ...(input.record.generation_budget_policy.sandbox_only_mode ? ["Sandbox-only mode still blocks any future local execution handoff."] : []),
   ];
@@ -2352,9 +3199,11 @@ function summarizeLocalReadiness(input: {
     preferred_runtime_id: preferredRuntime?.runtime_id ?? null,
     preferred_hardware_profile_id: preferredHardware?.profile_id ?? null,
     recommended_routing_mode: localProviderAvailable ? "future-local-inference-mode" : "offline-planning-mode",
+    probe_snapshot: probeSnapshot,
     checks,
     blocked_reasons: blockedReasons,
     planning_notes: input.record.local_inference_notes,
+    milestone_progress: milestoneProgress,
   };
 }
 
@@ -2682,6 +3531,247 @@ export function getCinematicLocalHardwareProfiles(input?: {
   return (input?.record ?? cloneDefaultRecord()).local_hardware_profiles;
 }
 
+export function getCinematicRuntimeProbeAdapters(): CinematicRuntimeProbeAdapter[] {
+  return buildRuntimeProbeAdapters();
+}
+
+export async function inspectCinematicLocalRuntimeEnvironment(input?: {
+  root?: string;
+  persist?: boolean;
+  gpuVendorHint?: string;
+  pathHints?: Partial<CinematicRuntimeProbePathHints>;
+}): Promise<CinematicRuntimeProbeSnapshot> {
+  const initialization = await loadProductionMemory(input?.root);
+  const record = initialization.record;
+  const mergedPathHints: CinematicRuntimeProbePathHints = {
+    cuda_paths: uniqueNormalizedStrings([
+      ...record.local_runtime_probe_path_hints.cuda_paths,
+      ...(input?.pathHints?.cuda_paths ?? []),
+      process.env.CUDA_PATH,
+    ]),
+    ffmpeg_paths: uniqueNormalizedStrings([
+      ...record.local_runtime_probe_path_hints.ffmpeg_paths,
+      ...(input?.pathHints?.ffmpeg_paths ?? []),
+    ]),
+    python_paths: uniqueNormalizedStrings([
+      ...record.local_runtime_probe_path_hints.python_paths,
+      ...(input?.pathHints?.python_paths ?? []),
+    ]),
+    inference_runtime_paths: uniqueNormalizedStrings([
+      ...record.local_runtime_probe_path_hints.inference_runtime_paths,
+      ...(input?.pathHints?.inference_runtime_paths ?? []),
+    ]),
+    local_model_paths: uniqueNormalizedStrings([
+      ...record.local_runtime_probe_path_hints.local_model_paths,
+      ...(input?.pathHints?.local_model_paths ?? []),
+    ]),
+  };
+  const cudaMatches = existingPathsFromCandidates(initialization.repoRoot, mergedPathHints.cuda_paths);
+  const ffmpegMatches = uniqueNormalizedStrings([
+    ...existingPathsFromCandidates(initialization.repoRoot, mergedPathHints.ffmpeg_paths),
+    ...findExecutablesInPath(["ffmpeg.exe", "ffmpeg"]),
+  ]);
+  const pythonMatches = uniqueNormalizedStrings([
+    ...existingPathsFromCandidates(initialization.repoRoot, mergedPathHints.python_paths),
+    ...findExecutablesInPath(["python.exe", "python"]),
+  ]);
+  const inferenceMatches = existingPathsFromCandidates(initialization.repoRoot, mergedPathHints.inference_runtime_paths);
+  const modelMatches = existingPathsFromCandidates(initialization.repoRoot, mergedPathHints.local_model_paths);
+  const gpuVendor = resolveGpuVendor({
+    hardwareProfiles: record.local_hardware_profiles,
+    gpuVendorHint: input?.gpuVendorHint,
+  });
+  const maxVram = record.local_hardware_profiles.reduce((max, entry) => Math.max(max, entry.gpu_vram_gb), 0);
+  const maxStorage = record.local_hardware_profiles.reduce((max, entry) => Math.max(max, entry.storage_free_gb), 0);
+  const results: CinematicRuntimeProbeResult[] = [
+    {
+      probe_id: "cuda-installation",
+      status: cudaMatches.length > 0 ? "detected" : process.env.CUDA_PATH ? "derived" : "not-detected",
+      detail: cudaMatches.length > 0
+        ? `Detected ${cudaMatches.length} CUDA installation path hint(s).`
+        : process.env.CUDA_PATH
+          ? "CUDA visibility is derived from the CUDA_PATH environment variable only."
+          : "CUDA installation paths were not detected.",
+      candidate_paths: resolveCandidatePaths(initialization.repoRoot, mergedPathHints.cuda_paths),
+      detected_paths: cudaMatches,
+      observed_value: cudaMatches[0] ?? (normalizeText(process.env.CUDA_PATH) || null),
+      blockers: cudaMatches.length > 0 || process.env.CUDA_PATH ? [] : ["CUDA install root not found in bounded hints."],
+    },
+    {
+      probe_id: "gpu-vendor-visibility",
+      status: gpuVendor ? "derived" : "not-detected",
+      detail: gpuVendor
+        ? `GPU vendor visibility is inferred as ${gpuVendor}.`
+        : "GPU vendor visibility could not be inferred from bounded signals.",
+      candidate_paths: [],
+      detected_paths: [],
+      observed_value: gpuVendor,
+      blockers: gpuVendor ? [] : ["No bounded GPU vendor hint is available."],
+    },
+    {
+      probe_id: "vram-reporting-capability",
+      status: maxVram > 0 ? "derived" : "not-detected",
+      detail: maxVram > 0
+        ? `Stored hardware profiles expose up to ${maxVram}GB VRAM.`
+        : "Stored hardware profiles do not expose VRAM evidence.",
+      candidate_paths: [],
+      detected_paths: [],
+      observed_value: maxVram > 0 ? `${maxVram}GB` : null,
+      blockers: maxVram > 0 ? [] : ["No hardware profile contains VRAM data."],
+    },
+    {
+      probe_id: "ffmpeg-availability",
+      status: ffmpegMatches.length > 0 ? "detected" : "not-detected",
+      detail: ffmpegMatches.length > 0
+        ? `Detected ${ffmpegMatches.length} FFmpeg executable path hint(s).`
+        : "FFmpeg executable was not detected in bounded paths or PATH.",
+      candidate_paths: resolveCandidatePaths(initialization.repoRoot, mergedPathHints.ffmpeg_paths),
+      detected_paths: ffmpegMatches,
+      observed_value: ffmpegMatches[0] ?? null,
+      blockers: ffmpegMatches.length > 0 ? [] : ["FFmpeg executable is missing from bounded search paths."],
+    },
+    {
+      probe_id: "python-runtime-presence",
+      status: pythonMatches.length > 0 ? "detected" : "not-detected",
+      detail: pythonMatches.length > 0
+        ? `Detected ${pythonMatches.length} Python runtime path hint(s).`
+        : "Python runtime was not detected in bounded paths or PATH.",
+      candidate_paths: resolveCandidatePaths(initialization.repoRoot, mergedPathHints.python_paths),
+      detected_paths: pythonMatches,
+      observed_value: pythonMatches[0] ?? null,
+      blockers: pythonMatches.length > 0 ? [] : ["Python runtime is not visible to bounded inspection."],
+    },
+    {
+      probe_id: "inference-runtime-presence",
+      status: inferenceMatches.length > 0 ? "detected" : "not-detected",
+      detail: inferenceMatches.length > 0
+        ? `Detected ${inferenceMatches.length} inference runtime path hint(s).`
+        : "Inference runtime folders were not detected in bounded configured paths.",
+      candidate_paths: resolveCandidatePaths(initialization.repoRoot, mergedPathHints.inference_runtime_paths),
+      detected_paths: inferenceMatches,
+      observed_value: inferenceMatches[0] ?? null,
+      blockers: inferenceMatches.length > 0 ? [] : ["Inference runtime folder is not visible to bounded inspection."],
+    },
+    {
+      probe_id: "local-model-directory-presence",
+      status: modelMatches.length > 0 ? "detected" : "not-detected",
+      detail: modelMatches.length > 0
+        ? `Detected ${modelMatches.length} local model directory hint(s).`
+        : "Local model directories were not detected in bounded configured paths.",
+      candidate_paths: resolveCandidatePaths(initialization.repoRoot, mergedPathHints.local_model_paths),
+      detected_paths: modelMatches,
+      observed_value: modelMatches[0] ?? null,
+      blockers: modelMatches.length > 0 ? [] : ["Local model directory is not visible to bounded inspection."],
+    },
+    {
+      probe_id: "storage-space-estimate",
+      status: maxStorage > 0 ? "derived" : "not-detected",
+      detail: maxStorage > 0
+        ? `Stored hardware profiles expose up to ${maxStorage}GB free storage.`
+        : "Stored hardware profiles do not expose a free-storage estimate.",
+      candidate_paths: [],
+      detected_paths: [],
+      observed_value: maxStorage > 0 ? `${maxStorage}GB` : null,
+      blockers: maxStorage > 0 ? [] : ["No hardware profile contains storage estimates."],
+    },
+  ];
+  const snapshot: CinematicRuntimeProbeSnapshot = {
+    snapshot_id: `runtime-probe-${new Date().toISOString().replace(/[^0-9]/g, "").slice(0, 14)}`,
+    recorded_at: new Date().toISOString(),
+    runtime_launch_enabled: false,
+    gpu_vendor: gpuVendor,
+    storage_free_gb_estimate: maxStorage > 0 ? maxStorage : null,
+    results,
+  };
+  if (input?.persist) {
+    await writeProductionMemoryRecord(initialization.productionMemoryPath, {
+      ...record,
+      local_runtime_probe_path_hints: mergedPathHints,
+      local_runtime_probe_snapshots: [snapshot, ...record.local_runtime_probe_snapshots].slice(0, 12),
+    });
+  }
+  return snapshot;
+}
+
+export function getCinematicFrameGenerationStageRegistry(input?: {
+  record?: CinematicProductionMemoryRecord;
+}): CinematicFrameGenerationStage[] {
+  return (input?.record ?? cloneDefaultRecord()).frame_generation_stage_registry;
+}
+
+export function getCinematicRendererCapabilityRoadmap(input?: {
+  record?: CinematicProductionMemoryRecord;
+}): CinematicRendererCapabilityRoadmapEntry[] {
+  return (input?.record ?? cloneDefaultRecord()).renderer_capability_roadmap;
+}
+
+export function getCinematicRuntimeConstraintModels(input?: {
+  record?: CinematicProductionMemoryRecord;
+}): CinematicRuntimeConstraintModel[] {
+  return (input?.record ?? cloneDefaultRecord()).runtime_constraint_models;
+}
+
+export function getCinematicHybridLocalCloudStrategies(input?: {
+  record?: CinematicProductionMemoryRecord;
+}): CinematicHybridLocalCloudStrategy[] {
+  return (input?.record ?? cloneDefaultRecord()).hybrid_local_cloud_strategies;
+}
+
+export async function planCinematicFrameGenerationPipeline(input?: {
+  root?: string;
+}): Promise<CinematicFrameGenerationPipelinePlan> {
+  const record = await readCinematicProductionMemory({ root: input?.root });
+  const stages = record.frame_generation_stage_registry;
+  return {
+    stages,
+    blocked_stage_ids: stages.filter((entry) => entry.status === "planned").map((entry) => entry.stage_id),
+    continuity_critical_stage_ids: stages.filter((entry) => entry.continuity_critical).map((entry) => entry.stage_id),
+    readiness_percentage: clampPercentage(averageScore(stages.map((entry) => frameStageStatusScore(entry.status))) * 100),
+    notes: uniqueNormalizedStrings(stages.flatMap((entry) => entry.notes)),
+  };
+}
+
+export async function assessCinematicRuntimeConstraints(input?: {
+  root?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+}): Promise<CinematicRuntimeConstraintAssessment> {
+  const record = await readCinematicProductionMemory({ root: input?.root });
+  const readiness = summarizeLocalReadiness({
+    record,
+    desiredResolution: input?.desiredResolution ?? DEFAULT_TARGET_RESOLUTION,
+    desiredDurationSeconds: input?.desiredDurationSeconds ?? DEFAULT_TARGET_DURATION_SECONDS,
+    continuityPriority: input?.continuityPriority ?? "medium",
+  });
+  const selectedModel = record.runtime_constraint_models[0] ?? null;
+  const limitations = uniqueNormalizedStrings([
+    ...readiness.blocked_reasons,
+    ...selectedModel?.local_queue_pressure ?? [],
+  ]);
+  const recommendations = uniqueNormalizedStrings([
+    ...selectedModel?.hybrid_offload_recommendations ?? [],
+    ...(readiness.local_provider_available ? [] : ["Favor offline-safe-mode or cloud-premium-rendering until runtime probe evidence improves."]),
+  ]);
+  return {
+    selected_constraint_model_id: selectedModel?.model_id ?? null,
+    probe_snapshot_id: readiness.probe_snapshot?.snapshot_id ?? null,
+    preferred_hardware_profile_id: readiness.preferred_hardware_profile_id,
+    limitations,
+    recommendations,
+  };
+}
+
+export async function getCinematicReadinessMilestoneProgress(input?: {
+  root?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+}): Promise<CinematicReadinessMilestoneProgress[]> {
+  const readiness = await assessCinematicLocalInferenceReadiness(input);
+  return readiness.milestone_progress;
+}
+
 export async function assessCinematicLocalInferenceReadiness(input?: {
   root?: string;
   desiredResolution?: CinematicVideoResolution;
@@ -2760,6 +3850,13 @@ export async function planCinematicLocalProviderRouting(input?: {
       ? "Seedance"
       : "Veo";
   const offline = Boolean(input?.requireOfflinePlanning);
+  const hybridStrategyIds = selectHybridStrategyIds({
+    record,
+    readiness,
+    continuityPriority: input?.continuityPriority ?? "medium",
+    desiredDurationSeconds: input?.desiredDurationSeconds ?? DEFAULT_TARGET_DURATION_SECONDS,
+    offline,
+  });
   const selectedProvider = offline || readiness.local_provider_available ? "LocalFutureProvider" : fallbackProvider;
   const routingMode: CinematicProviderRoutingMode = offline
     ? "offline-planning-mode"
@@ -2795,6 +3892,29 @@ export async function planCinematicLocalProviderRouting(input?: {
     reasons,
     cache_strategy: record.local_asset_cache_strategy,
     governance_requirements: record.local_inference_governance_rules,
+    hybrid_strategy_ids: hybridStrategyIds,
+  };
+}
+
+export async function planCinematicHybridLocalCloudStrategy(input?: {
+  root?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+  requireOfflinePlanning?: boolean;
+}): Promise<CinematicHybridRoutingStrategyPlan> {
+  const routing = await planCinematicLocalProviderRouting(input);
+  const readiness = await assessCinematicLocalInferenceReadiness(input);
+  return {
+    selected_strategy_id: routing.hybrid_strategy_ids[0] ?? null,
+    routing_mode: routing.routing_mode,
+    fallback_provider: routing.fallback_provider,
+    reasons: uniqueNormalizedStrings([
+      ...routing.reasons,
+      ...routing.governance_requirements,
+    ]),
+    candidate_strategy_ids: routing.hybrid_strategy_ids,
+    milestone_progress: readiness.milestone_progress,
   };
 }
 
@@ -2840,9 +3960,11 @@ export async function buildCinematicLocalExecutionPlan(input?: {
       "Keep sandbox-only mode enabled while local runtime detection and cache layout stay advisory.",
       "Prepare LocalFutureProvider payloads and asset references without launching a runtime or downloading models.",
       "Confirm cache directories, weight storage, and reference assets as a separate manual operational task.",
+      "Record and review runtime probe snapshots before trusting any local runtime readiness signal.",
       "If future policy changes permit it, introduce a separate manual-only local execution bridge rather than widening this readiness layer.",
     ],
     blocked_reasons: readiness.blocked_reasons,
+    milestone_progress: readiness.milestone_progress,
   };
 }
 

@@ -10,7 +10,11 @@ import {
   type OutcomeSummary,
   type SecondBrainRecord,
 } from "./secondBrainMemory";
-import { readCinematicProductionMemory, type CinematicProductionMemoryRecord } from "./cinematicProductionMemory";
+import {
+  getCinematicReadinessMilestoneProgress,
+  readCinematicProductionMemory,
+  type CinematicProductionMemoryRecord,
+} from "./cinematicProductionMemory";
 
 const OBSIDIAN_VAULT_DIRNAME = "Second Brain";
 
@@ -70,6 +74,13 @@ function asBulletList(items: string[]): string {
   }
 
   return items.map((item) => `- ${item}`).join("\n");
+}
+
+function humanizeReadinessMilestone(value: string): string {
+  return value
+    .split("-")
+    .map((entry) => entry.charAt(0).toUpperCase() + entry.slice(1))
+    .join(" ");
 }
 
 function formatFrontMatter(note: ObsidianExportNote): string {
@@ -1852,6 +1863,216 @@ function buildLocalAssetCacheStrategyNote(input: {
   };
 }
 
+function buildReadinessPercentagesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+  milestoneProgress: Awaited<ReturnType<typeof getCinematicReadinessMilestoneProgress>>;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "AI-E Readiness Percentages",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_readiness_percentages",
+      tags: ["second-brain", "readiness", "percentages", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Milestone Progress",
+      asBulletList(input.milestoneProgress.map((entry) => `${humanizeReadinessMilestone(entry.milestone)}: ${entry.percentage}% | confidence=${entry.confidence} | next=${entry.next_required_milestone}`)),
+      "",
+      "## Current Blockers",
+      asBulletList(input.milestoneProgress.flatMap((entry) => entry.blockers.map((blocker) => `${humanizeReadinessMilestone(entry.milestone)}: ${blocker}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local Runtime Probe Results"),
+        toLink("Frame Generation Pipeline Planning"),
+        toLink("Hybrid Local Cloud Strategy"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildLocalRuntimeProbeResultsNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestSnapshot = [...production.local_runtime_probe_snapshots].sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+  return {
+    title: "Local Runtime Probe Results",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_runtime_probe_results",
+      tags: ["second-brain", "runtime-probe", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Probe Hints",
+      asBulletList([
+        `CUDA hints: ${production.local_runtime_probe_path_hints.cuda_paths.join(", ")}`,
+        `FFmpeg hints: ${production.local_runtime_probe_path_hints.ffmpeg_paths.join(", ")}`,
+        `Python hints: ${production.local_runtime_probe_path_hints.python_paths.join(", ")}`,
+      ]),
+      "",
+      "## Latest Snapshot",
+      latestSnapshot
+        ? asBulletList([
+          `Snapshot: ${latestSnapshot.snapshot_id}`,
+          `Recorded at: ${latestSnapshot.recorded_at}`,
+          `GPU vendor: ${latestSnapshot.gpu_vendor ?? "unknown"}`,
+          `Storage estimate: ${latestSnapshot.storage_free_gb_estimate ?? "unknown"}GB`,
+        ])
+        : "- No runtime probe snapshots recorded yet.",
+      "",
+      "## Probe Results",
+      latestSnapshot
+        ? asBulletList(latestSnapshot.results.map((entry) => `${entry.probe_id}: status=${entry.status} | observed=${entry.observed_value ?? "n/a"} | detected_paths=${entry.detected_paths.length}`))
+        : "- No probe results available.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("AI-E Readiness Percentages"),
+        toLink("Runtime Constraint Modeling"),
+        toLink("Local Runtime Readiness"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFrameGenerationPipelinePlanningNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Frame Generation Pipeline Planning",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_frame_pipeline_planning",
+      tags: ["second-brain", "frame-generation", "pipeline", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Stage Registry",
+      asBulletList(production.frame_generation_stage_registry.map((entry) => `${entry.display_name}: status=${entry.status} | continuity-critical=${entry.continuity_critical ? "yes" : "no"} | dependencies=${entry.dependencies.join(", ")}`)),
+      "",
+      "## Stage Notes",
+      asBulletList(production.frame_generation_stage_registry.flatMap((entry) => entry.notes.map((note) => `${entry.stage_id}: ${note}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Renderer Capability Roadmap"),
+        toLink("Runtime Constraint Modeling"),
+        toLink("AI-E Readiness Percentages"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildRendererCapabilityRoadmapNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Renderer Capability Roadmap",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_renderer_capability_roadmap",
+      tags: ["second-brain", "renderer", "roadmap", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Capability Roadmap",
+      asBulletList(production.renderer_capability_roadmap.map((entry) => `${entry.display_name}: status=${entry.status} | dependencies=${entry.dependencies.join(", ")}`)),
+      "",
+      "## Capability Notes",
+      asBulletList(production.renderer_capability_roadmap.flatMap((entry) => entry.notes.map((note) => `${entry.capability_id}: ${note}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Frame Generation Pipeline Planning"),
+        toLink("Local Runtime Probe Results"),
+        toLink("AI-E Readiness Percentages"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildRuntimeConstraintModelingNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Runtime Constraint Modeling",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_runtime_constraint_modeling",
+      tags: ["second-brain", "runtime-constraints", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Constraint Models",
+      asBulletList(production.runtime_constraint_models.map((entry) => `${entry.title}: vram tiers=${entry.minimum_vram_tiers_gb.join(",")}GB | low-vram fallback=${entry.low_vram_fallback_viable ? "yes" : "no"}`)),
+      "",
+      "## Offload Recommendations",
+      asBulletList(production.runtime_constraint_models.flatMap((entry) => entry.hybrid_offload_recommendations.map((note) => `${entry.model_id}: ${note}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local Runtime Probe Results"),
+        toLink("Hybrid Local Cloud Strategy"),
+        toLink("Frame Generation Pipeline Planning"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildHybridLocalCloudStrategyNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Hybrid Local Cloud Strategy",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_hybrid_local_cloud_strategy",
+      tags: ["second-brain", "hybrid-routing", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Strategy Registry",
+      asBulletList(production.hybrid_local_cloud_strategies.map((entry) => `${entry.display_name}: status=${entry.status} | mode=${entry.preferred_provider_mode}`)),
+      "",
+      "## Escalation Conditions",
+      asBulletList(production.hybrid_local_cloud_strategies.flatMap((entry) => entry.escalation_conditions.map((condition) => `${entry.strategy_id}: ${condition}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local-vs-Cloud Routing"),
+        toLink("AI-E Readiness Percentages"),
+        toLink("Runtime Constraint Modeling"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildCinematicExecutionLifecycleNote(input: {
   productionMemory: CinematicProductionMemoryRecord;
   latestSessionId: string;
@@ -2242,6 +2463,7 @@ export async function exportSecondBrainToObsidian(input?: {
   const latestSessionId = buildSessionId(record.sections.outcome_memory.latest_outcomes);
   const vaultRoot = input?.vaultRoot ? path.resolve(input.vaultRoot) : path.join(initialization.repoRoot, OBSIDIAN_VAULT_DIRNAME);
   const relationships = buildRelationships(repoProjectContext.project.project_key);
+  const readinessMilestoneProgress = await getCinematicReadinessMilestoneProgress({ root: initialization.repoRoot });
 
   const notes: ObsidianExportNote[] = [
     buildProjectNote({
@@ -2319,6 +2541,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildLocalVsCloudRoutingNote({ productionMemory, latestSessionId }),
     buildFutureLocalInferenceNotes({ productionMemory, latestSessionId }),
     buildLocalAssetCacheStrategyNote({ productionMemory, latestSessionId }),
+    buildReadinessPercentagesNote({ productionMemory, latestSessionId, milestoneProgress: readinessMilestoneProgress }),
+    buildLocalRuntimeProbeResultsNote({ productionMemory, latestSessionId }),
+    buildFrameGenerationPipelinePlanningNote({ productionMemory, latestSessionId }),
+    buildRendererCapabilityRoadmapNote({ productionMemory, latestSessionId }),
+    buildRuntimeConstraintModelingNote({ productionMemory, latestSessionId }),
+    buildHybridLocalCloudStrategyNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),
