@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "created_at": "2026-05-07T00:00:00.000Z",
-  "updated_at": "2026-05-07T00:00:00.000Z",
+  "updated_at": "2026-05-07T15:35:26.984Z",
   "project_key": "babylon-2026",
   "mission_layer": "Persistent Production Memory + Cinematic Video Intelligence",
   "roadmap_systems": [
@@ -125,7 +125,8 @@
     "pressured",
     "readable",
     "confident",
-    "kinetic"
+    "kinetic",
+    "resolve"
   ],
   "visual_style": [
     "gameplay-first cinematic framing",
@@ -151,6 +152,228 @@
     "Do not invent props, locations, or powers that the current production case study does not support.",
     "Shot-to-shot lighting must preserve player/enemy readability over dramatic stylization."
   ],
+  "scene_sequences": [
+    {
+      "sequence_id": "sequence-wave-transition-001",
+      "title": "Wave Transition Pressure Sequence",
+      "beat_id": "babylon-cutscene-proof",
+      "shots": [
+        {
+          "shot_id": "sequence-wave-transition-001-intro",
+          "shot_order": 1,
+          "shot_purpose": "intro-shot",
+          "emotional_intent": "signal that a controlled cinematic beat is starting",
+          "gameplay_trigger": "wave countdown enters final beat",
+          "continuity_dependencies": [
+            "Respect active arena layout."
+          ],
+          "required_assets": [
+            "prompt-wave-reveal-001"
+          ],
+          "camera_behavior": "brief push-in from current gameplay framing",
+          "transition_notes": "Do not fully break the player's spatial awareness.",
+          "character_ids": [
+            "babylon-protagonist"
+          ],
+          "environment_id": "babylon-arena-foundation",
+          "lighting_reference": "arena practicals over abstract mood lighting",
+          "prop_ids": [
+            "arena barriers",
+            "enemy spawn markers"
+          ],
+          "tone_reference": "pressured",
+          "timeline_position": 1
+        },
+        {
+          "shot_id": "sequence-wave-transition-001-establish",
+          "shot_order": 2,
+          "shot_purpose": "establish-environment",
+          "emotional_intent": "clarify arena geography before escalation",
+          "gameplay_trigger": "wave countdown enters final beat",
+          "continuity_dependencies": [
+            "Keep readable enemy approach vectors."
+          ],
+          "required_assets": [
+            "prompt-wave-reveal-001"
+          ],
+          "camera_behavior": "wide arena reveal with tactical lanes visible",
+          "transition_notes": "Hold only long enough to confirm geography.",
+          "character_ids": [
+            "babylon-protagonist"
+          ],
+          "environment_id": "babylon-arena-foundation",
+          "lighting_reference": "arena practicals over abstract mood lighting",
+          "prop_ids": [
+            "arena barriers",
+            "spawn pads"
+          ],
+          "tone_reference": "readable",
+          "timeline_position": 2
+        },
+        {
+          "shot_id": "sequence-wave-transition-001-reveal",
+          "shot_order": 3,
+          "shot_purpose": "reveal-subject",
+          "emotional_intent": "reveal the player as the subject of rising pressure",
+          "gameplay_trigger": "wave countdown enters final beat",
+          "continuity_dependencies": [
+            "Preserve player silhouette readability."
+          ],
+          "required_assets": [
+            "prompt-wave-reveal-001"
+          ],
+          "camera_behavior": "shoulder-height tactical framing",
+          "transition_notes": "Bridge geography into subject focus.",
+          "character_ids": [
+            "babylon-protagonist"
+          ],
+          "environment_id": "babylon-arena-foundation",
+          "lighting_reference": "rim light for subject separation",
+          "prop_ids": [
+            "weapon silhouettes"
+          ],
+          "tone_reference": "confident",
+          "timeline_position": 3
+        },
+        {
+          "shot_id": "sequence-wave-transition-001-escalation",
+          "shot_order": 4,
+          "shot_purpose": "escalation-shot",
+          "emotional_intent": "raise threat anticipation without obscuring play state",
+          "gameplay_trigger": "wave countdown enters final beat",
+          "continuity_dependencies": [
+            "Do not imply enemies outside the playable build."
+          ],
+          "required_assets": [
+            "prompt-wave-reveal-001"
+          ],
+          "camera_behavior": "controlled push-in on threat lane",
+          "transition_notes": "Escalate pressure just before return.",
+          "character_ids": [
+            "babylon-protagonist"
+          ],
+          "environment_id": "babylon-arena-foundation",
+          "lighting_reference": "arena practicals over abstract mood lighting",
+          "prop_ids": [
+            "enemy spawn markers"
+          ],
+          "tone_reference": "kinetic",
+          "timeline_position": 4
+        },
+        {
+          "shot_id": "sequence-wave-transition-001-emotional",
+          "shot_order": 5,
+          "shot_purpose": "emotional-beat",
+          "emotional_intent": "lock in resolve before control returns",
+          "gameplay_trigger": "wave countdown enters final beat",
+          "continuity_dependencies": [
+            "Keep the player ability read consistent."
+          ],
+          "required_assets": [
+            "prompt-wave-reveal-001"
+          ],
+          "camera_behavior": "brief hero insert",
+          "transition_notes": "Keep this beat short and controlled.",
+          "character_ids": [
+            "babylon-protagonist"
+          ],
+          "environment_id": "babylon-arena-foundation",
+          "lighting_reference": "rim light for subject separation",
+          "prop_ids": [
+            "weapon silhouettes"
+          ],
+          "tone_reference": "resolve",
+          "timeline_position": 5
+        },
+        {
+          "shot_id": "sequence-wave-transition-001-transition",
+          "shot_order": 6,
+          "shot_purpose": "transition-shot",
+          "emotional_intent": "prepare a clean handoff back to gameplay",
+          "gameplay_trigger": "wave countdown enters final beat",
+          "continuity_dependencies": [
+            "Camera must land near gameplay ownership framing."
+          ],
+          "required_assets": [
+            "prompt-wave-reveal-001"
+          ],
+          "camera_behavior": "decelerate back toward gameplay camera lane",
+          "transition_notes": "Land on a frame that can return input cleanly.",
+          "character_ids": [
+            "babylon-protagonist"
+          ],
+          "environment_id": "babylon-arena-foundation",
+          "lighting_reference": "arena practicals over abstract mood lighting",
+          "prop_ids": [
+            "arena barriers"
+          ],
+          "tone_reference": "readable",
+          "timeline_position": 6
+        },
+        {
+          "shot_id": "sequence-wave-transition-001-return",
+          "shot_order": 7,
+          "shot_purpose": "gameplay-return",
+          "emotional_intent": "return agency at peak anticipation",
+          "gameplay_trigger": "wave countdown completes",
+          "continuity_dependencies": [
+            "No discontinuity between cinematic and gameplay state."
+          ],
+          "required_assets": [
+            "prompt-wave-reveal-001"
+          ],
+          "camera_behavior": "handoff to gameplay-owned camera framing",
+          "transition_notes": "Input returns immediately as the wave starts.",
+          "character_ids": [
+            "babylon-protagonist"
+          ],
+          "environment_id": "babylon-arena-foundation",
+          "lighting_reference": "arena practicals over abstract mood lighting",
+          "prop_ids": [
+            "enemy spawn markers",
+            "weapon silhouettes"
+          ],
+          "tone_reference": "pressured",
+          "timeline_position": 7
+        }
+      ]
+    }
+  ],
+  "gameplay_cutscene_triggers": [
+    {
+      "trigger_id": "trigger-wave-escalation-001",
+      "trigger_type": "gameplay-escalation",
+      "title": "Wave Escalation Transition",
+      "gameplay_state": "wave countdown active with stable arena state",
+      "cinematic_state": "brief anticipation sequence before control returns",
+      "activation_conditions": [
+        "wave countdown in final beat",
+        "player alive",
+        "camera ownership stable"
+      ],
+      "target_sequence_id": "sequence-wave-transition-001",
+      "transition_notes": [
+        "Keep the beat under a few seconds.",
+        "Return to gameplay with no camera discontinuity."
+      ]
+    },
+    {
+      "trigger_id": "trigger-boss-intro-001",
+      "trigger_type": "boss-intro",
+      "title": "Boss Intro Planning Placeholder",
+      "gameplay_state": "boss encounter threshold reached",
+      "cinematic_state": "brief reveal of boss threat and player framing",
+      "activation_conditions": [
+        "boss enabled in production build",
+        "arena state locked",
+        "operator-approved sequence exists"
+      ],
+      "target_sequence_id": "sequence-wave-transition-001",
+      "transition_notes": [
+        "Planning-only until a dedicated boss sequence exists."
+      ]
+    }
+  ],
   "shot_history": [
     {
       "shot_id": "shot-wave-reveal-001",
@@ -175,6 +398,10 @@
         "Use as a baseline for countdown-to-wave reveal beats."
       ]
     }
+  ],
+  "asset_reuse_decisions": [
+    "Preserve the approved wave reveal prompt when only the escalation insert fails.",
+    "Reuse environment-establishing shots before generating new geography coverage."
   ],
   "failed_generations": [
     {

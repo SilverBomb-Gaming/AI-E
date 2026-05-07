@@ -73,10 +73,15 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Outcomes/Successful Generations.md"));
     assert.ok(files.includes("Recovery/Recovery Procedures.md"));
     assert.ok(files.includes("Resources/Asset Reuse Log.md"));
+    assert.ok(files.includes("Resources/Asset Reuse Decisions.md"));
     assert.ok(files.includes("Resources/Cost-Aware Iteration Notes.md"));
     assert.ok(files.includes("Strategy/Strategic Roadmap.md"));
     assert.ok(files.includes("Strategy/Cinematic Production Memory.md"));
+    assert.ok(files.includes("Strategy/Scene Sequences.md"));
+    assert.ok(files.includes("Strategy/Gameplay Cutscene Triggers.md"));
     assert.ok(files.includes("Strategy/Shot Planning Rules.md"));
+    assert.ok(files.includes("Strategy/Shot Progression Examples.md"));
+    assert.ok(files.includes("Architecture/Continuity Validation Rules.md"));
     assert.ok(files.includes("Resources/Resource Fallback State.md"));
     assert.ok(files.includes("Sessions/Session Continuity Summary.md"));
     assert.ok(files.includes("Projects/BABYLON Cutscene Layer.md"));
@@ -97,11 +102,25 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const cinematicMemoryText = await readFile(path.join(vaultRoot, "Strategy", "Cinematic Production Memory.md"), "utf8");
     const cutsceneLayerText = await readFile(path.join(vaultRoot, "Projects", "BABYLON Cutscene Layer.md"), "utf8");
     const costNotesText = await readFile(path.join(vaultRoot, "Resources", "Cost-Aware Iteration Notes.md"), "utf8");
+    const sceneSequencesText = await readFile(path.join(vaultRoot, "Strategy", "Scene Sequences.md"), "utf8");
+    const triggerText = await readFile(path.join(vaultRoot, "Strategy", "Gameplay Cutscene Triggers.md"), "utf8");
+    const continuityValidationText = await readFile(path.join(vaultRoot, "Architecture", "Continuity Validation Rules.md"), "utf8");
+    const progressionText = await readFile(path.join(vaultRoot, "Strategy", "Shot Progression Examples.md"), "utf8");
+    const assetReuseDecisionText = await readFile(path.join(vaultRoot, "Resources", "Asset Reuse Decisions.md"), "utf8");
 
     assert.match(cinematicMemoryText, /Production Memory Manager/);
     assert.match(cinematicMemoryText, /\[\[BABYLON Cutscene Layer\]\]/);
+    assert.match(cinematicMemoryText, /\[\[Scene Sequences\]\]/);
     assert.match(cutsceneLayerText, /Wave Start Pressure Beat/);
     assert.match(costNotesText, /Failed generations tracked:/);
+    assert.match(sceneSequencesText, /Wave Transition Pressure Sequence/);
+    assert.match(sceneSequencesText, /intro-shot/);
+    assert.match(triggerText, /Wave Escalation Transition/);
+    assert.match(triggerText, /boss-intro/);
+    assert.match(continuityValidationText, /timeline consistency/i);
+    assert.match(continuityValidationText, /sequence-wave-transition-001-intro/);
+    assert.match(progressionText, /intro-shot -> establish-environment -> reveal-subject/);
+    assert.match(assetReuseDecisionText, /Preserve the approved wave reveal prompt/);
 
     const existingTitles = new Set(files.map((file) => path.basename(file, ".md")));
     for (const file of files.filter((entry) => entry.endsWith(".md"))) {

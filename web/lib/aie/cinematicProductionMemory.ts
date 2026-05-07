@@ -54,6 +54,60 @@ export type CinematicStoryBeat = {
   continuity_dependencies: string[];
 };
 
+export type CinematicShotPurpose =
+  | "intro-shot"
+  | "establish-environment"
+  | "reveal-subject"
+  | "escalation-shot"
+  | "emotional-beat"
+  | "transition-shot"
+  | "gameplay-return";
+
+export type CinematicSceneSequenceShot = {
+  shot_id: string;
+  shot_order: number;
+  shot_purpose: CinematicShotPurpose;
+  emotional_intent: string;
+  gameplay_trigger: string;
+  continuity_dependencies: string[];
+  required_assets: string[];
+  camera_behavior: string;
+  transition_notes: string;
+  character_ids: string[];
+  environment_id: string;
+  lighting_reference: string;
+  prop_ids: string[];
+  tone_reference: string;
+  timeline_position: number;
+};
+
+export type CinematicSceneSequence = {
+  sequence_id: string;
+  title: string;
+  beat_id: string;
+  shots: CinematicSceneSequenceShot[];
+};
+
+export type GameplayCutsceneTriggerType =
+  | "boss-intro"
+  | "mission-completion"
+  | "lore-discovery"
+  | "emotional-reveal"
+  | "memory-flashback"
+  | "gameplay-escalation"
+  | "player-defeat-victory";
+
+export type GameplayCutsceneTriggerPlan = {
+  trigger_id: string;
+  trigger_type: GameplayCutsceneTriggerType;
+  title: string;
+  gameplay_state: string;
+  cinematic_state: string;
+  activation_conditions: string[];
+  target_sequence_id: string;
+  transition_notes: string[];
+};
+
 export type CinematicShotRecord = {
   shot_id: string;
   recorded_at: string;
@@ -111,10 +165,13 @@ export type CinematicProductionMemoryRecord = {
   lighting: string[];
   props: string[];
   continuity_rules: string[];
+  scene_sequences: CinematicSceneSequence[];
+  gameplay_cutscene_triggers: GameplayCutsceneTriggerPlan[];
   shot_history: CinematicShotRecord[];
   generated_assets: CinematicAssetRecord[];
   failed_generations: CinematicGenerationOutcome[];
   successful_generations: CinematicGenerationOutcome[];
+  asset_reuse_decisions: string[];
   edit_decisions: string[];
   pacing_notes: string[];
   gameplay_context: CinematicGameplayContext;
@@ -131,10 +188,46 @@ export type CompiledCinematicShotPrompt = {
   shot_id: string;
   project_key: string;
   beat_id: string;
+  sequence_id?: string;
   prompt: string;
   continuity_constraints: string[];
   asset_reuse_candidates: string[];
+  prior_shot_context: string | null;
+  gameplay_transition_context: string[];
   estimated_cost_tier: CostTier;
+};
+
+export type PlannedSequenceResult = {
+  sequence: CinematicSceneSequence;
+  persisted: boolean;
+};
+
+export type ContinuityValidationCategory =
+  | "character-continuity"
+  | "environment-continuity"
+  | "lighting-continuity"
+  | "prop-continuity"
+  | "tone-continuity"
+  | "camera-continuity"
+  | "timeline-consistency";
+
+export type ContinuityValidationMismatch = {
+  category: ContinuityValidationCategory;
+  shot_id: string;
+  detail: string;
+};
+
+export type ContinuityValidationResult = {
+  sequence_id: string;
+  valid: boolean;
+  mismatches: ContinuityValidationMismatch[];
+};
+
+export type FailedShotRegenerationPlan = {
+  sequence_id: string;
+  failed_shot_ids: string[];
+  preserved_successful_shot_ids: string[];
+  continuity_state: string[];
 };
 
 const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
@@ -235,7 +328,7 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
       continuity_dependencies: ["Match current arena layout.", "Do not imply weapons or enemies not present in the playable build."],
     },
   ],
-  emotional_tone: ["pressured", "readable", "confident", "kinetic"],
+  emotional_tone: ["pressured", "readable", "confident", "kinetic", "resolve"],
   visual_style: ["gameplay-first cinematic framing", "clean sci-fi action", "high legibility silhouettes"],
   camera_language: ["push-ins for wave reveals", "shoulder-height tactical framing", "brief hero inserts between combat beats"],
   lighting: ["rim light for subject separation", "arena practicals over abstract mood lighting"],
@@ -244,6 +337,156 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
     "Cinematics must respect the live gameplay state and known-good BABYLON systems.",
     "Do not invent props, locations, or powers that the current production case study does not support.",
     "Shot-to-shot lighting must preserve player/enemy readability over dramatic stylization.",
+  ],
+  scene_sequences: [
+    {
+      sequence_id: "sequence-wave-transition-001",
+      title: "Wave Transition Pressure Sequence",
+      beat_id: "babylon-cutscene-proof",
+      shots: [
+        {
+          shot_id: "sequence-wave-transition-001-intro",
+          shot_order: 1,
+          shot_purpose: "intro-shot",
+          emotional_intent: "signal that a controlled cinematic beat is starting",
+          gameplay_trigger: "wave countdown enters final beat",
+          continuity_dependencies: ["Respect active arena layout."],
+          required_assets: ["prompt-wave-reveal-001"],
+          camera_behavior: "brief push-in from current gameplay framing",
+          transition_notes: "Do not fully break the player's spatial awareness.",
+          character_ids: ["babylon-protagonist"],
+          environment_id: "babylon-arena-foundation",
+          lighting_reference: "arena practicals over abstract mood lighting",
+          prop_ids: ["arena barriers", "enemy spawn markers"],
+          tone_reference: "pressured",
+          timeline_position: 1,
+        },
+        {
+          shot_id: "sequence-wave-transition-001-establish",
+          shot_order: 2,
+          shot_purpose: "establish-environment",
+          emotional_intent: "clarify arena geography before escalation",
+          gameplay_trigger: "wave countdown enters final beat",
+          continuity_dependencies: ["Keep readable enemy approach vectors."],
+          required_assets: ["prompt-wave-reveal-001"],
+          camera_behavior: "wide arena reveal with tactical lanes visible",
+          transition_notes: "Hold only long enough to confirm geography.",
+          character_ids: ["babylon-protagonist"],
+          environment_id: "babylon-arena-foundation",
+          lighting_reference: "arena practicals over abstract mood lighting",
+          prop_ids: ["arena barriers", "spawn pads"],
+          tone_reference: "readable",
+          timeline_position: 2,
+        },
+        {
+          shot_id: "sequence-wave-transition-001-reveal",
+          shot_order: 3,
+          shot_purpose: "reveal-subject",
+          emotional_intent: "reveal the player as the subject of rising pressure",
+          gameplay_trigger: "wave countdown enters final beat",
+          continuity_dependencies: ["Preserve player silhouette readability."],
+          required_assets: ["prompt-wave-reveal-001"],
+          camera_behavior: "shoulder-height tactical framing",
+          transition_notes: "Bridge geography into subject focus.",
+          character_ids: ["babylon-protagonist"],
+          environment_id: "babylon-arena-foundation",
+          lighting_reference: "rim light for subject separation",
+          prop_ids: ["weapon silhouettes"],
+          tone_reference: "confident",
+          timeline_position: 3,
+        },
+        {
+          shot_id: "sequence-wave-transition-001-escalation",
+          shot_order: 4,
+          shot_purpose: "escalation-shot",
+          emotional_intent: "raise threat anticipation without obscuring play state",
+          gameplay_trigger: "wave countdown enters final beat",
+          continuity_dependencies: ["Do not imply enemies outside the playable build."],
+          required_assets: ["prompt-wave-reveal-001"],
+          camera_behavior: "controlled push-in on threat lane",
+          transition_notes: "Escalate pressure just before return.",
+          character_ids: ["babylon-protagonist"],
+          environment_id: "babylon-arena-foundation",
+          lighting_reference: "arena practicals over abstract mood lighting",
+          prop_ids: ["enemy spawn markers"],
+          tone_reference: "kinetic",
+          timeline_position: 4,
+        },
+        {
+          shot_id: "sequence-wave-transition-001-emotional",
+          shot_order: 5,
+          shot_purpose: "emotional-beat",
+          emotional_intent: "lock in resolve before control returns",
+          gameplay_trigger: "wave countdown enters final beat",
+          continuity_dependencies: ["Keep the player ability read consistent."],
+          required_assets: ["prompt-wave-reveal-001"],
+          camera_behavior: "brief hero insert",
+          transition_notes: "Keep this beat short and controlled.",
+          character_ids: ["babylon-protagonist"],
+          environment_id: "babylon-arena-foundation",
+          lighting_reference: "rim light for subject separation",
+          prop_ids: ["weapon silhouettes"],
+          tone_reference: "resolve",
+          timeline_position: 5,
+        },
+        {
+          shot_id: "sequence-wave-transition-001-transition",
+          shot_order: 6,
+          shot_purpose: "transition-shot",
+          emotional_intent: "prepare a clean handoff back to gameplay",
+          gameplay_trigger: "wave countdown enters final beat",
+          continuity_dependencies: ["Camera must land near gameplay ownership framing."],
+          required_assets: ["prompt-wave-reveal-001"],
+          camera_behavior: "decelerate back toward gameplay camera lane",
+          transition_notes: "Land on a frame that can return input cleanly.",
+          character_ids: ["babylon-protagonist"],
+          environment_id: "babylon-arena-foundation",
+          lighting_reference: "arena practicals over abstract mood lighting",
+          prop_ids: ["arena barriers"],
+          tone_reference: "readable",
+          timeline_position: 6,
+        },
+        {
+          shot_id: "sequence-wave-transition-001-return",
+          shot_order: 7,
+          shot_purpose: "gameplay-return",
+          emotional_intent: "return agency at peak anticipation",
+          gameplay_trigger: "wave countdown completes",
+          continuity_dependencies: ["No discontinuity between cinematic and gameplay state."],
+          required_assets: ["prompt-wave-reveal-001"],
+          camera_behavior: "handoff to gameplay-owned camera framing",
+          transition_notes: "Input returns immediately as the wave starts.",
+          character_ids: ["babylon-protagonist"],
+          environment_id: "babylon-arena-foundation",
+          lighting_reference: "arena practicals over abstract mood lighting",
+          prop_ids: ["enemy spawn markers", "weapon silhouettes"],
+          tone_reference: "pressured",
+          timeline_position: 7,
+        },
+      ],
+    },
+  ],
+  gameplay_cutscene_triggers: [
+    {
+      trigger_id: "trigger-wave-escalation-001",
+      trigger_type: "gameplay-escalation",
+      title: "Wave Escalation Transition",
+      gameplay_state: "wave countdown active with stable arena state",
+      cinematic_state: "brief anticipation sequence before control returns",
+      activation_conditions: ["wave countdown in final beat", "player alive", "camera ownership stable"],
+      target_sequence_id: "sequence-wave-transition-001",
+      transition_notes: ["Keep the beat under a few seconds.", "Return to gameplay with no camera discontinuity."],
+    },
+    {
+      trigger_id: "trigger-boss-intro-001",
+      trigger_type: "boss-intro",
+      title: "Boss Intro Planning Placeholder",
+      gameplay_state: "boss encounter threshold reached",
+      cinematic_state: "brief reveal of boss threat and player framing",
+      activation_conditions: ["boss enabled in production build", "arena state locked", "operator-approved sequence exists"],
+      target_sequence_id: "sequence-wave-transition-001",
+      transition_notes: ["Planning-only until a dedicated boss sequence exists."],
+    },
   ],
   shot_history: [
     {
@@ -267,6 +510,10 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
       reusable: true,
       reuse_notes: ["Use as a baseline for countdown-to-wave reveal beats."],
     },
+  ],
+  asset_reuse_decisions: [
+    "Preserve the approved wave reveal prompt when only the escalation insert fails.",
+    "Reuse environment-establishing shots before generating new geography coverage.",
   ],
   failed_generations: [
     {
@@ -317,6 +564,40 @@ function cloneDefaultRecord(): CinematicProductionMemoryRecord {
   return JSON.parse(JSON.stringify(DEFAULT_PRODUCTION_MEMORY_RECORD)) as CinematicProductionMemoryRecord;
 }
 
+function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemoryRecord> | undefined): CinematicProductionMemoryRecord {
+  const defaults = cloneDefaultRecord();
+  const nextRecord = record ?? {};
+
+  return {
+    ...defaults,
+    ...nextRecord,
+    roadmap_systems: nextRecord.roadmap_systems ?? defaults.roadmap_systems,
+    characters: nextRecord.characters ?? defaults.characters,
+    environments: nextRecord.environments ?? defaults.environments,
+    story_beats: nextRecord.story_beats ?? defaults.story_beats,
+    emotional_tone: nextRecord.emotional_tone ?? defaults.emotional_tone,
+    visual_style: nextRecord.visual_style ?? defaults.visual_style,
+    camera_language: nextRecord.camera_language ?? defaults.camera_language,
+    lighting: nextRecord.lighting ?? defaults.lighting,
+    props: nextRecord.props ?? defaults.props,
+    continuity_rules: nextRecord.continuity_rules ?? defaults.continuity_rules,
+    scene_sequences: nextRecord.scene_sequences ?? defaults.scene_sequences,
+    gameplay_cutscene_triggers: nextRecord.gameplay_cutscene_triggers ?? defaults.gameplay_cutscene_triggers,
+    shot_history: nextRecord.shot_history ?? defaults.shot_history,
+    generated_assets: nextRecord.generated_assets ?? defaults.generated_assets,
+    failed_generations: nextRecord.failed_generations ?? defaults.failed_generations,
+    successful_generations: nextRecord.successful_generations ?? defaults.successful_generations,
+    asset_reuse_decisions: nextRecord.asset_reuse_decisions ?? defaults.asset_reuse_decisions,
+    edit_decisions: nextRecord.edit_decisions ?? defaults.edit_decisions,
+    pacing_notes: nextRecord.pacing_notes ?? defaults.pacing_notes,
+    gameplay_context: {
+      ...defaults.gameplay_context,
+      ...(nextRecord.gameplay_context ?? {}),
+    },
+    cost_aware_iteration_notes: nextRecord.cost_aware_iteration_notes ?? defaults.cost_aware_iteration_notes,
+  };
+}
+
 function normalizeText(value: unknown): string {
   return String(value ?? "")
     .replace(/\r\n/g, "\n")
@@ -349,8 +630,8 @@ async function loadProductionMemory(root?: string): Promise<CinematicProductionM
 
   let record = cloneDefaultRecord();
   try {
-    const parsed = JSON.parse(await readFile(productionMemoryPath, "utf8")) as CinematicProductionMemoryRecord;
-    record = { ...cloneDefaultRecord(), ...parsed };
+    const parsed = JSON.parse(await readFile(productionMemoryPath, "utf8")) as Partial<CinematicProductionMemoryRecord>;
+    record = hydrateProductionMemoryRecord(parsed);
   } catch {
     record = cloneDefaultRecord();
   }
@@ -369,7 +650,7 @@ function loadProductionMemorySync(root?: string): CinematicProductionMemoryIniti
   let record = cloneDefaultRecord();
   if (existsSync(productionMemoryPath)) {
     try {
-      record = { ...cloneDefaultRecord(), ...JSON.parse(readFileSync(productionMemoryPath, "utf8")) as CinematicProductionMemoryRecord };
+      record = hydrateProductionMemoryRecord(JSON.parse(readFileSync(productionMemoryPath, "utf8")) as Partial<CinematicProductionMemoryRecord>);
     } catch {
       record = cloneDefaultRecord();
     }
@@ -399,11 +680,23 @@ export async function writeCinematicProductionMemory(input: {
   value: Partial<CinematicProductionMemoryRecord>;
 }): Promise<CinematicProductionMemoryRecord> {
   const initialization = await loadProductionMemory(input.root);
-  const nextRecord: CinematicProductionMemoryRecord = {
+  const nextRecord = hydrateProductionMemoryRecord({
     ...initialization.record,
     ...input.value,
-  };
+  });
   return writeProductionMemoryRecord(initialization.productionMemoryPath, nextRecord);
+}
+
+function cameraBehaviorMatchesLanguage(cameraLanguage: string[], cameraBehavior: string): boolean {
+  const languageTokens = new Set(
+    cameraLanguage
+      .flatMap((entry) => entry.toLowerCase().split(/[^a-z0-9]+/))
+      .filter((entry) => entry.length >= 4),
+  );
+  return cameraBehavior
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .some((entry) => entry.length >= 4 && languageTokens.has(entry));
 }
 
 export async function recordCinematicGenerationOutcome(input: {
@@ -457,6 +750,243 @@ export async function recordCinematicShotHistory(input: {
   return writeProductionMemoryRecord(initialization.productionMemoryPath, nextRecord);
 }
 
+function createDefaultSequenceShots(input: {
+  sequenceId: string;
+  beat: CinematicStoryBeat;
+  characterId: string;
+  environmentId: string;
+  reusableAssetIds: string[];
+}): CinematicSceneSequenceShot[] {
+  const shotTemplate: Array<{
+    purpose: CinematicShotPurpose;
+    emotionalIntent: string;
+    cameraBehavior: string;
+    transitionNotes: string;
+    toneReference: string;
+    lightingReference: string;
+    propIds: string[];
+  }> = [
+    {
+      purpose: "intro-shot",
+      emotionalIntent: "announce the sequence opening with minimal disruption",
+      cameraBehavior: "brief transition from gameplay framing into cinematic language",
+      transitionNotes: "Open from the current gameplay state without disorientation.",
+      toneReference: "pressured",
+      lightingReference: "arena practicals over abstract mood lighting",
+      propIds: ["arena barriers"],
+    },
+    {
+      purpose: "establish-environment",
+      emotionalIntent: "reassert environment geography",
+      cameraBehavior: "wide layout-establishing frame",
+      transitionNotes: "Make the playable space readable immediately.",
+      toneReference: "readable",
+      lightingReference: "arena practicals over abstract mood lighting",
+      propIds: ["spawn pads", "arena barriers"],
+    },
+    {
+      purpose: "reveal-subject",
+      emotionalIntent: "anchor the subject within the environment",
+      cameraBehavior: "subject reveal with tactical silhouette emphasis",
+      transitionNotes: "Shift from environment to subject without losing geography.",
+      toneReference: "confident",
+      lightingReference: "rim light for subject separation",
+      propIds: ["weapon silhouettes"],
+    },
+    {
+      purpose: "escalation-shot",
+      emotionalIntent: "increase threat pressure",
+      cameraBehavior: "controlled escalation push-in",
+      transitionNotes: "Raise intensity while preserving readable threat lanes.",
+      toneReference: "kinetic",
+      lightingReference: "arena practicals over abstract mood lighting",
+      propIds: ["enemy spawn markers"],
+    },
+    {
+      purpose: "emotional-beat",
+      emotionalIntent: input.beat.emotional_goal,
+      cameraBehavior: "brief emotional emphasis insert",
+      transitionNotes: "Hold only long enough to land the emotional beat.",
+      toneReference: "resolve",
+      lightingReference: "rim light for subject separation",
+      propIds: ["weapon silhouettes"],
+    },
+    {
+      purpose: "transition-shot",
+      emotionalIntent: "prepare gameplay re-entry",
+      cameraBehavior: "glide back toward gameplay-owned camera position",
+      transitionNotes: "Reduce cinematic separation and prepare handoff.",
+      toneReference: "readable",
+      lightingReference: "arena practicals over abstract mood lighting",
+      propIds: ["arena barriers"],
+    },
+    {
+      purpose: "gameplay-return",
+      emotionalIntent: "return agency on a clean escalation beat",
+      cameraBehavior: "land on gameplay camera continuity",
+      transitionNotes: "Return control immediately after the beat resolves.",
+      toneReference: "pressured",
+      lightingReference: "arena practicals over abstract mood lighting",
+      propIds: ["enemy spawn markers", "weapon silhouettes"],
+    },
+  ];
+
+  return shotTemplate.map((template, index) => ({
+    shot_id: `${input.sequenceId}-${template.purpose}`,
+    shot_order: index + 1,
+    shot_purpose: template.purpose,
+    emotional_intent: template.emotionalIntent,
+    gameplay_trigger: input.beat.gameplay_trigger,
+    continuity_dependencies: input.beat.continuity_dependencies,
+    required_assets: input.reusableAssetIds,
+    camera_behavior: template.cameraBehavior,
+    transition_notes: template.transitionNotes,
+    character_ids: [input.characterId],
+    environment_id: input.environmentId,
+    lighting_reference: template.lightingReference,
+    prop_ids: template.propIds,
+    tone_reference: template.toneReference,
+    timeline_position: index + 1,
+  }));
+}
+
+export async function planCinematicSequence(input: {
+  root?: string;
+  sequenceId: string;
+  beatId?: string;
+  title?: string;
+  persist?: boolean;
+}): Promise<PlannedSequenceResult> {
+  const initialization = await loadProductionMemory(input.root);
+  const beat = initialization.record.story_beats.find((entry) => entry.beat_id === (input.beatId ?? initialization.record.story_beats[0]?.beat_id));
+  if (!beat) {
+    throw new Error("No cinematic story beat available for sequence planning.");
+  }
+
+  const primaryCharacter = initialization.record.characters[0];
+  const primaryEnvironment = initialization.record.environments[0];
+  if (!primaryCharacter || !primaryEnvironment) {
+    throw new Error("Cinematic planning requires at least one character and one environment.");
+  }
+
+  const reusableAssetIds = initialization.record.generated_assets.filter((entry) => entry.reusable).map((entry) => entry.asset_id).slice(0, 3);
+  const sequence: CinematicSceneSequence = {
+    sequence_id: input.sequenceId,
+    title: input.title ?? `${beat.title} Sequence`,
+    beat_id: beat.beat_id,
+    shots: createDefaultSequenceShots({
+      sequenceId: input.sequenceId,
+      beat,
+      characterId: primaryCharacter.character_id,
+      environmentId: primaryEnvironment.environment_id,
+      reusableAssetIds,
+    }),
+  };
+
+  if (input.persist === false) {
+    return { sequence, persisted: false };
+  }
+
+  const nextRecord: CinematicProductionMemoryRecord = {
+    ...initialization.record,
+    scene_sequences: [sequence, ...initialization.record.scene_sequences.filter((entry) => entry.sequence_id !== sequence.sequence_id)].slice(0, 16),
+  };
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, nextRecord);
+  return { sequence, persisted: true };
+}
+
+export async function validateCinematicSequenceContinuity(input: {
+  root?: string;
+  sequenceId: string;
+}): Promise<ContinuityValidationResult> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const sequence = record.scene_sequences.find((entry) => entry.sequence_id === input.sequenceId);
+  if (!sequence) {
+    throw new Error(`Unknown cinematic sequence id: ${input.sequenceId}`);
+  }
+
+  const characterIds = new Set(record.characters.map((entry) => entry.character_id));
+  const environmentIds = new Set(record.environments.map((entry) => entry.environment_id));
+  const availableLighting = new Set(record.lighting);
+  const availableProps = new Set(record.props);
+  const availableTone = new Set(record.emotional_tone);
+  const knownCameraLanguage = record.camera_language.join(" ").toLowerCase();
+  const mismatches: ContinuityValidationMismatch[] = [];
+  let lastTimelinePosition = 0;
+
+  for (const shot of [...sequence.shots].sort((left, right) => left.shot_order - right.shot_order)) {
+    if (!shot.character_ids.every((entry) => characterIds.has(entry))) {
+      mismatches.push({ category: "character-continuity", shot_id: shot.shot_id, detail: "Shot references an unknown character profile." });
+    }
+    if (!environmentIds.has(shot.environment_id)) {
+      mismatches.push({ category: "environment-continuity", shot_id: shot.shot_id, detail: "Shot references an unknown environment profile." });
+    }
+    if (!availableLighting.has(shot.lighting_reference)) {
+      mismatches.push({ category: "lighting-continuity", shot_id: shot.shot_id, detail: "Shot lighting reference is outside production memory." });
+    }
+    if (!shot.prop_ids.every((entry) => availableProps.has(entry))) {
+      mismatches.push({ category: "prop-continuity", shot_id: shot.shot_id, detail: "Shot uses props that are not in the bounded production memory." });
+    }
+    if (!availableTone.has(shot.tone_reference)) {
+      mismatches.push({ category: "tone-continuity", shot_id: shot.shot_id, detail: "Shot tone is outside the approved emotional tone set." });
+    }
+    if (!cameraBehaviorMatchesLanguage(record.camera_language, shot.camera_behavior)) {
+      mismatches.push({ category: "camera-continuity", shot_id: shot.shot_id, detail: "Shot camera behavior is not aligned with the stored camera language." });
+    }
+    if (shot.timeline_position <= lastTimelinePosition || shot.timeline_position !== shot.shot_order) {
+      mismatches.push({ category: "timeline-consistency", shot_id: shot.shot_id, detail: "Shot timeline position must increase monotonically and match shot order." });
+    }
+    lastTimelinePosition = shot.timeline_position;
+  }
+
+  return {
+    sequence_id: sequence.sequence_id,
+    valid: mismatches.length === 0,
+    mismatches,
+  };
+}
+
+function latestGenerationStatus(entries: CinematicGenerationOutcome[], shotId: string): CinematicGenerationOutcome | undefined {
+  return entries
+    .filter((entry) => entry.shot_id === shotId)
+    .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0];
+}
+
+export async function planFailedShotRegeneration(input: {
+  root?: string;
+  sequenceId: string;
+}): Promise<FailedShotRegenerationPlan> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const sequence = record.scene_sequences.find((entry) => entry.sequence_id === input.sequenceId);
+  if (!sequence) {
+    throw new Error(`Unknown cinematic sequence id: ${input.sequenceId}`);
+  }
+
+  const generationEntries = [...record.failed_generations, ...record.successful_generations];
+  const failed_shot_ids: string[] = [];
+  const preserved_successful_shot_ids: string[] = [];
+
+  for (const shot of sequence.shots) {
+    const latest = latestGenerationStatus(generationEntries, shot.shot_id);
+    if (latest?.status === "failed") {
+      failed_shot_ids.push(shot.shot_id);
+    } else if (latest?.status === "successful") {
+      preserved_successful_shot_ids.push(shot.shot_id);
+    }
+  }
+
+  return {
+    sequence_id: sequence.sequence_id,
+    failed_shot_ids,
+    preserved_successful_shot_ids,
+    continuity_state: [
+      ...record.continuity_rules,
+      `Preserve environment continuity for ${sequence.shots.map((entry) => entry.environment_id).join(", ")}`,
+      `Preserve approved successful shots: ${preserved_successful_shot_ids.join(", ") || "none"}`,
+    ],
+  };
+}
+
 function estimateCostTier(record: CinematicProductionMemoryRecord, beat: CinematicStoryBeat, shot: CinematicShotRecord): CostTier {
   const constraintCount = record.continuity_rules.length + beat.continuity_dependencies.length;
   const motionWeight = /crane|drone|long take|complex/i.test(shot.camera_motion) ? 2 : 0;
@@ -490,18 +1020,32 @@ export async function compileCinematicShotPrompt(input: {
     .filter((entry) => entry.reusable)
     .map((entry) => `${entry.asset_id}: ${entry.label}`)
     .slice(0, 6);
+  const sequence = record.scene_sequences.find((entry) => entry.shots.some((candidate) => candidate.shot_id === shot.shot_id));
+  const plannedShot = sequence?.shots.find((entry) => entry.shot_id === shot.shot_id);
+  const priorPlannedShot = sequence && plannedShot
+    ? [...sequence.shots]
+      .sort((left, right) => left.shot_order - right.shot_order)
+      .find((entry) => entry.shot_order === plannedShot.shot_order - 1)
+    : undefined;
+  const relatedTrigger = sequence
+    ? record.gameplay_cutscene_triggers.find((entry) => entry.target_sequence_id === sequence.sequence_id)
+    : undefined;
   const estimatedCostTier = estimateCostTier(record, beat, shot);
 
   const prompt = [
     `Project: ${record.project_key}`,
+    `Scene context: ${sequence?.title ?? record.gameplay_context.current_sequence}`,
     `Beat: ${beat.title}`,
     `Intent: ${shot.intent}`,
     `Emotional target: ${beat.emotional_goal}`,
+    `Emotional tone set: ${record.emotional_tone.join(", ")}`,
     `Visual style: ${record.visual_style.join(", ")}`,
-    `Camera language: ${shot.camera_framing}; ${shot.camera_motion}; ${shot.lens_language}`,
+    `Camera intent: ${plannedShot?.camera_behavior ?? shot.camera_framing}; ${shot.camera_motion}; ${shot.lens_language}`,
+    `Prior shot context: ${priorPlannedShot ? `${priorPlannedShot.shot_purpose} -> ${priorPlannedShot.transition_notes}` : "none"}`,
     `Lighting: ${shot.lighting_direction}`,
     `Environment cues: ${record.environments.map((entry) => entry.name).join(", ")}`,
     `Gameplay context: ${record.gameplay_context.current_sequence}`,
+    `Gameplay transition: ${relatedTrigger ? `${relatedTrigger.gameplay_state} -> ${relatedTrigger.cinematic_state}` : beat.gameplay_trigger}`,
     `Avoid breaking continuity: ${[...record.continuity_rules, ...beat.continuity_dependencies].join(" | ")}`,
   ].join("\n");
 
@@ -509,9 +1053,14 @@ export async function compileCinematicShotPrompt(input: {
     shot_id: shot.shot_id,
     project_key: record.project_key,
     beat_id: beat.beat_id,
+    sequence_id: sequence?.sequence_id,
     prompt,
     continuity_constraints: [...record.continuity_rules, ...beat.continuity_dependencies],
     asset_reuse_candidates: assetReuseCandidates,
+    prior_shot_context: priorPlannedShot ? `${priorPlannedShot.shot_id}: ${priorPlannedShot.transition_notes}` : null,
+    gameplay_transition_context: relatedTrigger
+      ? [relatedTrigger.gameplay_state, relatedTrigger.cinematic_state, ...relatedTrigger.transition_notes]
+      : [record.gameplay_context.current_sequence, ...record.gameplay_context.trigger_conditions],
     estimated_cost_tier: estimatedCostTier,
   };
 }

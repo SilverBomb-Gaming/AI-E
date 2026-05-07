@@ -7,22 +7,69 @@ import test from "node:test";
 import {
   compileCinematicShotPrompt,
   ensureCinematicProductionMemoryInitialized,
+  planCinematicSequence,
+  planFailedShotRegeneration,
   readCinematicProductionMemory,
   recordCinematicGenerationOutcome,
   recordCinematicShotHistory,
+  validateCinematicSequenceContinuity,
   writeCinematicProductionMemory,
 } from "./cinematicProductionMemory";
 
-test("cinematic production memory persists bounded planning state and compiles shot prompts", async () => {
+test("cinematic production memory evolves into continuity-aware shot planning intelligence", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-cinematic-production-memory-"));
 
   try {
     const initialized = await ensureCinematicProductionMemoryInitialized(tempRoot);
     assert.match(initialized.productionMemoryPath, /data[\\/]second_brain[\\/]production_memory\.json/i);
 
+    const plannedSequence = await planCinematicSequence({
+      root: tempRoot,
+      sequenceId: "sequence-boss-intro-002",
+      title: "Boss Intro Sequence",
+    });
+
+    assert.equal(plannedSequence.persisted, true);
+    assert.deepEqual(
+      plannedSequence.sequence.shots.map((entry) => entry.shot_purpose),
+      [
+        "intro-shot",
+        "establish-environment",
+        "reveal-subject",
+        "escalation-shot",
+        "emotional-beat",
+        "transition-shot",
+        "gameplay-return",
+      ],
+    );
+
     await writeCinematicProductionMemory({
       root: tempRoot,
       value: {
+        scene_sequences: [
+          {
+            ...plannedSequence.sequence,
+            shots: plannedSequence.sequence.shots.map((entry) => {
+              if (entry.shot_purpose === "transition-shot") {
+                return {
+                  ...entry,
+                  prop_ids: [...entry.prop_ids, "missing-prop"],
+                  tone_reference: "melancholic",
+                  timeline_position: 3,
+                };
+              }
+
+              if (entry.shot_purpose === "gameplay-return") {
+                return {
+                  ...entry,
+                  lighting_reference: "unknown-lighting-rule",
+                };
+              }
+
+              return entry;
+            }),
+          },
+        ],
         pacing_notes: [
           "Use a half-beat pause before the wave reveal lands.",
           "Return to gameplay immediately after the threat is established.",
@@ -33,7 +80,7 @@ test("cinematic production memory persists bounded planning state and compiles s
     await recordCinematicShotHistory({
       root: tempRoot,
       entry: {
-        shot_id: "shot-wave-reveal-002",
+        shot_id: "sequence-boss-intro-002-escalation-shot",
         recorded_at: "2026-05-07T13:00:00.000Z",
         beat_id: "babylon-cutscene-proof",
         intent: "Confirm the next wave arrival while keeping the player grounded in the arena.",
@@ -50,7 +97,7 @@ test("cinematic production memory persists bounded planning state and compiles s
       entry: {
         generation_id: "success-wave-reveal-002",
         recorded_at: "2026-05-07T13:05:00.000Z",
-        shot_id: "shot-wave-reveal-002",
+        shot_id: "sequence-boss-intro-002-reveal-subject",
         status: "successful",
         prompt_summary: "Readable cutscene insert with clear arena geography and wave anticipation.",
         engine: "prompt-compiler-stub",
@@ -65,7 +112,7 @@ test("cinematic production memory persists bounded planning state and compiles s
       entry: {
         generation_id: "failed-wave-reveal-002",
         recorded_at: "2026-05-07T13:06:00.000Z",
-        shot_id: "shot-wave-reveal-002",
+        shot_id: "sequence-boss-intro-002-escalation-shot",
         status: "failed",
         prompt_summary: "Tried a low-key moody pass that obscured the lane geometry.",
         engine: "prompt-compiler-stub",
@@ -76,19 +123,37 @@ test("cinematic production memory persists bounded planning state and compiles s
     });
 
     const record = await readCinematicProductionMemory({ root: tempRoot });
-    const compiled = await compileCinematicShotPrompt({ root: tempRoot, shotId: "shot-wave-reveal-002" });
+    const continuity = await validateCinematicSequenceContinuity({ root: tempRoot, sequenceId: "sequence-boss-intro-002" });
+    const regeneration = await planFailedShotRegeneration({ root: tempRoot, sequenceId: "sequence-boss-intro-002" });
+    const compiled = await compileCinematicShotPrompt({ root: tempRoot, shotId: "sequence-boss-intro-002-escalation-shot" });
 
     assert.equal(record.project_key, "babylon-2026");
     assert.ok(record.characters.some((entry) => entry.name === "BABYLON Runner"));
     assert.ok(record.roadmap_systems.some((entry) => entry.id === "shot-planner"));
     assert.ok(record.story_beats.some((entry) => /Wave Start Pressure Beat/i.test(entry.title)));
-    assert.ok(record.shot_history.some((entry) => entry.shot_id === "shot-wave-reveal-002"));
+    assert.ok(record.scene_sequences.some((entry) => entry.sequence_id === "sequence-boss-intro-002"));
+    assert.ok(record.gameplay_cutscene_triggers.some((entry) => entry.trigger_type === "boss-intro"));
+    assert.ok(record.shot_history.some((entry) => entry.shot_id === "sequence-boss-intro-002-escalation-shot"));
     assert.ok(record.successful_generations.some((entry) => entry.generation_id === "success-wave-reveal-002"));
     assert.ok(record.failed_generations.some((entry) => entry.generation_id === "failed-wave-reveal-002"));
+    assert.equal(continuity.valid, false);
+    assert.ok(continuity.mismatches.some((entry) => entry.category === "prop-continuity"));
+    assert.ok(continuity.mismatches.some((entry) => entry.category === "tone-continuity"));
+    assert.ok(continuity.mismatches.some((entry) => entry.category === "lighting-continuity"));
+    assert.ok(continuity.mismatches.some((entry) => entry.category === "timeline-consistency"));
+    assert.deepEqual(regeneration.failed_shot_ids, ["sequence-boss-intro-002-escalation-shot"]);
+    assert.deepEqual(regeneration.preserved_successful_shot_ids, ["sequence-boss-intro-002-reveal-subject"]);
+    assert.ok(regeneration.continuity_state.some((entry) => /Preserve approved successful shots/i.test(entry)));
     assert.match(compiled.prompt, /Wave Start Pressure Beat/i);
+    assert.match(compiled.prompt, /Scene context:/);
+    assert.match(compiled.prompt, /Prior shot context:/);
+    assert.match(compiled.prompt, /Gameplay transition:/);
     assert.match(compiled.prompt, /gameplay context/i);
     assert.ok(compiled.continuity_constraints.some((entry) => /current production case study/i.test(entry)));
     assert.ok(compiled.asset_reuse_candidates.some((entry) => /prompt-wave-reveal-001/i.test(entry)));
+    assert.equal(compiled.sequence_id, "sequence-boss-intro-002");
+    assert.match(compiled.prior_shot_context ?? "", /reveal-subject/);
+    assert.ok(compiled.gameplay_transition_context.length > 0);
     assert.match(compiled.estimated_cost_tier, /low|medium|high/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T00:00:00.000Z
+updated_at: 2026-05-07T15:35:26.984Z
 session_id: phase7c-skip-task-session
 status: generated_shot_planning_rules
 tags:
@@ -26,7 +26,11 @@ tags:
 - Keep cutscene inserts short enough that they can hand control back to gameplay cleanly.
 - Prefer inserts that clarify upcoming threat state instead of abstract montage.
 
+## Sequence Planning
+- sequence-wave-transition-001: Wave Transition Pressure Sequence | shots=7
+
 ## Related
 - [[BABYLON Cutscene Layer]]
 - [[Continuity Rules]]
+- [[Shot Progression Examples]]
 - [[Cost-Aware Iteration Notes]]

@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T00:00:00.000Z
+updated_at: 2026-05-07T15:35:26.984Z
 session_id: phase7c-skip-task-session
 status: generated_cinematic_continuity_rules
 tags:
@@ -27,7 +27,17 @@ tags:
 - BABYLON Runner: Keep silhouette readable in gameplay and cinematic framing.
 - BABYLON Runner: Do not contradict currently implemented player abilities.
 
+## Sequence Dependencies
+- Wave Transition Pressure Sequence / intro-shot: Respect active arena layout.
+- Wave Transition Pressure Sequence / establish-environment: Keep readable enemy approach vectors.
+- Wave Transition Pressure Sequence / reveal-subject: Preserve player silhouette readability.
+- Wave Transition Pressure Sequence / escalation-shot: Do not imply enemies outside the playable build.
+- Wave Transition Pressure Sequence / emotional-beat: Keep the player ability read consistent.
+- Wave Transition Pressure Sequence / transition-shot: Camera must land near gameplay ownership framing.
+- Wave Transition Pressure Sequence / gameplay-return: No discontinuity between cinematic and gameplay state.
+
 ## Related
 - [[Cinematic Production Memory]]
 - [[BABYLON Cutscene Layer]]
+- [[Continuity Validation Rules]]
 - [[Failed Generations]]

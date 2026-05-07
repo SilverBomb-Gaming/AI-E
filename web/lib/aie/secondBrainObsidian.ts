@@ -574,6 +574,8 @@ function buildCinematicProductionMemoryNote(input: {
         toLink("BABYLON Cutscene Layer"),
         toLink("Shot Planning Rules"),
         toLink("Continuity Rules"),
+        toLink("Scene Sequences"),
+        toLink("Gameplay Cutscene Triggers"),
         toLink("Cost-Aware Iteration Notes"),
       ]),
     ].join("\n"),
@@ -613,6 +615,8 @@ function buildBabylonCutsceneLayerNote(input: {
       asBulletList([
         toLink("Cinematic Production Memory"),
         toLink("Shot Planning Rules"),
+        toLink("Scene Sequences"),
+        toLink("Gameplay Cutscene Triggers"),
         toLink("Successful Generations"),
       ]),
     ].join("\n"),
@@ -644,10 +648,14 @@ function buildShotPlanningRulesNote(input: {
       "## Edit Decisions",
       asBulletList(production.edit_decisions),
       "",
+      "## Sequence Planning",
+      asBulletList(production.scene_sequences.map((entry) => `${entry.sequence_id}: ${entry.title} | shots=${entry.shots.length}`)),
+      "",
       "## Related",
       asBulletList([
         toLink("BABYLON Cutscene Layer"),
         toLink("Continuity Rules"),
+        toLink("Shot Progression Examples"),
         toLink("Cost-Aware Iteration Notes"),
       ]),
     ].join("\n"),
@@ -679,10 +687,14 @@ function buildCinematicContinuityRulesNote(input: {
       "## Character Safeguards",
       asBulletList(production.characters.flatMap((entry) => entry.continuity_rules.map((rule) => `${entry.name}: ${rule}`))),
       "",
+      "## Sequence Dependencies",
+      asBulletList(production.scene_sequences.flatMap((entry) => entry.shots.flatMap((shot) => shot.continuity_dependencies.map((dependency) => `${entry.title} / ${shot.shot_purpose}: ${dependency}`)))),
+      "",
       "## Related",
       asBulletList([
         toLink("Cinematic Production Memory"),
         toLink("BABYLON Cutscene Layer"),
+        toLink("Continuity Validation Rules"),
         toLink("Failed Generations"),
       ]),
     ].join("\n"),
@@ -711,11 +723,183 @@ function buildAssetReuseLogNote(input: {
       "## Reuse Notes",
       asBulletList(production.generated_assets.flatMap((entry) => entry.reuse_notes.map((note) => `${entry.asset_id}: ${note}`))),
       "",
+      "## Asset Reuse Decisions",
+      asBulletList(production.asset_reuse_decisions),
+      "",
       "## Related",
       asBulletList([
         toLink("Successful Generations"),
         toLink("Cost-Aware Iteration Notes"),
+        toLink("Asset Reuse Decisions"),
         toLink("Shot Planning Rules"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildSceneSequencesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Scene Sequences",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_scene_sequences",
+      tags: ["second-brain", "cinematic", "scene-sequences", "obsidian-export"],
+    },
+    body: [
+      "## Planned Sequences",
+      asBulletList(production.scene_sequences.map((entry) => `${entry.sequence_id}: ${entry.title} | beat=${entry.beat_id} | shots=${entry.shots.length}`)),
+      "",
+      "## Shot Order",
+      asBulletList(production.scene_sequences.flatMap((entry) => entry.shots.map((shot) => `${entry.title}: ${shot.shot_order}. ${shot.shot_purpose} | ${shot.camera_behavior} | ${shot.transition_notes}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Shot Planning Rules"),
+        toLink("Shot Progression Examples"),
+        toLink("Gameplay Cutscene Triggers"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildGameplayCutsceneTriggersNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Gameplay Cutscene Triggers",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_gameplay_cutscene_triggers",
+      tags: ["second-brain", "cinematic", "triggers", "obsidian-export"],
+    },
+    body: [
+      "## Trigger Plans",
+      asBulletList(production.gameplay_cutscene_triggers.map((entry) => `${entry.trigger_id}: ${entry.title} | ${entry.trigger_type} | ${entry.gameplay_state} -> ${entry.cinematic_state}`)),
+      "",
+      "## Activation Conditions",
+      asBulletList(production.gameplay_cutscene_triggers.flatMap((entry) => entry.activation_conditions.map((condition) => `${entry.title}: ${condition}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("BABYLON Cutscene Layer"),
+        toLink("Scene Sequences"),
+        toLink("Continuity Validation Rules"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildContinuityValidationRulesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Continuity Validation Rules",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_continuity_validation_rules",
+      tags: ["second-brain", "cinematic", "continuity-validation", "obsidian-export"],
+    },
+    body: [
+      "## Validation Categories",
+      asBulletList([
+        "character continuity",
+        "environment continuity",
+        "lighting continuity",
+        "prop continuity",
+        "tone continuity",
+        "camera continuity",
+        "timeline consistency",
+      ]),
+      "",
+      "## Sequence Checks",
+      asBulletList(production.scene_sequences.flatMap((entry) => entry.shots.map((shot) => `${entry.title}: ${shot.shot_id} | env=${shot.environment_id} | tone=${shot.tone_reference} | timeline=${shot.timeline_position}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Continuity Rules"),
+        toLink("Scene Sequences"),
+        toLink("Failed Generations"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildShotProgressionExamplesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Shot Progression Examples",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_shot_progression_examples",
+      tags: ["second-brain", "cinematic", "shot-progression", "obsidian-export"],
+    },
+    body: [
+      "## Progression Patterns",
+      asBulletList(production.scene_sequences.map((entry) => `${entry.title}: ${entry.shots.map((shot) => shot.shot_purpose).join(" -> ")}`)),
+      "",
+      "## Transition Notes",
+      asBulletList(production.scene_sequences.flatMap((entry) => entry.shots.map((shot) => `${shot.shot_id}: ${shot.transition_notes}`))),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Scene Sequences"),
+        toLink("Shot Planning Rules"),
+        toLink("Gameplay Cutscene Triggers"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildAssetReuseDecisionsNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Asset Reuse Decisions",
+    directory: "Resources",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_asset_reuse_decisions",
+      tags: ["second-brain", "cinematic", "asset-reuse-decisions", "obsidian-export"],
+    },
+    body: [
+      "## Decisions",
+      asBulletList(production.asset_reuse_decisions),
+      "",
+      "## Reusable Assets",
+      asBulletList(production.generated_assets.filter((entry) => entry.reusable).map((entry) => `${entry.asset_id}: ${entry.label}`)),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Asset Reuse Log"),
+        toLink("Successful Generations"),
+        toLink("Shot Progression Examples"),
       ]),
     ].join("\n"),
   };
@@ -1042,7 +1226,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildBabylonCutsceneLayerNote({ productionMemory, latestSessionId }),
     buildShotPlanningRulesNote({ productionMemory, latestSessionId }),
     buildCinematicContinuityRulesNote({ productionMemory, latestSessionId }),
+    buildSceneSequencesNote({ productionMemory, latestSessionId }),
+    buildGameplayCutsceneTriggersNote({ productionMemory, latestSessionId }),
+    buildContinuityValidationRulesNote({ productionMemory, latestSessionId }),
+    buildShotProgressionExamplesNote({ productionMemory, latestSessionId }),
     buildAssetReuseLogNote({ productionMemory, latestSessionId }),
+    buildAssetReuseDecisionsNote({ productionMemory, latestSessionId }),
     buildFailedGenerationsNote({ productionMemory, latestSessionId }),
     buildSuccessfulGenerationsNote({ productionMemory, latestSessionId }),
     buildCostAwareIterationNotes({ productionMemory, latestSessionId }),
