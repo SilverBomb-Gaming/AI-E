@@ -774,7 +774,7 @@ test("controlled local inference bootstrap persists execution boundaries while k
     const afterRecord = await readCinematicProductionMemory({ root: tempRoot });
 
     assert.equal(validation.execution_enabled, false);
-    assert.equal(validation.readiness_delta.source, "dry-inference-warmup-single-frame-precursor");
+    assert.equal(validation.readiness_delta.source, "gated-single-frame-dry-execution-path");
     assert.equal(validation.dry_runtime_bootstrap.valid, true);
     assert.ok(validation.dry_runtime_bootstrap.checks.some((entry) => entry.check === "runtime-binary-presence" && entry.passed));
     assert.ok(validation.execution_boundary_state.tracked_statuses.includes("simulated"));
@@ -802,9 +802,15 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(validation.frame_stage_readiness.checks.some((entry) => entry.check === "scheduler-readiness"));
     assert.ok(validation.warmup_escalation_modeling.scenarios.some((entry) => entry.escalation === "warmup-risk-escalation"));
     assert.ok(validation.future_bounded_execution_rules.rules.some((entry) => entry.rule_id === "single-frame-only-execution"));
+    assert.ok(validation.dry_execution_token_registry.some((entry) => entry.token_id === "token-single-frame-dry-governed"));
+    assert.ok(validation.single_frame_dry_execution_path.stages.some((entry) => entry.stage === "dry_execution_request"));
+    assert.ok(validation.frame_traversal_validation.checks.some((entry) => entry.check === "execution-token-validity"));
+    assert.ok(validation.dry_execution_recovery.scenarios.some((entry) => entry.recovery === "dry-rollback-sequencing"));
+    assert.equal(validation.future_frame_synthesis_unlocks.milestone_unlocks_real_synthesis, "reviewed-real-frame-synthesis-bridge");
+    assert.ok(validation.execution_attempt_ledger.attempts.length >= 1);
 
     assert.equal(simulation.validation.execution_enabled, false);
-    assert.equal(simulation.simulation.sandbox_kind, "dry-inference-warmup-single-frame-precursor");
+    assert.equal(simulation.simulation.sandbox_kind, "gated-single-frame-dry-execution-path");
     assert.equal(simulation.simulation.execution_enabled, false);
     assert.ok(simulation.simulation.dry_runtime_bootstrap);
     assert.ok(simulation.simulation.execution_boundary_status);
@@ -824,6 +830,12 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(simulation.simulation.frame_stage_readiness);
     assert.ok(simulation.simulation.warmup_escalation_modeling);
     assert.ok(simulation.simulation.future_bounded_execution_rules);
+    assert.ok(simulation.simulation.dry_execution_token_registry);
+    assert.ok(simulation.simulation.single_frame_dry_execution_path);
+    assert.ok(simulation.simulation.frame_traversal_validation);
+    assert.ok(simulation.simulation.dry_execution_recovery);
+    assert.ok(simulation.simulation.future_frame_synthesis_unlocks);
+    assert.ok(simulation.simulation.execution_attempt_ledger);
     assert.equal(simulation.simulation.readiness_tracking_id, afterRecord.readiness_delta_tracking_history[0]?.tracking_id ?? null);
     assert.ok(afterRecord.execution_boundary_status_history.length >= 2);
     assert.ok(afterRecord.activation_authority_registry.length > 0);
@@ -838,7 +850,13 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(afterRecord.frame_stage_readiness_history.length >= 1);
     assert.ok(afterRecord.warmup_escalation_modeling_history.length >= 1);
     assert.ok(afterRecord.future_bounded_execution_rules_history.length >= 1);
-    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor"));
+    assert.ok(afterRecord.dry_execution_token_registry_history.length >= 1);
+    assert.ok(afterRecord.single_frame_dry_execution_path_history.length >= 1);
+    assert.ok(afterRecord.frame_traversal_validation_history.length >= 1);
+    assert.ok(afterRecord.dry_execution_recovery_history.length >= 1);
+    assert.ok(afterRecord.future_frame_synthesis_unlocks_history.length >= 1);
+    assert.ok(afterRecord.execution_attempt_ledger_history.length >= 1);
+    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "gated-single-frame-dry-execution-path"));
     assert.deepEqual(afterRecord.approval_audit_trail, beforeRecord.approval_audit_trail);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

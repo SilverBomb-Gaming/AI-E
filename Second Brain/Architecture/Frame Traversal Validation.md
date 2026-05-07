@@ -1,0 +1,35 @@
+---
+project_key: babylon-2026
+updated_at: 2026-05-07T19:56:48.802Z
+session_id: phase7c-skip-task-session
+status: generated_frame_traversal_validation
+tags:
+  - second-brain
+  - frame-traversal
+  - validation
+  - cinematic
+  - obsidian-export
+---
+
+# Frame Traversal Validation
+
+> Generated read-only from AI-E second-brain memory. Do not edit here expecting machine memory to change.
+
+## Validation Summary
+- Valid: no
+- Next unlock condition: Runtime integrity remains a hard blocker even for dry execution traversal.
+- Blocked transitions: runtime-integrity-sufficiency
+
+## Validation Checks
+- execution-token-validity: passed=yes | blockers=none
+- authority-compatibility: passed=yes | blockers=none
+- execution-boundary-integrity: passed=yes | blockers=No configured runtime path is visible for dry bootstrap review., FFmpeg visibility is still missing for dry bootstrap review., No model directory is visible for dry initialization checks., No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.
+- forbidden-state-enforcement: passed=yes | blockers=none
+- continuity-state-readiness: passed=yes | blockers=none
+- runtime-integrity-sufficiency: passed=no | blockers=No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.
+- escalation-compliance: passed=yes | blockers=No configured runtime path is visible for dry bootstrap review., FFmpeg visibility is still missing for dry bootstrap review., No model directory is visible for dry initialization checks., No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete., loader-hunyuan-video-13b-planned requires 16GB VRAM., Routing remains in offline-planning-mode., No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.
+
+## Related
+- [[Dry Execution Token Registry]]
+- [[Single-Frame Dry Execution Path]]
+- [[Dry Execution Recovery]]

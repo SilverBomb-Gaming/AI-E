@@ -2574,7 +2574,7 @@ function buildUpdatedReadinessProgressNote(input: {
 
 function latestControlledBootstrapSimulation(production: CinematicProductionMemoryRecord): CinematicProductionMemoryRecord["sandbox_simulations"][number] | null {
   return [...production.sandbox_simulations]
-    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor" || entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor")
+    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor" || entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor" || entry.sandbox_kind === "gated-single-frame-dry-execution-path")
     .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
 }
 
@@ -3300,6 +3300,245 @@ function buildFutureBoundedExecutionRulesNote(input: {
   };
 }
 
+function buildDryExecutionTokenRegistryNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const registry = latestBootstrap?.dry_execution_token_registry ?? production.dry_execution_token_registry_history[0] ?? [];
+  return {
+    title: "Dry Execution Token Registry",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_dry_execution_token_registry",
+      tags: ["second-brain", "dry-execution-token", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Token Summary",
+      registry.length > 0
+        ? asBulletList([
+          `Token count: ${registry.length}`,
+          `Authorities: ${[...new Set(registry.map((entry) => entry.activation_authority))].join(", ")}`,
+        ])
+        : "- No dry execution token registry recorded yet.",
+      "",
+      "## Tokens",
+      registry.length > 0
+        ? asBulletList(registry.map((entry) => `${entry.token_id}: scope=${entry.execution_scope} | allowed=${entry.allowed_stage} | forbidden=${entry.forbidden_stage} | expires=${entry.expiration_policy}`))
+        : "- No dry execution tokens recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Single-Frame Dry Execution Path"),
+        toLink("Frame Traversal Validation"),
+        toLink("Execution Attempt Ledger"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildSingleFrameDryExecutionPathNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const pathState = latestBootstrap?.single_frame_dry_execution_path ?? production.single_frame_dry_execution_path_history[0] ?? null;
+  return {
+    title: "Single-Frame Dry Execution Path",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_single_frame_dry_execution_path",
+      tags: ["second-brain", "dry-execution-path", "single-frame", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Traversal Summary",
+      pathState
+        ? asBulletList([
+          `Next stage: ${pathState.next_stage ?? "none"}`,
+          `Stage count: ${pathState.stages.length}`,
+        ])
+        : "- No single-frame dry execution path recorded yet.",
+      "",
+      "## Traversal Stages",
+      pathState?.stages?.length
+        ? asBulletList(pathState.stages.map((entry) => `${entry.order}. ${entry.stage}: status=${entry.status} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No dry execution stages recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Dry Execution Token Registry"),
+        toLink("Frame Traversal Validation"),
+        toLink("Dry Execution Recovery"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFrameTraversalValidationNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const validation = latestBootstrap?.frame_traversal_validation ?? production.frame_traversal_validation_history[0] ?? null;
+  return {
+    title: "Frame Traversal Validation",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_frame_traversal_validation",
+      tags: ["second-brain", "frame-traversal", "validation", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Validation Summary",
+      validation
+        ? asBulletList([
+          `Valid: ${validation.valid ? "yes" : "no"}`,
+          `Next unlock condition: ${validation.next_unlock_condition}`,
+          `Blocked transitions: ${validation.blocked_transitions.join(", ") || "none"}`,
+        ])
+        : "- No frame traversal validation recorded yet.",
+      "",
+      "## Validation Checks",
+      validation?.checks?.length
+        ? asBulletList(validation.checks.map((entry) => `${entry.check}: passed=${entry.passed ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No frame traversal validation checks recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Dry Execution Token Registry"),
+        toLink("Single-Frame Dry Execution Path"),
+        toLink("Dry Execution Recovery"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildDryExecutionRecoveryNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const recovery = latestBootstrap?.dry_execution_recovery ?? production.dry_execution_recovery_history[0] ?? null;
+  return {
+    title: "Dry Execution Recovery",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_dry_execution_recovery",
+      tags: ["second-brain", "dry-execution-recovery", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Recovery Scenarios",
+      recovery?.scenarios?.length
+        ? asBulletList(recovery.scenarios.map((entry) => `${entry.recovery}: triggered=${entry.triggered ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No dry execution recovery recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Frame Traversal Validation"),
+        toLink("Execution Attempt Ledger"),
+        toLink("Future Frame Synthesis Unlocks"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFutureFrameSynthesisUnlocksNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const unlocks = latestBootstrap?.future_frame_synthesis_unlocks ?? production.future_frame_synthesis_unlocks_history[0] ?? null;
+  return {
+    title: "Future Frame Synthesis Unlocks",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_future_frame_synthesis_unlocks",
+      tags: ["second-brain", "future-frame-synthesis", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Unlock Summary",
+      unlocks
+        ? asBulletList([
+          `Milestone unlocking real synthesis: ${unlocks.milestone_unlocks_real_synthesis}`,
+          `Unlock count: ${unlocks.unlocks.length}`,
+        ])
+        : "- No future frame synthesis unlocks recorded yet.",
+      "",
+      "## Unlocks",
+      unlocks?.unlocks?.length
+        ? asBulletList(unlocks.unlocks.map((entry) => `${entry.unlock_id}: unlocked=no | prerequisites=${entry.prerequisites.join(", ")}`))
+        : "- No future frame synthesis unlocks recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Dry Execution Recovery"),
+        toLink("Future Bounded Execution Rules"),
+        toLink("Execution Attempt Ledger"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildExecutionAttemptLedgerNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const ledger = latestBootstrap?.execution_attempt_ledger ?? production.execution_attempt_ledger_history[0] ?? null;
+  return {
+    title: "Execution Attempt Ledger",
+    directory: "Outcomes",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_execution_attempt_ledger",
+      tags: ["second-brain", "execution-attempts", "ledger", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Attempt Summary",
+      ledger
+        ? asBulletList([
+          `Attempt count: ${ledger.attempts.length}`,
+          `Recorded at: ${ledger.recorded_at}`,
+        ])
+        : "- No execution attempt ledger recorded yet.",
+      "",
+      "## Attempts",
+      ledger?.attempts?.length
+        ? asBulletList(ledger.attempts.map((entry) => `${entry.token_id}: blocked=${entry.blocked_transitions.join(", ") || "none"} | escalations=${entry.escalation_triggers.join(", ") || "none"}`))
+        : "- No execution attempts recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Dry Execution Token Registry"),
+        toLink("Single-Frame Dry Execution Path"),
+        toLink("Future Frame Synthesis Unlocks"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildCinematicExecutionLifecycleNote(input: {
   productionMemory: CinematicProductionMemoryRecord;
   latestSessionId: string;
@@ -3804,6 +4043,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildFrameStageReadinessNote({ productionMemory, latestSessionId }),
     buildWarmupEscalationModelingNote({ productionMemory, latestSessionId }),
     buildFutureBoundedExecutionRulesNote({ productionMemory, latestSessionId }),
+    buildDryExecutionTokenRegistryNote({ productionMemory, latestSessionId }),
+    buildSingleFrameDryExecutionPathNote({ productionMemory, latestSessionId }),
+    buildFrameTraversalValidationNote({ productionMemory, latestSessionId }),
+    buildDryExecutionRecoveryNote({ productionMemory, latestSessionId }),
+    buildFutureFrameSynthesisUnlocksNote({ productionMemory, latestSessionId }),
+    buildExecutionAttemptLedgerNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),

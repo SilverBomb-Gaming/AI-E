@@ -503,7 +503,7 @@ export type CinematicGenerationJobHistoryEntry = {
 
 export type CinematicSandboxSimulationRecord = {
   simulation_id: string;
-  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor";
+  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor" | "gated-single-frame-dry-execution-path";
   sequence_id: string;
   routing_mode: CinematicProviderRoutingMode;
   provider: CinematicGenerationProvider;
@@ -541,6 +541,12 @@ export type CinematicSandboxSimulationRecord = {
   frame_stage_readiness?: CinematicFrameStageReadinessValidation;
   warmup_escalation_modeling?: CinematicWarmupEscalationModeling;
   future_bounded_execution_rules?: CinematicFutureBoundedExecutionRules;
+  dry_execution_token_registry?: CinematicDryExecutionTokenRegistryEntry[];
+  single_frame_dry_execution_path?: CinematicSingleFrameDryExecutionPath;
+  frame_traversal_validation?: CinematicFrameTraversalValidation;
+  dry_execution_recovery?: CinematicDryExecutionRecoveryModeling;
+  future_frame_synthesis_unlocks?: CinematicFutureFrameSynthesisUnlocks;
+  execution_attempt_ledger?: CinematicExecutionAttemptLedger;
   readiness_tracking_id?: string | null;
   hybrid_escalation?: CinematicHybridEscalationSimulation | null;
   recorded_at: string;
@@ -1205,6 +1211,142 @@ export type CinematicFutureBoundedExecutionRules = {
   rules: CinematicFutureBoundedExecutionRule[];
 };
 
+export type CinematicDryExecutionActivationScope =
+  | "dry_single_frame_traversal"
+  | "dry_low_resolution_traversal"
+  | "dry_preview_traversal"
+  | "dry_packaging_traversal"
+  | "dry_archival_traversal";
+
+export type CinematicDryExecutionTraversalStage =
+  | "dry_execution_request"
+  | "dry_scheduler_stage"
+  | "dry_pipeline_stage"
+  | "dry_frame_stage"
+  | "dry_packaging_stage"
+  | "dry_output_blocked"
+  | "dry_execution_archived";
+
+export type CinematicDryExecutionTokenRegistryEntry = {
+  token_id: string;
+  activation_authority: string;
+  execution_scope: CinematicDryExecutionActivationScope;
+  allowed_stage: CinematicDryExecutionTraversalStage;
+  forbidden_stage: CinematicDryExecutionTraversalStage;
+  expiration_policy: string;
+  governance_requirements: string[];
+  continuity_requirements: string[];
+  escalation_policy: string[];
+  execution_boundary_requirements: string[];
+  execution_restrictions: string[];
+  forbidden_operations: string[];
+  continuity_restrictions: string[];
+  escalation_restrictions: string[];
+};
+
+export type CinematicSingleFrameDryExecutionStageState = {
+  stage: CinematicDryExecutionTraversalStage;
+  order: number;
+  simulated: true;
+  status: "ready" | "blocked" | "archived";
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicSingleFrameDryExecutionPath = {
+  path_id: string;
+  recorded_at: string;
+  stages: CinematicSingleFrameDryExecutionStageState[];
+  next_stage: CinematicDryExecutionTraversalStage | null;
+};
+
+export type CinematicFrameTraversalValidationCheckName =
+  | "execution-token-validity"
+  | "authority-compatibility"
+  | "execution-boundary-integrity"
+  | "forbidden-state-enforcement"
+  | "continuity-state-readiness"
+  | "runtime-integrity-sufficiency"
+  | "escalation-compliance";
+
+export type CinematicFrameTraversalValidationCheck = {
+  check: CinematicFrameTraversalValidationCheckName;
+  passed: boolean;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicFrameTraversalValidation = {
+  validation_id: string;
+  recorded_at: string;
+  valid: boolean;
+  checks: CinematicFrameTraversalValidationCheck[];
+  blocked_transitions: string[];
+  next_unlock_condition: string;
+};
+
+export type CinematicDryExecutionRecoveryKind =
+  | "token-expiration-recovery"
+  | "blocked-stage-recovery"
+  | "continuity-recovery"
+  | "low-vram-recovery"
+  | "governance-escalation-recovery"
+  | "dry-rollback-sequencing";
+
+export type CinematicDryExecutionRecoveryScenario = {
+  recovery: CinematicDryExecutionRecoveryKind;
+  triggered: boolean;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicDryExecutionRecoveryModeling = {
+  recovery_id: string;
+  recorded_at: string;
+  scenarios: CinematicDryExecutionRecoveryScenario[];
+};
+
+export type CinematicFutureFrameSynthesisUnlockId =
+  | "governed-single-frame-synthesis"
+  | "low-resolution-synthesis"
+  | "governed-preview-generation"
+  | "bounded-renderer-output"
+  | "continuity-safe-synthesis"
+  | "temporal-preview-sequencing";
+
+export type CinematicFutureFrameSynthesisUnlock = {
+  unlock_id: CinematicFutureFrameSynthesisUnlockId;
+  unlocked: false;
+  prerequisites: string[];
+  still_forbidden_operations: string[];
+  unlocks_real_synthesis_at: string;
+};
+
+export type CinematicFutureFrameSynthesisUnlocks = {
+  unlock_set_id: string;
+  recorded_at: string;
+  unlocks: CinematicFutureFrameSynthesisUnlock[];
+  milestone_unlocks_real_synthesis: string;
+};
+
+export type CinematicExecutionAttemptLedgerEntry = {
+  attempt_id: string;
+  recorded_at: string;
+  token_id: string;
+  dry_execution_attempt: string;
+  blocked_transitions: string[];
+  escalation_triggers: string[];
+  rollback_reasons: string[];
+  authority_approvals: string[];
+  execution_temperature_changes: string[];
+};
+
+export type CinematicExecutionAttemptLedger = {
+  ledger_id: string;
+  recorded_at: string;
+  attempts: CinematicExecutionAttemptLedgerEntry[];
+};
+
 export type CinematicFutureActivationPlan = {
   future_frame_synthesis_activation: boolean;
   future_temporal_pipeline_activation: boolean;
@@ -1247,6 +1389,12 @@ export type CinematicControlledLocalInferenceBootstrapValidation = {
   frame_stage_readiness: CinematicFrameStageReadinessValidation;
   warmup_escalation_modeling: CinematicWarmupEscalationModeling;
   future_bounded_execution_rules: CinematicFutureBoundedExecutionRules;
+  dry_execution_token_registry: CinematicDryExecutionTokenRegistryEntry[];
+  single_frame_dry_execution_path: CinematicSingleFrameDryExecutionPath;
+  frame_traversal_validation: CinematicFrameTraversalValidation;
+  dry_execution_recovery: CinematicDryExecutionRecoveryModeling;
+  future_frame_synthesis_unlocks: CinematicFutureFrameSynthesisUnlocks;
+  execution_attempt_ledger: CinematicExecutionAttemptLedger;
   execution_enabled: false;
 };
 
@@ -1511,7 +1659,7 @@ export type CinematicReadinessMilestoneDelta = {
 
 export type CinematicReadinessDeltaTrackingRecord = {
   tracking_id: string;
-  source: "local-readiness-validation" | "local-execution-sandbox" | "runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor";
+  source: "local-readiness-validation" | "local-execution-sandbox" | "runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor" | "gated-single-frame-dry-execution-path";
   recorded_at: string;
   milestones: CinematicReadinessMilestoneDelta[];
 };
@@ -1711,6 +1859,12 @@ export type CinematicProductionMemoryRecord = {
   frame_stage_readiness_history: CinematicFrameStageReadinessValidation[];
   warmup_escalation_modeling_history: CinematicWarmupEscalationModeling[];
   future_bounded_execution_rules_history: CinematicFutureBoundedExecutionRules[];
+  dry_execution_token_registry_history: CinematicDryExecutionTokenRegistryEntry[][];
+  single_frame_dry_execution_path_history: CinematicSingleFrameDryExecutionPath[];
+  frame_traversal_validation_history: CinematicFrameTraversalValidation[];
+  dry_execution_recovery_history: CinematicDryExecutionRecoveryModeling[];
+  future_frame_synthesis_unlocks_history: CinematicFutureFrameSynthesisUnlocks[];
+  execution_attempt_ledger_history: CinematicExecutionAttemptLedger[];
   provider_routing_rules: string[];
   prompt_normalization_rules: string[];
   provider_validation_rules: string[];
@@ -2651,6 +2805,12 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
   frame_stage_readiness_history: [],
   warmup_escalation_modeling_history: [],
   future_bounded_execution_rules_history: [],
+  dry_execution_token_registry_history: [],
+  single_frame_dry_execution_path_history: [],
+  frame_traversal_validation_history: [],
+  dry_execution_recovery_history: [],
+  future_frame_synthesis_unlocks_history: [],
+  execution_attempt_ledger_history: [],
   provider_routing_rules: [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
@@ -2824,6 +2984,12 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     frame_stage_readiness_history: nextRecord.frame_stage_readiness_history ?? defaults.frame_stage_readiness_history,
     warmup_escalation_modeling_history: nextRecord.warmup_escalation_modeling_history ?? defaults.warmup_escalation_modeling_history,
     future_bounded_execution_rules_history: nextRecord.future_bounded_execution_rules_history ?? defaults.future_bounded_execution_rules_history,
+    dry_execution_token_registry_history: nextRecord.dry_execution_token_registry_history ?? defaults.dry_execution_token_registry_history,
+    single_frame_dry_execution_path_history: nextRecord.single_frame_dry_execution_path_history ?? defaults.single_frame_dry_execution_path_history,
+    frame_traversal_validation_history: nextRecord.frame_traversal_validation_history ?? defaults.frame_traversal_validation_history,
+    dry_execution_recovery_history: nextRecord.dry_execution_recovery_history ?? defaults.dry_execution_recovery_history,
+    future_frame_synthesis_unlocks_history: nextRecord.future_frame_synthesis_unlocks_history ?? defaults.future_frame_synthesis_unlocks_history,
+    execution_attempt_ledger_history: nextRecord.execution_attempt_ledger_history ?? defaults.execution_attempt_ledger_history,
     provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
     prompt_normalization_rules: nextRecord.prompt_normalization_rules ?? defaults.prompt_normalization_rules,
     provider_validation_rules: nextRecord.provider_validation_rules ?? defaults.provider_validation_rules,
@@ -5426,6 +5592,292 @@ function buildFutureBoundedExecutionRules(input: {
   };
 }
 
+function buildDryExecutionTokenRegistry(input: {
+  activationAuthorityRegistry: CinematicActivationAuthorityRegistryEntry[];
+  frameStageReadiness: CinematicFrameStageReadinessValidation;
+  executionTemperatureState: CinematicExecutionTemperatureStateRecord;
+  boundary: CinematicExecutionBoundaryState;
+}): CinematicDryExecutionTokenRegistryEntry[] {
+  const sharedBlockers = input.frameStageReadiness.checks.filter((entry) => !entry.passed).flatMap((entry) => entry.blockers);
+  return [
+    {
+      token_id: "token-single-frame-dry-governed",
+      activation_authority: input.activationAuthorityRegistry[0]?.authority_id ?? "authority-manual-operator-gate",
+      execution_scope: "dry_single_frame_traversal",
+      allowed_stage: "dry_execution_request",
+      forbidden_stage: "dry_output_blocked",
+      expiration_policy: "expires_after_single_reviewed_dry_traversal",
+      governance_requirements: ["manual operator approval", "token review record", "append-only attempt ledger"],
+      continuity_requirements: ["continuity-safe sequence evidence", "frame-stage continuity check"],
+      escalation_policy: ["manual-only escalation", "runtime-risk escalation remains blocking"],
+      execution_boundary_requirements: input.boundary.tracked_statuses,
+      execution_restrictions: ["simulation_only", `temperature=${input.executionTemperatureState.current_state}`],
+      forbidden_operations: ["inference_execute", "frame_generate", "renderer_activate", "output_images_video"],
+      continuity_restrictions: ["no continuity-state mutation", ...sharedBlockers],
+      escalation_restrictions: ["no autonomous escalation", "no unattended retry loops"],
+    },
+    {
+      token_id: "token-preview-dry-governed",
+      activation_authority: input.activationAuthorityRegistry[3]?.authority_id ?? "authority-render-output-governor",
+      execution_scope: "dry_preview_traversal",
+      allowed_stage: "dry_packaging_stage",
+      forbidden_stage: "dry_output_blocked",
+      expiration_policy: "expires_when_packaging_review_finishes_without_output_unlock",
+      governance_requirements: ["preview governance approval", "non-rendering confirmation"],
+      continuity_requirements: ["continuity-safe packaging notes"],
+      escalation_policy: ["bounded preview escalation only", "manual-only escalation"],
+      execution_boundary_requirements: ["rendering_disabled", "execution_blocked"],
+      execution_restrictions: ["no live packaging", "no renderer output"],
+      forbidden_operations: ["renderer_activate", "temporal_render", "output_images_video"],
+      continuity_restrictions: ["preserve continuity state as read-only"],
+      escalation_restrictions: ["no preview auto-promotion"],
+    },
+  ];
+}
+
+function buildSingleFrameDryExecutionPath(input: {
+  tokenRegistry: CinematicDryExecutionTokenRegistryEntry[];
+  frameTraversalValidation: CinematicFrameTraversalValidation | null;
+}): CinematicSingleFrameDryExecutionPath {
+  const validationBlockers = input.frameTraversalValidation?.blocked_transitions ?? [];
+  const pathStages: CinematicDryExecutionTraversalStage[] = [
+    "dry_execution_request",
+    "dry_scheduler_stage",
+    "dry_pipeline_stage",
+    "dry_frame_stage",
+    "dry_packaging_stage",
+    "dry_output_blocked",
+    "dry_execution_archived",
+  ];
+  const firstToken = input.tokenRegistry[0];
+  return {
+    path_id: `single-frame-dry-path-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    stages: pathStages.map((stage, index) => ({
+      stage,
+      order: index + 1,
+      simulated: true,
+      status: stage === "dry_execution_request"
+        ? "ready"
+        : stage === "dry_execution_archived"
+          ? "archived"
+          : "blocked",
+      detail: stage === "dry_execution_request"
+        ? `Token ${firstToken?.token_id ?? "none"} authorizes a dry request only.`
+        : stage === "dry_output_blocked"
+          ? "Dry output remains blocked to preserve non-rendering boundaries."
+          : stage === "dry_execution_archived"
+            ? "The dry execution attempt is archived append-only without output generation."
+            : `Stage ${stage} remains simulated-only pending validated dry traversal gates.`,
+      blockers: stage === "dry_execution_request" ? [] : validationBlockers,
+    })),
+    next_stage: "dry_execution_request",
+  };
+}
+
+function buildFrameTraversalValidation(input: {
+  tokenRegistry: CinematicDryExecutionTokenRegistryEntry[];
+  activationAuthorityRegistry: CinematicActivationAuthorityRegistryEntry[];
+  boundary: CinematicExecutionBoundaryState;
+  forbiddenExecutionStates: CinematicForbiddenExecutionStateEnforcement;
+  readiness: CinematicLocalInferenceReadinessReport;
+  integrity: CinematicRuntimeIntegrityValidation;
+  warmupEscalationModeling: CinematicWarmupEscalationModeling;
+}): CinematicFrameTraversalValidation {
+  const continuityProgress = input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation")?.percentage ?? 0;
+  const tokenAuthorities = new Set(input.tokenRegistry.map((entry) => entry.activation_authority));
+  const checks: CinematicFrameTraversalValidationCheck[] = [
+    {
+      check: "execution-token-validity",
+      passed: input.tokenRegistry.length > 0,
+      detail: "A dry execution token must exist before bounded traversal is modeled.",
+      blockers: input.tokenRegistry.length > 0 ? [] : ["No dry execution token is registered."],
+    },
+    {
+      check: "authority-compatibility",
+      passed: input.activationAuthorityRegistry.some((entry) => tokenAuthorities.has(entry.authority_id)),
+      detail: "Execution token authority must match a known activation authority.",
+      blockers: input.activationAuthorityRegistry.some((entry) => tokenAuthorities.has(entry.authority_id)) ? [] : ["Dry execution token authority is not recognized."],
+    },
+    {
+      check: "execution-boundary-integrity",
+      passed: input.boundary.tracked_statuses.includes("inference_disabled") && input.boundary.tracked_statuses.includes("rendering_disabled"),
+      detail: "Execution boundary integrity must keep inference and rendering disabled throughout dry traversal.",
+      blockers: input.boundary.activation_blockers,
+    },
+    {
+      check: "forbidden-state-enforcement",
+      passed: input.forbiddenExecutionStates.states.every((entry) => entry.blocked),
+      detail: "Forbidden-state enforcement must remain intact before any dry path stage can advance.",
+      blockers: input.forbiddenExecutionStates.states.every((entry) => entry.blocked) ? [] : ["A forbidden execution state is not blocked."],
+    },
+    {
+      check: "continuity-state-readiness",
+      passed: continuityProgress >= 70,
+      detail: "Continuity state must meet the governed readiness threshold before dry frame traversal is considered safe.",
+      blockers: continuityProgress >= 70 ? [] : ["Continuity state readiness remains below threshold."],
+    },
+    {
+      check: "runtime-integrity-sufficiency",
+      passed: input.integrity.valid,
+      detail: "Runtime integrity remains a hard blocker even for dry execution traversal.",
+      blockers: input.integrity.blockers,
+    },
+    {
+      check: "escalation-compliance",
+      passed: input.warmupEscalationModeling.scenarios.every((entry) => entry.escalation !== "blocked-warmup-recovery" || entry.triggered),
+      detail: "Escalation compliance requires dry recovery handling to remain modeled when traversal is blocked.",
+      blockers: input.warmupEscalationModeling.scenarios.filter((entry) => entry.triggered).flatMap((entry) => entry.blockers),
+    },
+  ];
+  return {
+    validation_id: `frame-traversal-validation-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    valid: checks.every((entry) => entry.passed),
+    checks,
+    blocked_transitions: checks.filter((entry) => !entry.passed).map((entry) => entry.check),
+    next_unlock_condition: checks.find((entry) => !entry.passed)?.detail ?? "Traversal validation is satisfied, but synthesis remains hard-gated.",
+  };
+}
+
+function buildDryExecutionRecoveryModeling(input: {
+  tokenRegistry: CinematicDryExecutionTokenRegistryEntry[];
+  traversalValidation: CinematicFrameTraversalValidation;
+  readiness: CinematicLocalInferenceReadinessReport;
+  loaderRegistry: CinematicLocalModelLoaderRecord[];
+  governanceEscalationModeling: CinematicGovernanceEscalationModeling;
+}): CinematicDryExecutionRecoveryModeling {
+  const continuityProgress = input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation")?.percentage ?? 0;
+  const lowVramBlockers = input.loaderRegistry.filter((entry) => entry.estimated_vram >= 14).map((entry) => `${entry.loader_id} requires ${entry.estimated_vram}GB VRAM.`);
+  return {
+    recovery_id: `dry-execution-recovery-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    scenarios: [
+      {
+        recovery: "token-expiration-recovery",
+        triggered: input.tokenRegistry.some((entry) => /expires/i.test(entry.expiration_policy)),
+        detail: "Expired dry execution tokens require a new reviewed token rather than automatic renewal.",
+        blockers: input.tokenRegistry.map((entry) => `${entry.token_id}: ${entry.expiration_policy}`),
+      },
+      {
+        recovery: "blocked-stage-recovery",
+        triggered: !input.traversalValidation.valid,
+        detail: "Blocked traversal stages recover by returning to dry request review instead of execution.",
+        blockers: input.traversalValidation.blocked_transitions,
+      },
+      {
+        recovery: "continuity-recovery",
+        triggered: continuityProgress < 70,
+        detail: "Continuity recovery restores read-only continuity evidence before any further dry traversal attempt.",
+        blockers: continuityProgress < 70 ? ["Continuity state readiness remains below threshold."] : [],
+      },
+      {
+        recovery: "low-vram-recovery",
+        triggered: lowVramBlockers.length > 0,
+        detail: "Low-VRAM recovery reduces traversal ambition rather than permitting live execution.",
+        blockers: lowVramBlockers,
+      },
+      {
+        recovery: "governance-escalation-recovery",
+        triggered: input.governanceEscalationModeling.scenarios.some((entry) => entry.triggered),
+        detail: "Governance escalation recovery routes back through manual review and append-only records.",
+        blockers: input.governanceEscalationModeling.scenarios.filter((entry) => entry.triggered).map((entry) => entry.escalation),
+      },
+      {
+        recovery: "dry-rollback-sequencing",
+        triggered: true,
+        detail: "Dry rollback sequencing archives the attempt and preserves non-rendering boundaries after any blocked traversal.",
+        blockers: input.traversalValidation.blocked_transitions,
+      },
+    ],
+  };
+}
+
+function buildFutureFrameSynthesisUnlocks(input: {
+  traversalValidation: CinematicFrameTraversalValidation;
+  tokenRegistry: CinematicDryExecutionTokenRegistryEntry[];
+}): CinematicFutureFrameSynthesisUnlocks {
+  const blocked = input.traversalValidation.checks.filter((entry) => !entry.passed).flatMap((entry) => entry.blockers);
+  const milestone = "reviewed-real-frame-synthesis-bridge";
+  const stillForbidden = uniqueNormalizedStrings(input.tokenRegistry.flatMap((entry) => entry.forbidden_operations));
+  return {
+    unlock_set_id: `future-frame-synthesis-unlocks-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    milestone_unlocks_real_synthesis: milestone,
+    unlocks: [
+      {
+        unlock_id: "governed-single-frame-synthesis",
+        unlocked: false,
+        prerequisites: uniqueNormalizedStrings(["validated dry traversal", ...blocked]),
+        still_forbidden_operations: stillForbidden,
+        unlocks_real_synthesis_at: milestone,
+      },
+      {
+        unlock_id: "low-resolution-synthesis",
+        unlocked: false,
+        prerequisites: ["low-resolution governance approval", "runtime integrity approval"],
+        still_forbidden_operations: stillForbidden,
+        unlocks_real_synthesis_at: milestone,
+      },
+      {
+        unlock_id: "governed-preview-generation",
+        unlocked: false,
+        prerequisites: ["preview governance approval", "dry packaging review"],
+        still_forbidden_operations: stillForbidden,
+        unlocks_real_synthesis_at: milestone,
+      },
+      {
+        unlock_id: "bounded-renderer-output",
+        unlocked: false,
+        prerequisites: ["bounded renderer review", "non-rendering guard relaxation review"],
+        still_forbidden_operations: stillForbidden,
+        unlocks_real_synthesis_at: milestone,
+      },
+      {
+        unlock_id: "continuity-safe-synthesis",
+        unlocked: false,
+        prerequisites: ["continuity-safe synthesis approval", "continuity evidence preserved"],
+        still_forbidden_operations: stillForbidden,
+        unlocks_real_synthesis_at: milestone,
+      },
+      {
+        unlock_id: "temporal-preview-sequencing",
+        unlocked: false,
+        prerequisites: ["temporal preview review", "single-frame dry traversal stability"],
+        still_forbidden_operations: stillForbidden,
+        unlocks_real_synthesis_at: milestone,
+      },
+    ],
+  };
+}
+
+function buildExecutionAttemptLedger(input: {
+  tokenRegistry: CinematicDryExecutionTokenRegistryEntry[];
+  dryExecutionPath: CinematicSingleFrameDryExecutionPath;
+  traversalValidation: CinematicFrameTraversalValidation;
+  recovery: CinematicDryExecutionRecoveryModeling;
+  executionTemperatureState: CinematicExecutionTemperatureStateRecord;
+}): CinematicExecutionAttemptLedger {
+  const token = input.tokenRegistry[0];
+  return {
+    ledger_id: `execution-attempt-ledger-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    attempts: [
+      {
+        attempt_id: `dry-attempt-${Date.now()}`,
+        recorded_at: new Date().toISOString(),
+        token_id: token?.token_id ?? "no-token",
+        dry_execution_attempt: input.dryExecutionPath.stages.map((entry) => entry.stage).join(" -> "),
+        blocked_transitions: input.traversalValidation.blocked_transitions,
+        escalation_triggers: input.recovery.scenarios.filter((entry) => entry.triggered).map((entry) => entry.recovery),
+        rollback_reasons: input.recovery.scenarios.filter((entry) => entry.recovery === "dry-rollback-sequencing").flatMap((entry) => entry.blockers),
+        authority_approvals: input.tokenRegistry.flatMap((entry) => entry.governance_requirements),
+        execution_temperature_changes: input.executionTemperatureState.transitions.map((entry) => `${entry.state}:${entry.transition_reason}`),
+      },
+    ],
+  };
+}
+
 function applyGatedInferencePrecursorReadiness(input: {
   readiness: CinematicLocalInferenceReadinessReport;
   activationAuthorityRegistry: CinematicActivationAuthorityRegistryEntry[];
@@ -5439,6 +5891,12 @@ function applyGatedInferencePrecursorReadiness(input: {
   frameStageReadiness: CinematicFrameStageReadinessValidation;
   warmupEscalationModeling: CinematicWarmupEscalationModeling;
   futureBoundedExecutionRules: CinematicFutureBoundedExecutionRules;
+  dryExecutionTokenRegistry: CinematicDryExecutionTokenRegistryEntry[];
+  singleFrameDryExecutionPath: CinematicSingleFrameDryExecutionPath;
+  frameTraversalValidation: CinematicFrameTraversalValidation;
+  dryExecutionRecovery: CinematicDryExecutionRecoveryModeling;
+  futureFrameSynthesisUnlocks: CinematicFutureFrameSynthesisUnlocks;
+  executionAttemptLedger: CinematicExecutionAttemptLedger;
 }): CinematicLocalInferenceReadinessReport {
   const sequencingCoverage = input.sequencing.stages.length > 0;
   const unlockCoverage = input.futureUnlockConditions.conditions.length > 0;
@@ -5448,6 +5906,10 @@ function applyGatedInferencePrecursorReadiness(input: {
   const precursorCoverage = input.singleFrameExecutionPrecursor.entries.length > 0;
   const frameStageCoverage = input.frameStageReadiness.checks.filter((entry) => entry.passed).length;
   const boundedRuleCoverage = input.futureBoundedExecutionRules.rules.length > 0;
+  const dryTokenCoverage = input.dryExecutionTokenRegistry.length > 0;
+  const traversalCoverage = input.singleFrameDryExecutionPath.stages.length > 0;
+  const traversalValidationCoverage = input.frameTraversalValidation.checks.filter((entry) => entry.passed).length;
+  const synthesisUnlockCoverage = input.futureFrameSynthesisUnlocks.unlocks.length > 0;
   const updatedMilestones = input.readiness.milestone_progress.map((entry) => {
     const blockers = uniqueNormalizedStrings([
       ...entry.blockers,
@@ -5458,25 +5920,25 @@ function applyGatedInferencePrecursorReadiness(input: {
       case "local-inference-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (authorityCoverage ? 4 : 0) + (sequencingCoverage ? 3 : 0) + (unlockCoverage ? 2 : 0) + (warmupCoverage >= 4 ? 5 : 0) + (input.executionTemperatureState.current_state === "simulated_only" ? 2 : 0)),
+          percentage: clampPercentage(entry.percentage + (authorityCoverage ? 3 : 0) + (sequencingCoverage ? 2 : 0) + (unlockCoverage ? 2 : 0) + (warmupCoverage >= 4 ? 4 : 0) + (dryTokenCoverage ? 3 : 0) + (traversalValidationCoverage >= 4 ? 3 : 0) + (input.executionTemperatureState.current_state === "simulated_only" ? 2 : 0)),
           blockers,
         };
       case "local-runtime-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "execution-boundary-intact")?.passed ? 3 : 0) + (triggeredEscalations > 0 ? 2 : 0) + (warmupCoverage >= 2 ? 4 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "execution-boundary-intact")?.passed ? 3 : 0) + (triggeredEscalations > 0 ? 2 : 0) + (warmupCoverage >= 2 ? 3 : 0) + (traversalCoverage ? 3 : 0)),
           blockers,
         };
       case "local-frame-generation-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_frame_stage_prepare") ? 3 : 0) + (frameStageCoverage >= 5 ? 5 : 0) + (precursorCoverage ? 3 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_frame_stage_prepare") ? 2 : 0) + (frameStageCoverage >= 5 ? 4 : 0) + (precursorCoverage ? 2 : 0) + (traversalValidationCoverage >= 5 ? 4 : 0)),
           blockers,
         };
       case "local-renderer-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_render_output_prepare") ? 2 : 0) + (precursorCoverage ? 3 : 0) + (boundedRuleCoverage ? 2 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_render_output_prepare") ? 2 : 0) + (precursorCoverage ? 2 : 0) + (boundedRuleCoverage ? 2 : 0) + (synthesisUnlockCoverage ? 3 : 0)),
           blockers,
         };
       case "continuity-preserving-local-generation":
@@ -5488,7 +5950,7 @@ function applyGatedInferencePrecursorReadiness(input: {
       case "hybrid-local-cloud-orchestration":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.escalationModeling.scenarios.some((scenario) => scenario.escalation === "offline-mode-escalation") ? 2 : 0) + (input.warmupEscalationModeling.scenarios.some((scenario) => scenario.escalation === "hybrid-escalation") ? 3 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.escalationModeling.scenarios.some((scenario) => scenario.escalation === "offline-mode-escalation") ? 2 : 0) + (input.warmupEscalationModeling.scenarios.some((scenario) => scenario.escalation === "hybrid-escalation") ? 2 : 0) + (input.dryExecutionRecovery.scenarios.some((scenario) => scenario.recovery === "governance-escalation-recovery") ? 2 : 0)),
           blockers,
         };
       case "self-sustaining-generation-readiness":
@@ -5510,6 +5972,9 @@ function applyGatedInferencePrecursorReadiness(input: {
       `Execution temperature current state: ${input.executionTemperatureState.current_state}.`,
       `Dry warmup stages ready: ${warmupCoverage}/${input.dryInferenceWarmup.stages.length}.`,
       `Single-frame precursor entries scaffolded: ${input.singleFrameExecutionPrecursor.entries.length}.`,
+      `Dry execution tokens recorded: ${input.dryExecutionTokenRegistry.length}.`,
+      `Dry execution traversal stages recorded: ${input.singleFrameDryExecutionPath.stages.length}.`,
+      `Execution attempts recorded: ${input.executionAttemptLedger.attempts.length}.`,
       `Future real inference remains locked behind ${input.futureUnlockConditions.milestone_unlocks_real_inference}.`,
     ]),
     blocked_reasons: uniqueNormalizedStrings([
@@ -6836,6 +7301,43 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     frameStageReadiness,
     executionTemperatureState,
   });
+  const dryExecutionTokenRegistry = buildDryExecutionTokenRegistry({
+    activationAuthorityRegistry,
+    frameStageReadiness,
+    executionTemperatureState,
+    boundary: executionBoundaryState,
+  });
+  const frameTraversalValidation = buildFrameTraversalValidation({
+    tokenRegistry: dryExecutionTokenRegistry,
+    activationAuthorityRegistry,
+    boundary: executionBoundaryState,
+    forbiddenExecutionStates,
+    readiness,
+    integrity: runtimeIntegrityValidation,
+    warmupEscalationModeling,
+  });
+  const singleFrameDryExecutionPath = buildSingleFrameDryExecutionPath({
+    tokenRegistry: dryExecutionTokenRegistry,
+    frameTraversalValidation,
+  });
+  const dryExecutionRecovery = buildDryExecutionRecoveryModeling({
+    tokenRegistry: dryExecutionTokenRegistry,
+    traversalValidation: frameTraversalValidation,
+    readiness,
+    loaderRegistry,
+    governanceEscalationModeling,
+  });
+  const futureFrameSynthesisUnlocks = buildFutureFrameSynthesisUnlocks({
+    traversalValidation: frameTraversalValidation,
+    tokenRegistry: dryExecutionTokenRegistry,
+  });
+  const executionAttemptLedger = buildExecutionAttemptLedger({
+    tokenRegistry: dryExecutionTokenRegistry,
+    dryExecutionPath: singleFrameDryExecutionPath,
+    traversalValidation: frameTraversalValidation,
+    recovery: dryExecutionRecovery,
+    executionTemperatureState,
+  });
   const readinessWithPrecursor = applyGatedInferencePrecursorReadiness({
     readiness,
     activationAuthorityRegistry,
@@ -6849,11 +7351,17 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     frameStageReadiness,
     warmupEscalationModeling,
     futureBoundedExecutionRules,
+    dryExecutionTokenRegistry,
+    singleFrameDryExecutionPath,
+    frameTraversalValidation,
+    dryExecutionRecovery,
+    futureFrameSynthesisUnlocks,
+    executionAttemptLedger,
   });
   const trackingUpdate = appendReadinessDeltaTracking({
     record: nextRecord,
     readiness: readinessWithPrecursor,
-    source: "dry-inference-warmup-single-frame-precursor",
+    source: "gated-single-frame-dry-execution-path",
   });
   await writeProductionMemoryRecord(initialization.productionMemoryPath, {
     ...trackingUpdate.record,
@@ -6870,6 +7378,12 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     frame_stage_readiness_history: [frameStageReadiness, ...trackingUpdate.record.frame_stage_readiness_history].slice(0, 24),
     warmup_escalation_modeling_history: [warmupEscalationModeling, ...trackingUpdate.record.warmup_escalation_modeling_history].slice(0, 24),
     future_bounded_execution_rules_history: [futureBoundedExecutionRules, ...trackingUpdate.record.future_bounded_execution_rules_history].slice(0, 24),
+    dry_execution_token_registry_history: [dryExecutionTokenRegistry, ...trackingUpdate.record.dry_execution_token_registry_history].slice(0, 24),
+    single_frame_dry_execution_path_history: [singleFrameDryExecutionPath, ...trackingUpdate.record.single_frame_dry_execution_path_history].slice(0, 24),
+    frame_traversal_validation_history: [frameTraversalValidation, ...trackingUpdate.record.frame_traversal_validation_history].slice(0, 24),
+    dry_execution_recovery_history: [dryExecutionRecovery, ...trackingUpdate.record.dry_execution_recovery_history].slice(0, 24),
+    future_frame_synthesis_unlocks_history: [futureFrameSynthesisUnlocks, ...trackingUpdate.record.future_frame_synthesis_unlocks_history].slice(0, 24),
+    execution_attempt_ledger_history: [executionAttemptLedger, ...trackingUpdate.record.execution_attempt_ledger_history].slice(0, 24),
   });
   return {
     readiness: readinessWithPrecursor,
@@ -6893,6 +7407,12 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     frame_stage_readiness: frameStageReadiness,
     warmup_escalation_modeling: warmupEscalationModeling,
     future_bounded_execution_rules: futureBoundedExecutionRules,
+    dry_execution_token_registry: dryExecutionTokenRegistry,
+    single_frame_dry_execution_path: singleFrameDryExecutionPath,
+    frame_traversal_validation: frameTraversalValidation,
+    dry_execution_recovery: dryExecutionRecovery,
+    future_frame_synthesis_unlocks: futureFrameSynthesisUnlocks,
+    execution_attempt_ledger: executionAttemptLedger,
     execution_enabled: false,
   };
 }
@@ -6907,7 +7427,7 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
   const record = await readCinematicProductionMemory({ root: input?.root });
   const simulation: CinematicSandboxSimulationRecord = {
     simulation_id: `bootstrap-sandbox-${Date.now()}`,
-    sandbox_kind: "dry-inference-warmup-single-frame-precursor",
+    sandbox_kind: "gated-single-frame-dry-execution-path",
     sequence_id: "controlled-local-bootstrap-planning-only",
     routing_mode: validation.readiness.recommended_routing_mode,
     provider: "LocalFutureProvider",
@@ -6942,6 +7462,12 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
     frame_stage_readiness: validation.frame_stage_readiness,
     warmup_escalation_modeling: validation.warmup_escalation_modeling,
     future_bounded_execution_rules: validation.future_bounded_execution_rules,
+    dry_execution_token_registry: validation.dry_execution_token_registry,
+    single_frame_dry_execution_path: validation.single_frame_dry_execution_path,
+    frame_traversal_validation: validation.frame_traversal_validation,
+    dry_execution_recovery: validation.dry_execution_recovery,
+    future_frame_synthesis_unlocks: validation.future_frame_synthesis_unlocks,
+    execution_attempt_ledger: validation.execution_attempt_ledger,
     readiness_tracking_id: validation.readiness_delta.tracking_id,
     hybrid_escalation: null,
     recorded_at: new Date().toISOString(),
