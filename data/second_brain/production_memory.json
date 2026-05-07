@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "created_at": "2026-05-07T00:00:00.000Z",
-  "updated_at": "2026-05-07T18:27:21.457Z",
+  "updated_at": "2026-05-07T18:51:48.686Z",
   "project_key": "babylon-2026",
   "mission_layer": "Persistent Production Memory + Cinematic Video Intelligence",
   "roadmap_systems": [
@@ -408,7 +408,10 @@
     "Preserve continuity context for sequence-wave-transition-001-escalation while keeping local execution disabled.",
     "Preserve continuity context for sequence-wave-transition-001-emotional while keeping local execution disabled.",
     "Preserve continuity context for sequence-wave-transition-001-transition while keeping local execution disabled.",
-    "Preserve continuity context for sequence-wave-transition-001-return while keeping local execution disabled."
+    "Preserve continuity context for sequence-wave-transition-001-return while keeping local execution disabled.",
+    "Keep loader-wan-2.1-t2v-q8 activation simulated-only and governance-bound.",
+    "Keep loader-ltx-video-img2vid-int8 activation simulated-only and governance-bound.",
+    "Keep loader-hunyuan-video-13b-planned activation simulated-only and governance-bound."
   ],
   "generation_jobs": [],
   "generation_job_history": [],
@@ -604,6 +607,75 @@
       "notes": [
         "Reserved as a higher-memory future candidate rather than an immediate local target."
       ]
+    }
+  ],
+  "local_model_loader_registry": [
+    {
+      "loader_id": "loader-wan-2.1-t2v-q8",
+      "model_name": "Wan 2.1 Text-to-Video Q8",
+      "model_type": "text-to-video",
+      "model_path": "models/wan-2.1-t2v-q8",
+      "runtime_target": "comfyui-local-video-lane",
+      "estimated_vram": 12,
+      "estimated_load_time": 45,
+      "dependency_requirements": [
+        "python-runtime",
+        "comfyui-runtime",
+        "model-weights",
+        "ffmpeg"
+      ],
+      "supported_resolution": [
+        "720p",
+        "1080p"
+      ],
+      "supported_duration": 6,
+      "continuity_support": "partial",
+      "offline_viability": true,
+      "status": "dependency-review"
+    },
+    {
+      "loader_id": "loader-ltx-video-img2vid-int8",
+      "model_name": "LTX Video Image-to-Video INT8",
+      "model_type": "image-to-video",
+      "model_path": "models/ltx-video-img2vid-int8",
+      "runtime_target": "diffusers-python-pipeline",
+      "estimated_vram": 10,
+      "estimated_load_time": 35,
+      "dependency_requirements": [
+        "python-runtime",
+        "diffusers-runtime",
+        "model-weights"
+      ],
+      "supported_resolution": [
+        "720p",
+        "1080p"
+      ],
+      "supported_duration": 8,
+      "continuity_support": "limited",
+      "offline_viability": true,
+      "status": "dependency-review"
+    },
+    {
+      "loader_id": "loader-hunyuan-video-13b-planned",
+      "model_name": "Hunyuan Video 13B Planned Slot",
+      "model_type": "text-to-video",
+      "model_path": "models/hunyuan-video-13b-planned",
+      "runtime_target": "comfyui-local-video-lane",
+      "estimated_vram": 16,
+      "estimated_load_time": 80,
+      "dependency_requirements": [
+        "python-runtime",
+        "comfyui-runtime",
+        "model-weights",
+        "cuda-runtime"
+      ],
+      "supported_resolution": [
+        "720p"
+      ],
+      "supported_duration": 5,
+      "continuity_support": "partial",
+      "offline_viability": false,
+      "status": "dependency-review"
     }
   ],
   "local_runtime_capability_registry": [
@@ -1049,6 +1121,145 @@
     }
   ],
   "readiness_delta_tracking_history": [
+    {
+      "tracking_id": "readiness-delta-20260507185148",
+      "source": "runtime-activation-simulation",
+      "recorded_at": "2026-05-07T18:51:48.678Z",
+      "milestones": [
+        {
+          "milestone": "local-inference-readiness",
+          "previous_percentage": 60,
+          "current_percentage": 54,
+          "delta": -6,
+          "previous_confidence": "medium",
+          "current_confidence": "medium",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "python runtime detection",
+            "inference runtime detection",
+            "local model directory detection",
+            "activation-ready loader"
+          ],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "runtime probe normalization -> local readiness gate -> manual local bridge preview",
+            "Next milestone: undefined",
+            "Missing dependencies: python runtime detection, inference runtime detection, local model directory detection, activation-ready loader"
+          ]
+        },
+        {
+          "milestone": "local-runtime-readiness",
+          "previous_percentage": 0,
+          "current_percentage": 8,
+          "delta": 8,
+          "previous_confidence": "low",
+          "current_confidence": "low",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "VRAM reporting evidence",
+            "storage estimate evidence",
+            "runtime activation simulation evidence"
+          ],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "path hints -> runtime probe snapshot -> constraint modeling",
+            "Next milestone: undefined",
+            "Missing dependencies: VRAM reporting evidence, storage estimate evidence, runtime activation simulation evidence"
+          ]
+        },
+        {
+          "milestone": "local-frame-generation-readiness",
+          "previous_percentage": 63,
+          "current_percentage": 68,
+          "delta": 5,
+          "previous_confidence": "medium",
+          "current_confidence": "medium",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "frame synthesis contract",
+            "frame interpolation contract"
+          ],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "frame stage registry -> runtime constraints -> manual-only frame bridge",
+            "Next milestone: undefined",
+            "Missing dependencies: frame synthesis contract, frame interpolation contract"
+          ]
+        },
+        {
+          "milestone": "local-renderer-readiness",
+          "previous_percentage": 54,
+          "current_percentage": 54,
+          "delta": 0,
+          "previous_confidence": "medium",
+          "current_confidence": "medium",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "local upscaling scaffold"
+          ],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "renderer roadmap -> ffmpeg evidence -> offline packaging manifest",
+            "Next milestone: undefined",
+            "Missing dependencies: local upscaling scaffold"
+          ]
+        },
+        {
+          "milestone": "continuity-preserving-local-generation",
+          "previous_percentage": 73,
+          "current_percentage": 73,
+          "delta": 0,
+          "previous_confidence": "high",
+          "current_confidence": "high",
+          "blockers_cleared": [],
+          "blockers_introduced": [],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "continuity rules -> temporal stage registry -> continuity-state reuse roadmap",
+            "Next milestone: undefined",
+            "No missing dependencies currently recorded."
+          ]
+        },
+        {
+          "milestone": "hybrid-local-cloud-orchestration",
+          "previous_percentage": 81,
+          "current_percentage": 81,
+          "delta": 0,
+          "previous_confidence": "high",
+          "current_confidence": "high",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "verified local provider evidence"
+          ],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "runtime probes -> constraints -> hybrid routing plans -> governed escalation",
+            "Next milestone: undefined",
+            "Missing dependencies: verified local provider evidence"
+          ]
+        },
+        {
+          "milestone": "self-sustaining-generation-readiness",
+          "previous_percentage": 40,
+          "current_percentage": 36,
+          "delta": -4,
+          "previous_confidence": "low",
+          "current_confidence": "low",
+          "blockers_cleared": [],
+          "blockers_introduced": [
+            "policy approval for autonomy",
+            "reviewed execution bridge",
+            "governed recovery loop"
+          ],
+          "confidence_trend": "flat",
+          "architectural_readiness_notes": [
+            "manual-only local bridge -> reviewed execution receipts -> separate policy approval",
+            "Next milestone: undefined",
+            "Missing dependencies: policy approval for autonomy, reviewed execution bridge, governed recovery loop"
+          ]
+        }
+      ]
+    },
     {
       "tracking_id": "readiness-delta-20260507182721",
       "source": "local-readiness-validation",
@@ -1676,6 +1887,293 @@
         ]
       },
       "recorded_at": "2026-05-07T18:27:21.455Z"
+    },
+    {
+      "simulation_id": "activation-sandbox-1778179908683",
+      "sandbox_kind": "local-model-loader-runtime-activation-simulation",
+      "sequence_id": "runtime-activation-planning-only",
+      "routing_mode": "offline-planning-mode",
+      "provider": "LocalFutureProvider",
+      "execution_enabled": false,
+      "queued_job_ids": [
+        "loader-wan-2.1-t2v-q8",
+        "loader-ltx-video-img2vid-int8",
+        "loader-hunyuan-video-13b-planned"
+      ],
+      "approved_job_ids": [],
+      "failed_job_ids": [
+        "loader-wan-2.1-t2v-q8",
+        "loader-ltx-video-img2vid-int8",
+        "loader-ltx-video-img2vid-int8",
+        "loader-ltx-video-img2vid-int8",
+        "loader-hunyuan-video-13b-planned",
+        "loader-hunyuan-video-13b-planned",
+        "loader-hunyuan-video-13b-planned",
+        "loader-hunyuan-video-13b-planned"
+      ],
+      "retry_job_ids": [
+        "loader-wan-2.1-t2v-q8",
+        "loader-ltx-video-img2vid-int8",
+        "loader-hunyuan-video-13b-planned"
+      ],
+      "continuity_issue_count": 1,
+      "asset_reuse_decisions": [
+        "Keep loader-wan-2.1-t2v-q8 activation simulated-only and governance-bound.",
+        "Keep loader-ltx-video-img2vid-int8 activation simulated-only and governance-bound.",
+        "Keep loader-hunyuan-video-13b-planned activation simulated-only and governance-bound."
+      ],
+      "loader_registry": [
+        {
+          "loader_id": "loader-wan-2.1-t2v-q8",
+          "model_name": "Wan 2.1 Text-to-Video Q8",
+          "model_type": "text-to-video",
+          "model_path": "models/wan-2.1-t2v-q8",
+          "runtime_target": "comfyui-local-video-lane",
+          "estimated_vram": 12,
+          "estimated_load_time": 45,
+          "dependency_requirements": [
+            "python-runtime",
+            "comfyui-runtime",
+            "model-weights",
+            "ffmpeg"
+          ],
+          "supported_resolution": [
+            "720p",
+            "1080p"
+          ],
+          "supported_duration": 6,
+          "continuity_support": "partial",
+          "offline_viability": true,
+          "status": "dependency-review"
+        },
+        {
+          "loader_id": "loader-ltx-video-img2vid-int8",
+          "model_name": "LTX Video Image-to-Video INT8",
+          "model_type": "image-to-video",
+          "model_path": "models/ltx-video-img2vid-int8",
+          "runtime_target": "diffusers-python-pipeline",
+          "estimated_vram": 10,
+          "estimated_load_time": 35,
+          "dependency_requirements": [
+            "python-runtime",
+            "diffusers-runtime",
+            "model-weights"
+          ],
+          "supported_resolution": [
+            "720p",
+            "1080p"
+          ],
+          "supported_duration": 8,
+          "continuity_support": "limited",
+          "offline_viability": true,
+          "status": "dependency-review"
+        },
+        {
+          "loader_id": "loader-hunyuan-video-13b-planned",
+          "model_name": "Hunyuan Video 13B Planned Slot",
+          "model_type": "text-to-video",
+          "model_path": "models/hunyuan-video-13b-planned",
+          "runtime_target": "comfyui-local-video-lane",
+          "estimated_vram": 16,
+          "estimated_load_time": 80,
+          "dependency_requirements": [
+            "python-runtime",
+            "comfyui-runtime",
+            "model-weights",
+            "cuda-runtime"
+          ],
+          "supported_resolution": [
+            "720p"
+          ],
+          "supported_duration": 5,
+          "continuity_support": "partial",
+          "offline_viability": false,
+          "status": "dependency-review"
+        }
+      ],
+      "activation_lifecycle_states": [
+        {
+          "state": "loader_registered",
+          "simulated": true,
+          "detail": "Loader loader-wan-2.1-t2v-q8 is registered for future activation.",
+          "blockers": [],
+          "order": 1
+        },
+        {
+          "state": "dependency_checking",
+          "simulated": true,
+          "detail": "Dependency signals are inspected from deterministic runtime probes only.",
+          "blockers": [
+            "Wan 2.1 Text-to-Video Q8 is missing at least one dependency signal.",
+            "LTX Video Image-to-Video INT8 is missing at least one dependency signal.",
+            "Hunyuan Video 13B Planned Slot is missing at least one dependency signal."
+          ],
+          "order": 2
+        },
+        {
+          "state": "runtime_preparing",
+          "simulated": true,
+          "detail": "Runtime preparation remains simulated and does not launch any local process.",
+          "blockers": [
+            "LTX Video Image-to-Video INT8 does not match the preferred runtime backend."
+          ],
+          "order": 3
+        },
+        {
+          "state": "model_loading_simulated",
+          "simulated": true,
+          "detail": "Model loading is inferred from loader metadata and probe evidence, not executed.",
+          "blockers": [],
+          "order": 4
+        },
+        {
+          "state": "vram_reserving",
+          "simulated": true,
+          "detail": "VRAM reservation remains a planning estimate only.",
+          "blockers": [
+            "Hunyuan Video 13B Planned Slot needs 16GB VRAM but only 12GB is profiled."
+          ],
+          "order": 5
+        },
+        {
+          "state": "activation_blocked",
+          "simulated": true,
+          "detail": "Activation remains blocked behind compatibility issues and governance rules.",
+          "blockers": [
+            "Wan 2.1 Text-to-Video Q8 is missing at least one dependency signal.",
+            "LTX Video Image-to-Video INT8 does not match the preferred runtime backend.",
+            "LTX Video Image-to-Video INT8 is missing at least one dependency signal.",
+            "LTX Video Image-to-Video INT8 is not suitable for high continuity planning.",
+            "Hunyuan Video 13B Planned Slot needs 16GB VRAM but only 12GB is profiled.",
+            "Hunyuan Video 13B Planned Slot is missing at least one dependency signal.",
+            "Hunyuan Video 13B Planned Slot only supports 5s.",
+            "Hunyuan Video 13B Planned Slot does not support 1080p."
+          ],
+          "order": 6
+        },
+        {
+          "state": "activation_recovering",
+          "simulated": true,
+          "detail": "Recovery steps are generated instead of attempting activation.",
+          "blockers": [
+            "Wan 2.1 Text-to-Video Q8 is missing at least one dependency signal.",
+            "LTX Video Image-to-Video INT8 does not match the preferred runtime backend.",
+            "LTX Video Image-to-Video INT8 is missing at least one dependency signal.",
+            "LTX Video Image-to-Video INT8 is not suitable for high continuity planning.",
+            "Hunyuan Video 13B Planned Slot needs 16GB VRAM but only 12GB is profiled.",
+            "Hunyuan Video 13B Planned Slot is missing at least one dependency signal.",
+            "Hunyuan Video 13B Planned Slot only supports 5s.",
+            "Hunyuan Video 13B Planned Slot does not support 1080p."
+          ],
+          "order": 7
+        }
+      ],
+      "compatibility_validation": {
+        "valid": false,
+        "preferred_loader_id": "loader-wan-2.1-t2v-q8",
+        "issues": [
+          {
+            "code": "missing-dependencies",
+            "loader_id": "loader-wan-2.1-t2v-q8",
+            "detail": "Wan 2.1 Text-to-Video Q8 is missing at least one dependency signal."
+          },
+          {
+            "code": "model-runtime-mismatch",
+            "loader_id": "loader-ltx-video-img2vid-int8",
+            "detail": "LTX Video Image-to-Video INT8 does not match the preferred runtime backend."
+          },
+          {
+            "code": "missing-dependencies",
+            "loader_id": "loader-ltx-video-img2vid-int8",
+            "detail": "LTX Video Image-to-Video INT8 is missing at least one dependency signal."
+          },
+          {
+            "code": "unsupported-continuity-mode",
+            "loader_id": "loader-ltx-video-img2vid-int8",
+            "detail": "LTX Video Image-to-Video INT8 is not suitable for high continuity planning."
+          },
+          {
+            "code": "insufficient-vram",
+            "loader_id": "loader-hunyuan-video-13b-planned",
+            "detail": "Hunyuan Video 13B Planned Slot needs 16GB VRAM but only 12GB is profiled."
+          },
+          {
+            "code": "missing-dependencies",
+            "loader_id": "loader-hunyuan-video-13b-planned",
+            "detail": "Hunyuan Video 13B Planned Slot is missing at least one dependency signal."
+          },
+          {
+            "code": "unsupported-duration",
+            "loader_id": "loader-hunyuan-video-13b-planned",
+            "detail": "Hunyuan Video 13B Planned Slot only supports 5s."
+          },
+          {
+            "code": "unsupported-resolution",
+            "loader_id": "loader-hunyuan-video-13b-planned",
+            "detail": "Hunyuan Video 13B Planned Slot does not support 1080p."
+          }
+        ],
+        "blockers": [
+          "Wan 2.1 Text-to-Video Q8 is missing at least one dependency signal.",
+          "LTX Video Image-to-Video INT8 does not match the preferred runtime backend.",
+          "LTX Video Image-to-Video INT8 is missing at least one dependency signal.",
+          "LTX Video Image-to-Video INT8 is not suitable for high continuity planning.",
+          "Hunyuan Video 13B Planned Slot needs 16GB VRAM but only 12GB is profiled.",
+          "Hunyuan Video 13B Planned Slot is missing at least one dependency signal.",
+          "Hunyuan Video 13B Planned Slot only supports 5s.",
+          "Hunyuan Video 13B Planned Slot does not support 1080p."
+        ],
+        "fallback_runtime_id": "diffusers-python-pipeline"
+      },
+      "activation_recovery_plan": {
+        "blocked": true,
+        "causes": [
+          "missing-runtime",
+          "insufficient-vram",
+          "dependency-mismatch",
+          "unsupported-provider-route"
+        ],
+        "fallback_runtime_id": "diffusers-python-pipeline",
+        "next_safe_steps": [
+          {
+            "cause": "missing-runtime",
+            "sequence_order": 1,
+            "detail": "Review runtime compatibility and prefer diffusers-python-pipeline before any future bridge."
+          },
+          {
+            "cause": "insufficient-vram",
+            "sequence_order": 2,
+            "detail": "Reduce requested resolution or duration and keep activation serialized in planning-only mode."
+          },
+          {
+            "cause": "dependency-mismatch",
+            "sequence_order": 3,
+            "detail": "Record the missing dependency evidence in readiness notes without installing anything automatically."
+          },
+          {
+            "cause": "unsupported-provider-route",
+            "sequence_order": 4,
+            "detail": "Fallback to offline-planning-mode or hybrid escalation rather than attempting unsupported local routing."
+          }
+        ]
+      },
+      "future_activation_plan": {
+        "future_frame_synthesis_activation": true,
+        "future_temporal_pipeline_activation": true,
+        "future_upscale_activation": true,
+        "future_render_packaging_activation": true,
+        "future_local_only_execution_mode": false,
+        "notes": [
+          "Future frame synthesis activation remains scaffold-only and requires a separate reviewed bridge.",
+          "Future temporal pipeline activation remains continuity-governed and non-executing in this layer.",
+          "Future upscale activation remains packaging-adjacent planning only.",
+          "Future render packaging activation remains blocked behind FFmpeg evidence and explicit review.",
+          "Compatibility blockers still prevent any future activation bridge promotion."
+        ]
+      },
+      "readiness_tracking_id": "readiness-delta-20260507185148",
+      "hybrid_escalation": null,
+      "recorded_at": "2026-05-07T18:51:48.683Z"
     }
   ],
   "failed_generations": [

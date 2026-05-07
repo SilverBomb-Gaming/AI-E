@@ -16,6 +16,7 @@ import {
   enforceCinematicGenerationBudget,
   ensureCinematicProductionMemoryInitialized,
   getCinematicLocalHardwareProfiles,
+  getCinematicLocalModelLoaderRegistry,
   getCinematicLocalModelRegistry,
   getCinematicLocalRuntimeCapabilityRegistry,
   getCinematicReadinessMilestoneProgress,
@@ -39,7 +40,9 @@ import {
   selectCinematicGenerationProviderRoute,
   simulateCinematicExecutionSandbox,
   simulateCinematicLocalInferenceExecutionSandbox,
+  simulateCinematicLocalModelLoaderRuntimeActivation,
   validateCinematicLocalExecutionSandbox,
+  validateCinematicLocalRuntimeActivationSimulation,
   validateCinematicProviderPayload,
   validateCinematicExecutionPlan,
   validateCinematicSequenceContinuity,
@@ -646,6 +649,79 @@ test("local execution sandbox validation persists readiness deltas while keeping
     assert.ok(simulation.simulation.recovery_plan);
     assert.ok(afterRecord.readiness_delta_tracking_history.length >= 2);
     assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "local-inference-execution-sandbox"));
+    assert.deepEqual(afterRecord.approval_audit_trail, beforeRecord.approval_audit_trail);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("local model loader activation simulation remains deterministic and execution-disabled", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-local-activation-simulation-"));
+
+  try {
+    await ensureCinematicProductionMemoryInitialized(tempRoot);
+    await mkdir(path.join(tempRoot, ".venv", "Scripts"), { recursive: true });
+    await mkdir(path.join(tempRoot, "ComfyUI"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models"), { recursive: true });
+    await mkdir(path.join(tempRoot, "tools", "ffmpeg"), { recursive: true });
+    await writeFile(path.join(tempRoot, ".venv", "Scripts", "python.exe"), "", "utf8");
+    await writeFile(path.join(tempRoot, "tools", "ffmpeg", "ffmpeg.exe"), "", "utf8");
+
+    await inspectCinematicLocalRuntimeEnvironment({
+      root: tempRoot,
+      persist: true,
+      pathHints: {
+        python_paths: [".venv/Scripts/python.exe"],
+        ffmpeg_paths: ["tools/ffmpeg/ffmpeg.exe"],
+        inference_runtime_paths: ["ComfyUI"],
+        local_model_paths: ["models"],
+      },
+    });
+
+    const beforeRecord = await readCinematicProductionMemory({ root: tempRoot });
+    const validation = await validateCinematicLocalRuntimeActivationSimulation({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const registryAfterValidation = await getCinematicLocalModelLoaderRegistry({ root: tempRoot });
+    const historyAfterValidation = await getCinematicReadinessDeltaTrackingHistory({ root: tempRoot });
+    const simulation = await simulateCinematicLocalModelLoaderRuntimeActivation({
+      root: tempRoot,
+      desiredResolution: "1080p",
+      desiredDurationSeconds: 6,
+      continuityPriority: "high",
+    });
+    const afterRecord = await readCinematicProductionMemory({ root: tempRoot });
+
+    assert.equal(validation.execution_enabled, false);
+    assert.equal(validation.readiness_delta.source, "runtime-activation-simulation");
+    assert.ok(validation.loader_registry.length > 0);
+    assert.ok(validation.loader_registry.some((entry) => entry.status === "activation-ready"));
+    assert.equal(registryAfterValidation.length, validation.loader_registry.length);
+    assert.ok(validation.activation_lifecycle_states.some((entry) => entry.state === "loader_registered"));
+    assert.ok(validation.activation_lifecycle_states.some((entry) => entry.state === "activation_blocked"));
+    assert.equal(validation.compatibility_validation.valid, false);
+    assert.ok(validation.compatibility_validation.issues.some((entry) => entry.code === "unsupported-continuity-mode"));
+    assert.ok(validation.activation_recovery_plan.causes.includes("unsupported-provider-route"));
+    assert.ok(validation.activation_recovery_plan.next_safe_steps.length > 0);
+    assert.equal(validation.future_activation_plan.future_frame_synthesis_activation, true);
+    assert.equal(validation.future_activation_plan.future_local_only_execution_mode, false);
+    assert.equal(historyAfterValidation.length, 1);
+    assert.ok(historyAfterValidation[0]?.milestones.every((entry) => entry.previous_percentage === null));
+
+    assert.equal(simulation.validation.execution_enabled, false);
+    assert.equal(simulation.simulation.sandbox_kind, "local-model-loader-runtime-activation-simulation");
+    assert.equal(simulation.simulation.execution_enabled, false);
+    assert.ok(simulation.simulation.loader_registry);
+    assert.ok(simulation.simulation.activation_lifecycle_states);
+    assert.ok(simulation.simulation.compatibility_validation);
+    assert.ok(simulation.simulation.activation_recovery_plan);
+    assert.ok(simulation.simulation.future_activation_plan);
+    assert.equal(simulation.simulation.readiness_tracking_id, afterRecord.readiness_delta_tracking_history[0]?.tracking_id ?? null);
+    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "local-model-loader-runtime-activation-simulation"));
+    assert.ok(afterRecord.readiness_delta_tracking_history.length >= 2);
     assert.deepEqual(afterRecord.approval_audit_trail, beforeRecord.approval_audit_trail);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

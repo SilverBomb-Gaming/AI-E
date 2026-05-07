@@ -2325,6 +2325,253 @@ function buildReadinessDeltaTrackingNote(input: {
   };
 }
 
+function buildLocalModelLoaderRegistryNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Local Model Loader Registry",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_local_model_loader_registry",
+      tags: ["second-brain", "model-loader", "local-runtime", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Registered Loaders",
+      production.local_model_loader_registry.length > 0
+        ? asBulletList(production.local_model_loader_registry.map((entry) => `${entry.loader_id}: ${entry.model_name} | runtime=${entry.runtime_target} | status=${entry.status} | offline=${entry.offline_viability ? "yes" : "no"}`))
+        : "- No local model loader registry entries recorded yet.",
+      "",
+      "## Dependency Requirements",
+      production.local_model_loader_registry.length > 0
+        ? asBulletList(production.local_model_loader_registry.flatMap((entry) => entry.dependency_requirements.map((dependency) => `${entry.loader_id}: ${dependency}`)))
+        : "- No loader dependency requirements recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Model Runtime Compatibility"),
+        toLink("Runtime Activation Simulation"),
+        toLink("Updated Readiness Progress"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildRuntimeActivationSimulationNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestActivationSimulation = [...production.sandbox_simulations]
+    .filter((entry) => entry.sandbox_kind === "local-model-loader-runtime-activation-simulation")
+    .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+  return {
+    title: "Runtime Activation Simulation",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_runtime_activation_simulation",
+      tags: ["second-brain", "runtime-activation", "simulation", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Activation States",
+      latestActivationSimulation?.activation_lifecycle_states?.length
+        ? asBulletList(latestActivationSimulation.activation_lifecycle_states.map((entry) => `${entry.order}. ${entry.state}: ${entry.detail} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No runtime activation simulations recorded yet.",
+      "",
+      "## Guardrails",
+      asBulletList([
+        "Model loading remains simulated only.",
+        "Runtime activation remains simulated only.",
+        "Local execution remains disabled.",
+      ]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local Model Loader Registry"),
+        toLink("Model Runtime Compatibility"),
+        toLink("Activation Failure Recovery"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildModelRuntimeCompatibilityNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestActivationSimulation = [...production.sandbox_simulations]
+    .filter((entry) => entry.sandbox_kind === "local-model-loader-runtime-activation-simulation")
+    .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+  const compatibility = latestActivationSimulation?.compatibility_validation ?? null;
+  return {
+    title: "Model Runtime Compatibility",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_model_runtime_compatibility",
+      tags: ["second-brain", "compatibility", "runtime", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Compatibility Summary",
+      compatibility
+        ? asBulletList([
+          `Valid: ${compatibility.valid ? "yes" : "no"}`,
+          `Preferred loader: ${compatibility.preferred_loader_id ?? "none"}`,
+          `Fallback runtime: ${compatibility.fallback_runtime_id ?? "none"}`,
+        ])
+        : "- No model/runtime compatibility validation recorded yet.",
+      "",
+      "## Compatibility Issues",
+      compatibility?.issues?.length
+        ? asBulletList(compatibility.issues.map((entry) => `${entry.loader_id}: ${entry.code} | ${entry.detail}`))
+        : "- No compatibility issues recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Local Model Loader Registry"),
+        toLink("Runtime Activation Simulation"),
+        toLink("Activation Failure Recovery"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildActivationFailureRecoveryNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestActivationSimulation = [...production.sandbox_simulations]
+    .filter((entry) => entry.sandbox_kind === "local-model-loader-runtime-activation-simulation")
+    .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+  const recoveryPlan = latestActivationSimulation?.activation_recovery_plan ?? null;
+  return {
+    title: "Activation Failure Recovery",
+    directory: "Recovery",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_activation_failure_recovery",
+      tags: ["second-brain", "activation-recovery", "runtime", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Recovery Causes",
+      recoveryPlan?.causes?.length
+        ? asBulletList(recoveryPlan.causes)
+        : "- No activation failure causes recorded yet.",
+      "",
+      "## Recovery Steps",
+      recoveryPlan?.next_safe_steps?.length
+        ? asBulletList(recoveryPlan.next_safe_steps.map((entry) => `${entry.sequence_order}. ${entry.cause}: ${entry.detail}`))
+        : "- No activation recovery steps recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Runtime Activation Simulation"),
+        toLink("Model Runtime Compatibility"),
+        toLink("Future Activation Plan"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFutureActivationPlanNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestActivationSimulation = [...production.sandbox_simulations]
+    .filter((entry) => entry.sandbox_kind === "local-model-loader-runtime-activation-simulation")
+    .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
+  const futurePlan = latestActivationSimulation?.future_activation_plan ?? null;
+  return {
+    title: "Future Activation Plan",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_future_activation_plan",
+      tags: ["second-brain", "future-activation", "runtime", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Scaffolded Activation Lanes",
+      futurePlan
+        ? asBulletList([
+          `Future frame synthesis activation: ${futurePlan.future_frame_synthesis_activation ? "yes" : "no"}`,
+          `Future temporal pipeline activation: ${futurePlan.future_temporal_pipeline_activation ? "yes" : "no"}`,
+          `Future upscale activation: ${futurePlan.future_upscale_activation ? "yes" : "no"}`,
+          `Future render packaging activation: ${futurePlan.future_render_packaging_activation ? "yes" : "no"}`,
+          `Future local-only execution mode: ${futurePlan.future_local_only_execution_mode ? "yes" : "no"}`,
+        ])
+        : "- No future activation plan recorded yet.",
+      "",
+      "## Planning Notes",
+      futurePlan?.notes?.length
+        ? asBulletList(futurePlan.notes)
+        : "- No future activation planning notes recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Runtime Activation Simulation"),
+        toLink("Activation Failure Recovery"),
+        toLink("Updated Readiness Progress"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildUpdatedReadinessProgressNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+  milestoneProgress: Awaited<ReturnType<typeof getCinematicReadinessMilestoneProgress>>;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestTracking = production.readiness_delta_tracking_history[0] ?? null;
+  return {
+    title: "Updated Readiness Progress",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_updated_readiness_progress",
+      tags: ["second-brain", "readiness-progress", "runtime", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Current Progress",
+      asBulletList(input.milestoneProgress.map((entry) => `${humanizeReadinessMilestone(entry.milestone)}: ${entry.percentage}% | confidence=${entry.confidence}`)),
+      "",
+      "## Latest Delta Source",
+      latestTracking
+        ? asBulletList([
+          `Tracking id: ${latestTracking.tracking_id}`,
+          `Source: ${latestTracking.source}`,
+          `Recorded at: ${latestTracking.recorded_at}`,
+        ])
+        : "- No readiness delta tracking entries recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("AI-E Readiness Percentages"),
+        toLink("Readiness Delta Tracking"),
+        toLink("Runtime Activation Simulation"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildCinematicExecutionLifecycleNote(input: {
   productionMemory: CinematicProductionMemoryRecord;
   latestSessionId: string;
@@ -2805,6 +3052,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildQueueOrchestrationPlanningNote({ productionMemory, latestSessionId }),
     buildRendererRecoveryPlanningNote({ productionMemory, latestSessionId }),
     buildReadinessDeltaTrackingNote({ productionMemory, latestSessionId }),
+    buildLocalModelLoaderRegistryNote({ productionMemory, latestSessionId }),
+    buildRuntimeActivationSimulationNote({ productionMemory, latestSessionId }),
+    buildModelRuntimeCompatibilityNote({ productionMemory, latestSessionId }),
+    buildActivationFailureRecoveryNote({ productionMemory, latestSessionId }),
+    buildFutureActivationPlanNote({ productionMemory, latestSessionId }),
+    buildUpdatedReadinessProgressNote({ productionMemory, latestSessionId, milestoneProgress: readinessMilestoneProgress }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),

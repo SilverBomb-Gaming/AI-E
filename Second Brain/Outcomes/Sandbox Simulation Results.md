@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T18:27:21.457Z
+updated_at: 2026-05-07T18:51:48.686Z
 session_id: phase7c-skip-task-session
 status: generated_sandbox_simulation_results
 tags:
@@ -16,6 +16,7 @@ tags:
 
 ## Simulations
 - local-sandbox-sequence-wave-transition-001-1778178441455: provider=LocalFutureProvider | approved=0 | failed=7 | retries=0
+- activation-sandbox-1778179908683: provider=LocalFutureProvider | approved=0 | failed=8 | retries=3
 
 ## Asset Reuse During Simulation
 - Preserve continuity context for sequence-wave-transition-001-intro while keeping local execution disabled.
@@ -25,6 +26,9 @@ tags:
 - Preserve continuity context for sequence-wave-transition-001-emotional while keeping local execution disabled.
 - Preserve continuity context for sequence-wave-transition-001-transition while keeping local execution disabled.
 - Preserve continuity context for sequence-wave-transition-001-return while keeping local execution disabled.
+- Keep loader-wan-2.1-t2v-q8 activation simulated-only and governance-bound.
+- Keep loader-ltx-video-img2vid-int8 activation simulated-only and governance-bound.
+- Keep loader-hunyuan-video-13b-planned activation simulated-only and governance-bound.
 
 ## Related
 - [[Generation Job Queue]]

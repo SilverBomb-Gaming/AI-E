@@ -503,7 +503,7 @@ export type CinematicGenerationJobHistoryEntry = {
 
 export type CinematicSandboxSimulationRecord = {
   simulation_id: string;
-  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox";
+  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation";
   sequence_id: string;
   routing_mode: CinematicProviderRoutingMode;
   provider: CinematicGenerationProvider;
@@ -518,6 +518,11 @@ export type CinematicSandboxSimulationRecord = {
   gpu_allocation?: CinematicGpuAllocationModel;
   queue_plan?: CinematicLocalQueueSimulationPlan;
   recovery_plan?: CinematicRendererRecoveryPlan;
+  loader_registry?: CinematicLocalModelLoaderRecord[];
+  activation_lifecycle_states?: CinematicRuntimeActivationSimulationState[];
+  compatibility_validation?: CinematicModelRuntimeCompatibilityValidation;
+  activation_recovery_plan?: CinematicActivationFailureRecoveryPlan;
+  future_activation_plan?: CinematicFutureActivationPlan;
   readiness_tracking_id?: string | null;
   hybrid_escalation?: CinematicHybridEscalationSimulation | null;
   recorded_at: string;
@@ -709,6 +714,113 @@ export type CinematicLocalVideoModelProfile = {
 };
 
 export type CinematicLocalRuntimeStatus = "candidate" | "configured" | "detected";
+
+export type CinematicLocalModelLoaderStatus = "registered" | "dependency-review" | "activation-ready" | "blocked";
+
+export type CinematicLocalModelLoaderRecord = {
+  loader_id: string;
+  model_name: string;
+  model_type: CinematicLocalVideoGenerationMode;
+  model_path: string;
+  runtime_target: string;
+  estimated_vram: number;
+  estimated_load_time: number;
+  dependency_requirements: string[];
+  supported_resolution: CinematicVideoResolution[];
+  supported_duration: number;
+  continuity_support: CinematicLocalVideoModelProfile["continuity_support"];
+  offline_viability: boolean;
+  status: CinematicLocalModelLoaderStatus;
+};
+
+export type CinematicRuntimeActivationStateName =
+  | "loader_registered"
+  | "dependency_checking"
+  | "runtime_preparing"
+  | "model_loading_simulated"
+  | "vram_reserving"
+  | "inference_ready_simulated"
+  | "activation_blocked"
+  | "activation_recovering"
+  | "activation_archived";
+
+export type CinematicRuntimeActivationSimulationState = {
+  state: CinematicRuntimeActivationStateName;
+  order: number;
+  simulated: true;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicModelRuntimeCompatibilityIssueCode =
+  | "model-runtime-mismatch"
+  | "insufficient-vram"
+  | "missing-dependencies"
+  | "unsupported-duration"
+  | "unsupported-resolution"
+  | "missing-model-path"
+  | "unsupported-continuity-mode";
+
+export type CinematicModelRuntimeCompatibilityIssue = {
+  code: CinematicModelRuntimeCompatibilityIssueCode;
+  loader_id: string;
+  detail: string;
+};
+
+export type CinematicModelRuntimeCompatibilityValidation = {
+  valid: boolean;
+  preferred_loader_id: string | null;
+  issues: CinematicModelRuntimeCompatibilityIssue[];
+  blockers: string[];
+  fallback_runtime_id: string | null;
+};
+
+export type CinematicActivationFailureCause =
+  | "missing-runtime"
+  | "missing-model-files"
+  | "insufficient-vram"
+  | "dependency-mismatch"
+  | "storage-pressure"
+  | "unsupported-provider-route"
+  | "corrupted-cache";
+
+export type CinematicActivationRecoveryStep = {
+  cause: CinematicActivationFailureCause;
+  sequence_order: number;
+  detail: string;
+};
+
+export type CinematicActivationFailureRecoveryPlan = {
+  blocked: boolean;
+  causes: CinematicActivationFailureCause[];
+  fallback_runtime_id: string | null;
+  next_safe_steps: CinematicActivationRecoveryStep[];
+};
+
+export type CinematicFutureActivationPlan = {
+  future_frame_synthesis_activation: boolean;
+  future_temporal_pipeline_activation: boolean;
+  future_upscale_activation: boolean;
+  future_render_packaging_activation: boolean;
+  future_local_only_execution_mode: boolean;
+  notes: string[];
+};
+
+export type CinematicRuntimeActivationSimulationValidation = {
+  readiness: CinematicLocalInferenceReadinessReport;
+  readiness_delta: CinematicReadinessDeltaTrackingRecord;
+  loader_registry: CinematicLocalModelLoaderRecord[];
+  activation_lifecycle_states: CinematicRuntimeActivationSimulationState[];
+  compatibility_validation: CinematicModelRuntimeCompatibilityValidation;
+  activation_recovery_plan: CinematicActivationFailureRecoveryPlan;
+  future_activation_plan: CinematicFutureActivationPlan;
+  execution_enabled: false;
+};
+
+export type CinematicLocalModelLoaderRuntimeActivationResult = {
+  validation: CinematicRuntimeActivationSimulationValidation;
+  simulation: CinematicSandboxSimulationRecord;
+};
 
 export type CinematicLocalRuntimeCapability = {
   runtime_id: string;
@@ -961,7 +1073,7 @@ export type CinematicReadinessMilestoneDelta = {
 
 export type CinematicReadinessDeltaTrackingRecord = {
   tracking_id: string;
-  source: "local-readiness-validation" | "local-execution-sandbox";
+  source: "local-readiness-validation" | "local-execution-sandbox" | "runtime-activation-simulation";
   recorded_at: string;
   milestones: CinematicReadinessMilestoneDelta[];
 };
@@ -1132,6 +1244,7 @@ export type CinematicProductionMemoryRecord = {
   deferred_execution_plans: CinematicDeferredExecutionPlan[];
   provider_capability_registry: CinematicProviderCapability[];
   local_model_registry: CinematicLocalVideoModelProfile[];
+  local_model_loader_registry: CinematicLocalModelLoaderRecord[];
   local_runtime_capability_registry: CinematicLocalRuntimeCapability[];
   local_hardware_profiles: CinematicLocalHardwareProfile[];
   local_runtime_readiness_rules: string[];
@@ -1668,6 +1781,53 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
       ],
     },
   ],
+  local_model_loader_registry: [
+    {
+      loader_id: "loader-wan-2.1-t2v-q8",
+      model_name: "Wan 2.1 Text-to-Video Q8",
+      model_type: "text-to-video",
+      model_path: "models/wan-2.1-t2v-q8",
+      runtime_target: "comfyui-local-video-lane",
+      estimated_vram: 12,
+      estimated_load_time: 45,
+      dependency_requirements: ["python-runtime", "comfyui-runtime", "model-weights", "ffmpeg"],
+      supported_resolution: ["720p", "1080p"],
+      supported_duration: 6,
+      continuity_support: "partial",
+      offline_viability: true,
+      status: "registered",
+    },
+    {
+      loader_id: "loader-ltx-video-img2vid-int8",
+      model_name: "LTX Video Image-to-Video INT8",
+      model_type: "image-to-video",
+      model_path: "models/ltx-video-img2vid-int8",
+      runtime_target: "diffusers-python-pipeline",
+      estimated_vram: 10,
+      estimated_load_time: 35,
+      dependency_requirements: ["python-runtime", "diffusers-runtime", "model-weights"],
+      supported_resolution: ["720p", "1080p"],
+      supported_duration: 8,
+      continuity_support: "limited",
+      offline_viability: true,
+      status: "dependency-review",
+    },
+    {
+      loader_id: "loader-hunyuan-video-13b-planned",
+      model_name: "Hunyuan Video 13B Planned Slot",
+      model_type: "text-to-video",
+      model_path: "models/hunyuan-video-13b-planned",
+      runtime_target: "comfyui-local-video-lane",
+      estimated_vram: 16,
+      estimated_load_time: 80,
+      dependency_requirements: ["python-runtime", "comfyui-runtime", "model-weights", "cuda-runtime"],
+      supported_resolution: ["720p"],
+      supported_duration: 5,
+      continuity_support: "partial",
+      offline_viability: false,
+      status: "blocked",
+    },
+  ],
   local_runtime_capability_registry: [
     {
       runtime_id: "comfyui-local-video-lane",
@@ -2133,6 +2293,7 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     deferred_execution_plans: nextRecord.deferred_execution_plans ?? defaults.deferred_execution_plans,
     provider_capability_registry: nextRecord.provider_capability_registry ?? defaults.provider_capability_registry,
     local_model_registry: nextRecord.local_model_registry ?? defaults.local_model_registry,
+    local_model_loader_registry: nextRecord.local_model_loader_registry ?? defaults.local_model_loader_registry,
     local_runtime_capability_registry: nextRecord.local_runtime_capability_registry ?? defaults.local_runtime_capability_registry,
     local_hardware_profiles: nextRecord.local_hardware_profiles ?? defaults.local_hardware_profiles,
     local_runtime_readiness_rules: nextRecord.local_runtime_readiness_rules ?? defaults.local_runtime_readiness_rules,
@@ -2924,6 +3085,11 @@ function buildReadinessMilestoneProgress(input: {
   const rendererAverage = averageScore(input.record.renderer_capability_roadmap.map((entry) => rendererCapabilityStatusScore(entry.status)));
   const hybridAverage = averageScore(input.record.hybrid_local_cloud_strategies.map((entry) => hybridStrategyStatusScore(entry.status)));
   const continuityStrength = input.preferredModel ? localContinuityWeight(input.preferredModel.continuity_support) / 3 : 0;
+  const activationSimulationPresent = input.record.sandbox_simulations.some(
+    (entry) => entry.sandbox_kind === "local-model-loader-runtime-activation-simulation",
+  );
+  const activationReadyLoaders = input.record.local_model_loader_registry.filter((entry) => entry.status === "activation-ready").length;
+  const registeredLoaders = input.record.local_model_loader_registry.length;
   const readinessChecks = {
     python: runtimeProbeDetected(input.snapshot, "python-runtime-presence"),
     ffmpeg: runtimeProbeDetected(input.snapshot, "ffmpeg-availability"),
@@ -2936,6 +3102,8 @@ function buildReadinessMilestoneProgress(input: {
   };
   const localInferencePercentage = percentageFromChecks([
     { passed: input.record.local_model_registry.length > 0, weight: 15 },
+    { passed: registeredLoaders > 0, weight: 10 },
+    { passed: activationReadyLoaders > 0, weight: 10 },
     { passed: input.record.local_runtime_capability_registry.length > 0, weight: 10 },
     { passed: input.record.local_hardware_profiles.length > 0, weight: 10 },
     { passed: input.snapshot !== null, weight: 10 },
@@ -2946,9 +3114,11 @@ function buildReadinessMilestoneProgress(input: {
     { passed: input.record.local_asset_cache_strategy.length > 0, weight: 5 },
     { passed: input.record.local_inference_governance_rules.length > 0, weight: 5 },
     { passed: input.record.frame_generation_stage_registry.length > 0, weight: 5 },
+    { passed: activationSimulationPresent, weight: 10 },
   ]);
   const localRuntimePercentage = percentageFromChecks([
     { passed: input.snapshot !== null, weight: 15 },
+    { passed: registeredLoaders > 0, weight: 10 },
     { passed: readinessChecks.cuda, weight: 12 },
     { passed: readinessChecks.gpuVendor, weight: 10 },
     { passed: readinessChecks.vram, weight: 10 },
@@ -2957,28 +3127,34 @@ function buildReadinessMilestoneProgress(input: {
     { passed: readinessChecks.inference, weight: 15 },
     { passed: readinessChecks.models, weight: 8 },
     { passed: readinessChecks.storage, weight: 5 },
+    { passed: activationSimulationPresent, weight: 10 },
   ]);
   const frameGenerationPercentage = clampPercentage((frameStageAverage * 75)
     + (input.record.local_model_registry.length > 0 ? 10 : 0)
     + (input.record.runtime_constraint_models.length > 0 ? 8 : 0)
-    + (input.snapshot ? 7 : 0));
+    + (input.snapshot ? 7 : 0)
+    + (registeredLoaders > 0 ? 5 : 0));
   const rendererPercentage = clampPercentage((rendererAverage * 75)
     + (readinessChecks.ffmpeg ? 10 : 0)
     + (readinessChecks.storage ? 8 : 0)
-    + (input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "render-packaging" && entry.status !== "planned") ? 7 : 0));
+    + (input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "render-packaging" && entry.status !== "planned") ? 7 : 0)
+    + (activationSimulationPresent ? 5 : 0));
   const continuityPercentage = clampPercentage((continuityStrength * 35)
     + (input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "temporal-continuity" && entry.status !== "planned") ? 20 : 0)
     + (input.record.renderer_capability_roadmap.some((entry) => entry.capability_id === "continuity-state-reuse" && entry.status !== "planned") ? 15 : 0)
     + (input.record.continuity_rules.length > 0 ? 15 : 0)
-    + (input.localProviderAvailable ? 15 : 0));
+    + (input.localProviderAvailable ? 15 : 0)
+    + (activationReadyLoaders > 0 ? 10 : 0));
   const hybridPercentage = clampPercentage((hybridAverage * 70)
     + (input.record.provider_routing_rules.length > 0 ? 10 : 0)
     + (input.record.runtime_constraint_models.length > 0 ? 10 : 0)
-    + (input.record.local_provider_routing_rules.length > 0 ? 10 : 0));
+    + (input.record.local_provider_routing_rules.length > 0 ? 10 : 0)
+    + (activationSimulationPresent ? 5 : 0));
   const selfSustainingPercentage = percentageFromChecks([
     { passed: input.record.frame_generation_stage_registry.some((entry) => entry.stage_id === "output-archival" && entry.status !== "planned"), weight: 20 },
     { passed: input.record.local_inference_governance_rules.length > 0, weight: 10 },
     { passed: input.record.approval_audit_trail.length >= 0, weight: 10 },
+    { passed: activationSimulationPresent, weight: 10 },
     { passed: false, weight: 60 },
   ]);
   return [
@@ -2997,6 +3173,8 @@ function buildReadinessMilestoneProgress(input: {
         ...(readinessChecks.python ? [] : ["python runtime detection"]),
         ...(readinessChecks.inference ? [] : ["inference runtime detection"]),
         ...(readinessChecks.models ? [] : ["local model directory detection"]),
+        ...(registeredLoaders > 0 ? [] : ["model loader registry"]),
+        ...(activationReadyLoaders > 0 ? [] : ["activation-ready loader"]),
       ],
     },
     {
@@ -3014,6 +3192,7 @@ function buildReadinessMilestoneProgress(input: {
       missing_dependencies: [
         ...(readinessChecks.vram ? [] : ["VRAM reporting evidence"]),
         ...(readinessChecks.storage ? [] : ["storage estimate evidence"]),
+        ...(activationSimulationPresent ? [] : ["runtime activation simulation evidence"]),
       ],
     },
     {
@@ -3230,9 +3409,9 @@ function summarizeLocalReadiness(input: {
   const checks: CinematicLocalReadinessCheck[] = [
     {
       check: "model-registry-populated",
-      passed: input.record.local_model_registry.length > 0,
-      detail: input.record.local_model_registry.length > 0
-        ? `${input.record.local_model_registry.length} local model candidates are registered.`
+      passed: input.record.local_model_registry.length > 0 && input.record.local_model_loader_registry.length > 0,
+      detail: input.record.local_model_registry.length > 0 && input.record.local_model_loader_registry.length > 0
+        ? `${input.record.local_model_registry.length} local model candidates and ${input.record.local_model_loader_registry.length} loader mappings are registered.`
         : "No local video model candidates are registered.",
     },
     {
@@ -3301,7 +3480,12 @@ function summarizeLocalReadiness(input: {
     },
   ];
   const candidateSupport = Boolean(preferredModel && preferredHardware && preferredRuntime);
+  const preferredLoader = input.record.local_model_loader_registry.find(
+    (entry) => entry.model_name === preferredModel?.display_name && entry.runtime_target === preferredRuntime?.runtime_id,
+  ) ?? null;
   const localProviderAvailable = candidateSupport
+    && preferredLoader !== null
+    && preferredLoader.status !== "blocked"
     && localRuntimeStatusWeight(preferredRuntime.status) >= 2
     && localHardwareStatusWeight(preferredHardware.status) >= 2
     && preferredHardware.gpu_vram_gb >= preferredModel.vram_requirement_gb
@@ -3339,6 +3523,277 @@ function summarizeLocalReadiness(input: {
     blocked_reasons: blockedReasons,
     planning_notes: input.record.local_inference_notes,
     milestone_progress: milestoneProgress,
+  };
+}
+
+function buildLocalModelLoaderRegistry(input: {
+  record: CinematicProductionMemoryRecord;
+  desiredResolution: CinematicVideoResolution;
+  desiredDurationSeconds: number;
+  continuityPriority: "low" | "medium" | "high";
+}): CinematicLocalModelLoaderRecord[] {
+  const preferredHardware = resolvePreferredLocalHardware({
+    record: input.record,
+    model: null,
+    desiredResolution: input.desiredResolution,
+    desiredDurationSeconds: input.desiredDurationSeconds,
+  });
+  const preferredRuntime = resolvePreferredLocalRuntime({
+    record: input.record,
+    hardware: preferredHardware,
+  });
+  return input.record.local_model_loader_registry.map((loader) => {
+    const matchingModel = input.record.local_model_registry.find((entry) => entry.display_name === loader.model_name) ?? null;
+    const matchingRuntime = input.record.local_runtime_capability_registry.find((entry) => entry.runtime_id === loader.runtime_target) ?? null;
+    const missingDependencies = loader.dependency_requirements.some((entry) => {
+      switch (entry) {
+        case "python-runtime":
+          return !runtimeProbeDetected(latestLocalRuntimeProbeSnapshot(input.record), "python-runtime-presence");
+        case "comfyui-runtime":
+        case "diffusers-runtime":
+        case "cuda-runtime":
+          return !runtimeProbeDetected(latestLocalRuntimeProbeSnapshot(input.record), "inference-runtime-presence");
+        case "model-weights":
+          return !runtimeProbeDetected(latestLocalRuntimeProbeSnapshot(input.record), "local-model-directory-presence");
+        case "ffmpeg":
+          return !runtimeProbeDetected(latestLocalRuntimeProbeSnapshot(input.record), "ffmpeg-availability");
+        default:
+          return false;
+      }
+    });
+    const supportsResolution = loader.supported_resolution.includes(input.desiredResolution);
+    const supportsDuration = loader.supported_duration >= input.desiredDurationSeconds;
+    const continuityCompatible = input.continuityPriority !== "high" || loader.continuity_support !== "limited";
+    const vramCompatible = !preferredHardware || preferredHardware.gpu_vram_gb >= loader.estimated_vram;
+    const runtimeCompatible = !matchingRuntime || !preferredHardware || matchingRuntime.supported_backends.includes(preferredHardware.accelerator_backend);
+    const nextStatus: CinematicLocalModelLoaderStatus = missingDependencies
+      ? "dependency-review"
+      : supportsResolution && supportsDuration && continuityCompatible && vramCompatible && runtimeCompatible && matchingModel && matchingRuntime
+        ? "activation-ready"
+        : runtimeCompatible
+          ? "registered"
+          : "blocked";
+    return {
+      ...loader,
+      status: nextStatus,
+    };
+  });
+}
+
+function validateModelRuntimeCompatibility(input: {
+  record: CinematicProductionMemoryRecord;
+  loaderRegistry: CinematicLocalModelLoaderRecord[];
+  desiredResolution: CinematicVideoResolution;
+  desiredDurationSeconds: number;
+  continuityPriority: "low" | "medium" | "high";
+}): CinematicModelRuntimeCompatibilityValidation {
+  const preferredHardware = resolvePreferredLocalHardware({
+    record: input.record,
+    model: null,
+    desiredResolution: input.desiredResolution,
+    desiredDurationSeconds: input.desiredDurationSeconds,
+  });
+  const preferredRuntime = resolvePreferredLocalRuntime({
+    record: input.record,
+    hardware: preferredHardware,
+  });
+  const probeSnapshot = latestLocalRuntimeProbeSnapshot(input.record);
+  const issues = input.loaderRegistry.flatMap((loader) => {
+    const runtime = input.record.local_runtime_capability_registry.find((entry) => entry.runtime_id === loader.runtime_target) ?? null;
+    const model = input.record.local_model_registry.find((entry) => entry.display_name === loader.model_name) ?? null;
+    const nextIssues: CinematicModelRuntimeCompatibilityIssue[] = [];
+    if (!runtime || (preferredHardware && !runtime.supported_backends.includes(preferredHardware.accelerator_backend))) {
+      nextIssues.push({ code: "model-runtime-mismatch", loader_id: loader.loader_id, detail: `${loader.model_name} does not match the preferred runtime backend.` });
+    }
+    if (preferredHardware && preferredHardware.gpu_vram_gb < loader.estimated_vram) {
+      nextIssues.push({ code: "insufficient-vram", loader_id: loader.loader_id, detail: `${loader.model_name} needs ${loader.estimated_vram}GB VRAM but only ${preferredHardware.gpu_vram_gb}GB is profiled.` });
+    }
+    if (loader.dependency_requirements.some((entry) => {
+      switch (entry) {
+        case "python-runtime":
+          return !runtimeProbeDetected(probeSnapshot, "python-runtime-presence");
+        case "comfyui-runtime":
+        case "diffusers-runtime":
+        case "cuda-runtime":
+          return !runtimeProbeDetected(probeSnapshot, "inference-runtime-presence");
+        case "model-weights":
+          return !runtimeProbeDetected(probeSnapshot, "local-model-directory-presence");
+        case "ffmpeg":
+          return !runtimeProbeDetected(probeSnapshot, "ffmpeg-availability");
+        default:
+          return false;
+      }
+    })) {
+      nextIssues.push({ code: "missing-dependencies", loader_id: loader.loader_id, detail: `${loader.model_name} is missing at least one dependency signal.` });
+    }
+    if (loader.supported_duration < input.desiredDurationSeconds) {
+      nextIssues.push({ code: "unsupported-duration", loader_id: loader.loader_id, detail: `${loader.model_name} only supports ${loader.supported_duration}s.` });
+    }
+    if (!loader.supported_resolution.includes(input.desiredResolution)) {
+      nextIssues.push({ code: "unsupported-resolution", loader_id: loader.loader_id, detail: `${loader.model_name} does not support ${input.desiredResolution}.` });
+    }
+    if (!normalizeText(loader.model_path)) {
+      nextIssues.push({ code: "missing-model-path", loader_id: loader.loader_id, detail: `${loader.model_name} does not have a model path recorded.` });
+    }
+    if (input.continuityPriority === "high" && loader.continuity_support === "limited") {
+      nextIssues.push({ code: "unsupported-continuity-mode", loader_id: loader.loader_id, detail: `${loader.model_name} is not suitable for high continuity planning.` });
+    }
+    if (!model) {
+      nextIssues.push({ code: "missing-model-path", loader_id: loader.loader_id, detail: `${loader.model_name} is not mapped to a registered model profile.` });
+    }
+    return nextIssues;
+  });
+  const preferredLoader = input.loaderRegistry.find((entry) => entry.status === "activation-ready") ?? input.loaderRegistry[0] ?? null;
+  const fallbackRuntime = input.record.local_runtime_capability_registry.find(
+    (entry) => entry.runtime_id !== preferredLoader?.runtime_target && entry.status !== "candidate",
+  ) ?? input.record.local_runtime_capability_registry.find((entry) => entry.runtime_id !== preferredLoader?.runtime_target) ?? null;
+  const blockers = uniqueNormalizedStrings(issues.map((entry) => entry.detail));
+  return {
+    valid: issues.length === 0,
+    preferred_loader_id: preferredLoader?.loader_id ?? null,
+    issues,
+    blockers,
+    fallback_runtime_id: fallbackRuntime?.runtime_id ?? preferredRuntime?.runtime_id ?? null,
+  };
+}
+
+function buildRuntimeActivationSimulationStates(input: {
+  loaderRegistry: CinematicLocalModelLoaderRecord[];
+  compatibility: CinematicModelRuntimeCompatibilityValidation;
+}): CinematicRuntimeActivationSimulationState[] {
+  const blocked = !input.compatibility.valid;
+  const preferredLoader = input.loaderRegistry.find((entry) => entry.loader_id === input.compatibility.preferred_loader_id) ?? input.loaderRegistry[0] ?? null;
+  const states: Array<Omit<CinematicRuntimeActivationSimulationState, "order">> = [
+    {
+      state: "loader_registered",
+      simulated: true,
+      detail: preferredLoader ? `Loader ${preferredLoader.loader_id} is registered for future activation.` : "No loader is registered for activation yet.",
+      blockers: preferredLoader ? [] : ["No loader registered."],
+    },
+    {
+      state: "dependency_checking",
+      simulated: true,
+      detail: "Dependency signals are inspected from deterministic runtime probes only.",
+      blockers: input.compatibility.issues.filter((entry) => entry.code === "missing-dependencies").map((entry) => entry.detail),
+    },
+    {
+      state: "runtime_preparing",
+      simulated: true,
+      detail: "Runtime preparation remains simulated and does not launch any local process.",
+      blockers: input.compatibility.issues.filter((entry) => entry.code === "model-runtime-mismatch").map((entry) => entry.detail),
+    },
+    {
+      state: "model_loading_simulated",
+      simulated: true,
+      detail: "Model loading is inferred from loader metadata and probe evidence, not executed.",
+      blockers: input.compatibility.issues.filter((entry) => entry.code === "missing-model-path").map((entry) => entry.detail),
+    },
+    {
+      state: "vram_reserving",
+      simulated: true,
+      detail: "VRAM reservation remains a planning estimate only.",
+      blockers: input.compatibility.issues.filter((entry) => entry.code === "insufficient-vram").map((entry) => entry.detail),
+    },
+    {
+      state: blocked ? "activation_blocked" : "inference_ready_simulated",
+      simulated: true,
+      detail: blocked
+        ? "Activation remains blocked behind compatibility issues and governance rules."
+        : "Inference readiness is simulated for future reviewed bridge work only.",
+      blockers: blocked ? input.compatibility.blockers : [],
+    },
+    {
+      state: blocked ? "activation_recovering" : "activation_archived",
+      simulated: true,
+      detail: blocked
+        ? "Recovery steps are generated instead of attempting activation."
+        : "Activation evidence is archived without loading models or running inference.",
+      blockers: blocked ? input.compatibility.blockers : [],
+    },
+  ];
+  return states.map((entry, index) => ({
+    ...entry,
+    order: index + 1,
+  }));
+}
+
+function buildActivationFailureRecoveryPlan(input: {
+  record: CinematicProductionMemoryRecord;
+  compatibility: CinematicModelRuntimeCompatibilityValidation;
+  loaderRegistry: CinematicLocalModelLoaderRecord[];
+}): CinematicActivationFailureRecoveryPlan {
+  const causes: CinematicActivationFailureCause[] = [];
+  if (input.compatibility.issues.some((entry) => entry.code === "model-runtime-mismatch")) {
+    causes.push("missing-runtime");
+  }
+  if (input.compatibility.issues.some((entry) => entry.code === "missing-model-path")) {
+    causes.push("missing-model-files");
+  }
+  if (input.compatibility.issues.some((entry) => entry.code === "insufficient-vram")) {
+    causes.push("insufficient-vram");
+  }
+  if (input.compatibility.issues.some((entry) => entry.code === "missing-dependencies")) {
+    causes.push("dependency-mismatch");
+  }
+  if (input.record.local_hardware_profiles.some((entry) => entry.storage_free_gb < 40)) {
+    causes.push("storage-pressure");
+  }
+  if (input.record.local_provider_routing_rules.some((entry) => /fall back/i.test(entry))) {
+    causes.push("unsupported-provider-route");
+  }
+  if (input.loaderRegistry.some((entry) => /cache/i.test(entry.model_path) && entry.status === "blocked")) {
+    causes.push("corrupted-cache");
+  }
+  const uniqueCauses = [...new Set(causes)];
+  const fallbackRuntimeId = input.compatibility.fallback_runtime_id;
+  const nextSafeSteps = uniqueCauses.map((cause, index) => ({
+    cause,
+    sequence_order: index + 1,
+    detail: (() => {
+      switch (cause) {
+        case "missing-runtime":
+          return `Review runtime compatibility and prefer ${fallbackRuntimeId ?? "a fallback runtime"} before any future bridge.`;
+        case "missing-model-files":
+          return "Confirm model path registration and retain model loading as simulated-only until files are verified manually.";
+        case "insufficient-vram":
+          return "Reduce requested resolution or duration and keep activation serialized in planning-only mode.";
+        case "dependency-mismatch":
+          return "Record the missing dependency evidence in readiness notes without installing anything automatically.";
+        case "storage-pressure":
+          return "Reserve storage headroom manually before reviewing cache-heavy activation scaffolds.";
+        case "unsupported-provider-route":
+          return "Fallback to offline-planning-mode or hybrid escalation rather than attempting unsupported local routing.";
+        case "corrupted-cache":
+          return "Treat cache repair as a separate reviewed maintenance task outside this sandbox layer.";
+      }
+    })(),
+  }));
+  return {
+    blocked: uniqueCauses.length > 0,
+    causes: uniqueCauses,
+    fallback_runtime_id: fallbackRuntimeId,
+    next_safe_steps: nextSafeSteps,
+  };
+}
+
+function buildFutureActivationPlan(input: {
+  compatibility: CinematicModelRuntimeCompatibilityValidation;
+}): CinematicFutureActivationPlan {
+  return {
+    future_frame_synthesis_activation: true,
+    future_temporal_pipeline_activation: true,
+    future_upscale_activation: true,
+    future_render_packaging_activation: true,
+    future_local_only_execution_mode: false,
+    notes: uniqueNormalizedStrings([
+      "Future frame synthesis activation remains scaffold-only and requires a separate reviewed bridge.",
+      "Future temporal pipeline activation remains continuity-governed and non-executing in this layer.",
+      "Future upscale activation remains packaging-adjacent planning only.",
+      "Future render packaging activation remains blocked behind FFmpeg evidence and explicit review.",
+      input.compatibility.valid
+        ? "Compatibility is sufficient for future reviewed activation planning, not live runtime activation."
+        : "Compatibility blockers still prevent any future activation bridge promotion.",
+    ]),
   };
 }
 
@@ -4269,6 +4724,13 @@ export async function getCinematicReadinessDeltaTrackingHistory(input?: {
   return record.readiness_delta_tracking_history;
 }
 
+export async function getCinematicLocalModelLoaderRegistry(input?: {
+  root?: string;
+}): Promise<CinematicLocalModelLoaderRecord[]> {
+  const record = await readCinematicProductionMemory({ root: input?.root });
+  return record.local_model_loader_registry;
+}
+
 export async function validateCinematicLocalExecutionSandbox(input?: {
   root?: string;
   sequenceId?: string;
@@ -4398,6 +4860,115 @@ export async function simulateCinematicLocalInferenceExecutionSandbox(input?: {
     recovery_plan: validation.recovery_plan,
     readiness_tracking_id: validation.readiness_delta.tracking_id,
     hybrid_escalation: validation.hybrid_escalation,
+    recorded_at: new Date().toISOString(),
+  };
+  await writeCinematicProductionMemory({
+    root: input?.root,
+    value: {
+      sandbox_simulations: [...record.sandbox_simulations, simulation].slice(-40),
+      asset_reuse_decisions: [...record.asset_reuse_decisions, ...simulation.asset_reuse_decisions].slice(-40),
+    },
+  });
+  return {
+    validation,
+    simulation,
+  };
+}
+
+export async function validateCinematicLocalRuntimeActivationSimulation(input?: {
+  root?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+}): Promise<CinematicRuntimeActivationSimulationValidation> {
+  const initialization = await loadProductionMemory(input?.root);
+  const record = initialization.record;
+  const desiredResolution = input?.desiredResolution ?? DEFAULT_TARGET_RESOLUTION;
+  const desiredDurationSeconds = input?.desiredDurationSeconds ?? DEFAULT_TARGET_DURATION_SECONDS;
+  const continuityPriority = input?.continuityPriority ?? "medium";
+  const loaderRegistry = buildLocalModelLoaderRegistry({
+    record,
+    desiredResolution,
+    desiredDurationSeconds,
+    continuityPriority,
+  });
+  const nextRecord = {
+    ...record,
+    local_model_loader_registry: loaderRegistry,
+  };
+  const readiness = summarizeLocalReadiness({
+    record: nextRecord,
+    desiredResolution,
+    desiredDurationSeconds,
+    continuityPriority,
+  });
+  const compatibilityValidation = validateModelRuntimeCompatibility({
+    record: nextRecord,
+    loaderRegistry,
+    desiredResolution,
+    desiredDurationSeconds,
+    continuityPriority,
+  });
+  const activationLifecycleStates = buildRuntimeActivationSimulationStates({
+    loaderRegistry,
+    compatibility: compatibilityValidation,
+  });
+  const activationRecoveryPlan = buildActivationFailureRecoveryPlan({
+    record: nextRecord,
+    compatibility: compatibilityValidation,
+    loaderRegistry,
+  });
+  const futureActivationPlan = buildFutureActivationPlan({
+    compatibility: compatibilityValidation,
+  });
+  const trackingUpdate = appendReadinessDeltaTracking({
+    record: nextRecord,
+    readiness,
+    source: "runtime-activation-simulation",
+  });
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, trackingUpdate.record);
+  return {
+    readiness,
+    readiness_delta: trackingUpdate.tracking,
+    loader_registry: loaderRegistry,
+    activation_lifecycle_states: activationLifecycleStates,
+    compatibility_validation: compatibilityValidation,
+    activation_recovery_plan: activationRecoveryPlan,
+    future_activation_plan: futureActivationPlan,
+    execution_enabled: false,
+  };
+}
+
+export async function simulateCinematicLocalModelLoaderRuntimeActivation(input?: {
+  root?: string;
+  desiredResolution?: CinematicVideoResolution;
+  desiredDurationSeconds?: number;
+  continuityPriority?: "low" | "medium" | "high";
+}): Promise<CinematicLocalModelLoaderRuntimeActivationResult> {
+  const validation = await validateCinematicLocalRuntimeActivationSimulation(input);
+  const record = await readCinematicProductionMemory({ root: input?.root });
+  const simulation: CinematicSandboxSimulationRecord = {
+    simulation_id: `activation-sandbox-${Date.now()}`,
+    sandbox_kind: "local-model-loader-runtime-activation-simulation",
+    sequence_id: "runtime-activation-planning-only",
+    routing_mode: validation.readiness.recommended_routing_mode,
+    provider: "LocalFutureProvider",
+    execution_enabled: false,
+    queued_job_ids: validation.loader_registry.map((entry) => entry.loader_id),
+    approved_job_ids: validation.loader_registry.filter((entry) => entry.status === "activation-ready").map((entry) => entry.loader_id),
+    failed_job_ids: validation.compatibility_validation.issues.map((entry) => entry.loader_id),
+    retry_job_ids: validation.activation_recovery_plan.causes.length > 0
+      ? validation.loader_registry.filter((entry) => entry.status !== "activation-ready").map((entry) => entry.loader_id)
+      : [],
+    continuity_issue_count: validation.compatibility_validation.issues.filter((entry) => entry.code === "unsupported-continuity-mode").length,
+    asset_reuse_decisions: validation.loader_registry.map((entry) => `Keep ${entry.loader_id} activation simulated-only and governance-bound.`),
+    loader_registry: validation.loader_registry,
+    activation_lifecycle_states: validation.activation_lifecycle_states,
+    compatibility_validation: validation.compatibility_validation,
+    activation_recovery_plan: validation.activation_recovery_plan,
+    future_activation_plan: validation.future_activation_plan,
+    readiness_tracking_id: validation.readiness_delta.tracking_id,
+    hybrid_escalation: null,
     recorded_at: new Date().toISOString(),
   };
   await writeCinematicProductionMemory({

@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T18:27:21.457Z
+updated_at: 2026-05-07T18:51:48.686Z
 session_id: phase7c-skip-task-session
 status: generated_asset_reuse_decisions
 tags:
@@ -24,6 +24,9 @@ tags:
 - Preserve continuity context for sequence-wave-transition-001-emotional while keeping local execution disabled.
 - Preserve continuity context for sequence-wave-transition-001-transition while keeping local execution disabled.
 - Preserve continuity context for sequence-wave-transition-001-return while keeping local execution disabled.
+- Keep loader-wan-2.1-t2v-q8 activation simulated-only and governance-bound.
+- Keep loader-ltx-video-img2vid-int8 activation simulated-only and governance-bound.
+- Keep loader-hunyuan-video-13b-planned activation simulated-only and governance-bound.
 
 ## Reusable Assets
 - prompt-wave-reveal-001: Wave reveal planning prompt

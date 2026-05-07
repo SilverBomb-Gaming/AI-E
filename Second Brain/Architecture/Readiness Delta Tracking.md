@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T18:27:21.457Z
+updated_at: 2026-05-07T18:51:48.686Z
 session_id: phase7c-skip-task-session
 status: generated_readiness_delta_tracking
 tags:
@@ -16,26 +16,26 @@ tags:
 > Generated read-only from AI-E second-brain memory. Do not edit here expecting machine memory to change.
 
 ## Latest Delta Run
-- Tracking id: readiness-delta-20260507182721
-- Recorded at: 2026-05-07T18:27:21.451Z
-- Source: local-readiness-validation
+- Tracking id: readiness-delta-20260507185148
+- Recorded at: 2026-05-07T18:51:48.678Z
+- Source: runtime-activation-simulation
 
 ## Milestone Deltas
-- Local Inference Readiness: prev=60% current=60% delta=0% trend=flat | cleared=none | introduced=none
-- Local Runtime Readiness: prev=0% current=0% delta=0% trend=flat | cleared=none | introduced=none
-- Local Frame Generation Readiness: prev=63% current=63% delta=0% trend=flat | cleared=none | introduced=none
-- Local Renderer Readiness: prev=54% current=54% delta=0% trend=flat | cleared=none | introduced=none
+- Local Inference Readiness: prev=60% current=54% delta=-6% trend=flat | cleared=none | introduced=python runtime detection, inference runtime detection, local model directory detection, activation-ready loader
+- Local Runtime Readiness: prev=0% current=8% delta=8% trend=flat | cleared=none | introduced=VRAM reporting evidence, storage estimate evidence, runtime activation simulation evidence
+- Local Frame Generation Readiness: prev=63% current=68% delta=5% trend=flat | cleared=none | introduced=frame synthesis contract, frame interpolation contract
+- Local Renderer Readiness: prev=54% current=54% delta=0% trend=flat | cleared=none | introduced=local upscaling scaffold
 - Continuity Preserving Local Generation: prev=73% current=73% delta=0% trend=flat | cleared=none | introduced=none
-- Hybrid Local Cloud Orchestration: prev=81% current=81% delta=0% trend=flat | cleared=none | introduced=none
-- Self Sustaining Generation Readiness: prev=40% current=40% delta=0% trend=flat | cleared=none | introduced=none
+- Hybrid Local Cloud Orchestration: prev=81% current=81% delta=0% trend=flat | cleared=none | introduced=verified local provider evidence
+- Self Sustaining Generation Readiness: prev=40% current=36% delta=-4% trend=flat | cleared=none | introduced=policy approval for autonomy, reviewed execution bridge, governed recovery loop
 
 ## Architectural Notes
 - Local Inference Readiness: runtime probe normalization -> local readiness gate -> manual local bridge preview
 - Local Inference Readiness: Next milestone: undefined
-- Local Inference Readiness: Missing dependencies: python runtime detection, inference runtime detection, local model directory detection
+- Local Inference Readiness: Missing dependencies: python runtime detection, inference runtime detection, local model directory detection, activation-ready loader
 - Local Runtime Readiness: path hints -> runtime probe snapshot -> constraint modeling
 - Local Runtime Readiness: Next milestone: undefined
-- Local Runtime Readiness: Missing dependencies: VRAM reporting evidence, storage estimate evidence
+- Local Runtime Readiness: Missing dependencies: VRAM reporting evidence, storage estimate evidence, runtime activation simulation evidence
 - Local Frame Generation Readiness: frame stage registry -> runtime constraints -> manual-only frame bridge
 - Local Frame Generation Readiness: Next milestone: undefined
 - Local Frame Generation Readiness: Missing dependencies: frame synthesis contract, frame interpolation contract

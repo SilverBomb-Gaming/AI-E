@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T18:27:21.457Z
+updated_at: 2026-05-07T18:51:48.686Z
 session_id: phase7c-skip-task-session
 status: generated_readiness_percentages
 tags:
@@ -16,13 +16,13 @@ tags:
 > Generated read-only from AI-E second-brain memory. Do not edit here expecting machine memory to change.
 
 ## Milestone Progress
-- Local Inference Readiness: 60% | confidence=medium | next=Record a normalized runtime probe snapshot and bind it into readiness review.
-- Local Runtime Readiness: 0% | confidence=low | next=Promote configured path hints into verified runtime probe evidence.
-- Local Frame Generation Readiness: 63% | confidence=medium | next=Convert latent preparation and render packaging into verified non-executing precursor contracts.
-- Local Renderer Readiness: 54% | confidence=medium | next=Bind renderer roadmap entries to verified probe evidence and packaging manifests.
+- Local Inference Readiness: 62% | confidence=medium | next=Record a normalized runtime probe snapshot and bind it into readiness review.
+- Local Runtime Readiness: 17% | confidence=low | next=Promote configured path hints into verified runtime probe evidence.
+- Local Frame Generation Readiness: 68% | confidence=medium | next=Convert latent preparation and render packaging into verified non-executing precursor contracts.
+- Local Renderer Readiness: 59% | confidence=medium | next=Bind renderer roadmap entries to verified probe evidence and packaging manifests.
 - Continuity Preserving Local Generation: 62% | confidence=medium | next=Strengthen temporal continuity and continuity-state reuse contracts before any local sequence generation bridge.
-- Hybrid Local Cloud Orchestration: 81% | confidence=high | next=Bind hybrid strategy decisions to concrete probe and constraint evidence.
-- Self Sustaining Generation Readiness: 40% | confidence=low | next=Do not pursue this milestone until governance policy explicitly changes.
+- Hybrid Local Cloud Orchestration: 86% | confidence=high | next=Bind hybrid strategy decisions to concrete probe and constraint evidence.
+- Self Sustaining Generation Readiness: 45% | confidence=low | next=Do not pursue this milestone until governance policy explicitly changes.
 
 ## Current Blockers
 - Local Inference Readiness: No runtime probe snapshot has been recorded yet.
