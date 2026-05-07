@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 
 import { completeTaskChain, createAutonomousTaskChain } from "./autonomousTaskChain";
@@ -53,12 +54,18 @@ test("proposes logical next step", () => {
     maxProposedSteps: 2,
     confidence: 0.9,
     minimumConfidence: 0.7,
+    repoRoot: path.resolve(process.cwd(), ".."),
     supervisorApproval: true,
     now: "2026-04-25T23:15:00.000Z",
   });
 
   assert.equal(decision.status, "orchestration_ready");
   assert.match(decision.plan.proposed_steps[0]?.title ?? "", /review follow-up opportunities/i);
+  assert.equal(decision.plan.second_brain_project_key, "babylon-2026");
+  assert.match(decision.plan.second_brain_known_good_state ?? "", /wave loop/i);
+  assert.match(decision.plan.second_brain_next_safe_task ?? "", /Integrate second-brain context retrieval/i);
+  assert.ok(decision.plan.second_brain_anti_patterns?.some((entry) => /legacy BABYLON/i.test(entry)));
+  assert.equal(decision.plan.second_brain_fallback_mode, "standard_hybrid_mode");
 });
 
 test("blocks low-confidence continuation", () => {

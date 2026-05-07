@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -151,6 +152,12 @@ export type FallbackModeDecision = {
   reason: string;
   deferred_capabilities: string[];
   continuity_actions: string[];
+};
+
+export type SecondBrainStartupContext = {
+  summary: SecondBrainSummary;
+  projectContext: CurrentProjectContext;
+  fallbackDecision: FallbackModeDecision;
 };
 
 const SECOND_BRAIN_DIR = path.join("data", "second_brain");
@@ -374,6 +381,19 @@ function cloneDefaultRecord(): SecondBrainRecord {
   return JSON.parse(JSON.stringify(DEFAULT_SECOND_BRAIN_RECORD)) as SecondBrainRecord;
 }
 
+function resolveRepoRootSync(root = process.cwd()): string {
+  const normalizedRoot = path.resolve(root);
+  if (path.basename(normalizedRoot).toLowerCase() === "web") {
+    return path.resolve(normalizedRoot, "..");
+  }
+
+  if (existsSync(path.join(normalizedRoot, "web"))) {
+    return normalizedRoot;
+  }
+
+  return normalizedRoot;
+}
+
 function normalizeText(value: unknown): string {
   return String(value ?? "").trim();
 }
@@ -418,6 +438,33 @@ async function loadBrainRecord(root?: string): Promise<SecondBrainInitialization
   await ensureFile(caseStudyPath, DEFAULT_BABYLON_CASE_STUDY);
 
   const record = await readJsonFile<SecondBrainRecord>(brainPath) ?? cloneDefaultRecord();
+  return {
+    repoRoot,
+    brainDirectory,
+    brainPath,
+    outcomesPath,
+    caseStudyPath,
+    record,
+  };
+}
+
+function loadBrainRecordSync(root?: string): SecondBrainInitialization {
+  const repoRoot = resolveRepoRootSync(root ?? process.cwd());
+  const brainDirectory = path.join(repoRoot, SECOND_BRAIN_DIR);
+  const brainPath = path.join(brainDirectory, SECOND_BRAIN_FILE);
+  const outcomesPath = path.join(brainDirectory, SECOND_BRAIN_OUTCOMES_FILE);
+  const caseStudyPath = path.join(brainDirectory, SECOND_BRAIN_CASE_STUDY_FILE);
+
+  const record = existsSync(brainPath)
+    ? (() => {
+        try {
+          return JSON.parse(readFileSync(brainPath, "utf8")) as SecondBrainRecord;
+        } catch {
+          return cloneDefaultRecord();
+        }
+      })()
+    : cloneDefaultRecord();
+
   return {
     repoRoot,
     brainDirectory,
@@ -543,12 +590,54 @@ export async function retrieveCurrentProjectContext(input?: {
   };
 }
 
+export function retrieveCurrentProjectContextSync(input?: {
+  root?: string;
+  projectKey?: string;
+}): CurrentProjectContext {
+  const initialization = loadBrainRecordSync(input?.root);
+  const projectKey = input?.projectKey ?? initialization.record.current_project_key;
+  const project = initialization.record.projects[projectKey];
+  if (!project) {
+    throw new Error(`No second-brain project context found for ${projectKey}.`);
+  }
+
+  return {
+    project,
+    working_memory: initialization.record.sections.working_memory,
+    architecture_memory: initialization.record.sections.architecture_memory,
+    next_safe_task: project.next_safe_task,
+    continuation_context: project.continuation_context,
+  };
+}
+
 export async function summarizeSecondBrainMemory(input?: {
   root?: string;
   projectKey?: string;
 }): Promise<SecondBrainSummary> {
   const context = await retrieveCurrentProjectContext(input);
   const resourceMemory = (await loadBrainRecord(input?.root)).record.sections.resource_memory;
+
+  return {
+    current_project_key: context.project.project_key,
+    summary: [
+      `Current project: ${context.project.title}`,
+      `Status: ${context.project.status}`,
+      `Summary: ${context.project.summary}`,
+      `Current state: ${context.project.current_state.join(" | ")}`,
+      `Resume checkpoint: ${context.working_memory.resume_checkpoint}`,
+    ].join("\n"),
+    next_safe_task: context.project.next_safe_task,
+    anti_patterns_to_avoid: context.project.anti_patterns,
+    fallback_mode_hint: resourceMemory.preferred_fallback_mode,
+  };
+}
+
+export function summarizeSecondBrainMemorySync(input?: {
+  root?: string;
+  projectKey?: string;
+}): SecondBrainSummary {
+  const context = retrieveCurrentProjectContextSync(input);
+  const resourceMemory = loadBrainRecordSync(input?.root).record.sections.resource_memory;
 
   return {
     current_project_key: context.project.project_key,
@@ -602,5 +691,79 @@ export async function chooseSecondBrainFallbackMode(input?: {
       "Record the latest outcome and known-good checkpoint.",
       `Operate through ${resourceMemory.local_offline_fallback_options.join(", ")}.`,
     ],
+  };
+}
+
+export function chooseSecondBrainFallbackModeSync(input?: {
+  root?: string;
+  unavailableHardware?: string[];
+  unavailableApis?: string[];
+  unavailableModels?: string[];
+}): FallbackModeDecision {
+  const initialization = loadBrainRecordSync(input?.root);
+  const resourceMemory = initialization.record.sections.resource_memory;
+  const unavailableHardware = input?.unavailableHardware ?? [];
+  const unavailableApis = input?.unavailableApis ?? [];
+  const unavailableModels = input?.unavailableModels ?? [];
+  const resourcePressure = unavailableHardware.length + unavailableApis.length + unavailableModels.length;
+
+  if (resourcePressure === 0) {
+    return {
+      mode: "standard_hybrid_mode",
+      reason: "Core hardware and model/API access are available, so AI-E can keep using normal supervised continuity.",
+      deferred_capabilities: [],
+      continuity_actions: [
+        "Keep recording outcomes and memory updates.",
+        "Preserve approval gates for real-world mutations.",
+      ],
+    };
+  }
+
+  return {
+    mode: resourceMemory.preferred_fallback_mode,
+    reason: `Resource pressure detected: hardware=${unavailableHardware.length}, apis=${unavailableApis.length}, models=${unavailableModels.length}. Switch to local memory and checkpoint continuity until external capacity recovers.`,
+    deferred_capabilities: [
+      "High-frequency external model usage",
+      "Non-essential API-dependent planning passes",
+    ],
+    continuity_actions: [
+      "Persist current project summary to the second brain.",
+      "Record the latest outcome and known-good checkpoint.",
+      `Operate through ${resourceMemory.local_offline_fallback_options.join(", ")}.`,
+    ],
+  };
+}
+
+export async function loadSecondBrainStartupContext(input?: {
+  root?: string;
+  projectKey?: string;
+  unavailableHardware?: string[];
+  unavailableApis?: string[];
+  unavailableModels?: string[];
+}): Promise<SecondBrainStartupContext> {
+  const [summary, projectContext, fallbackDecision] = await Promise.all([
+    summarizeSecondBrainMemory(input),
+    retrieveCurrentProjectContext(input),
+    chooseSecondBrainFallbackMode(input),
+  ]);
+
+  return {
+    summary,
+    projectContext,
+    fallbackDecision,
+  };
+}
+
+export function loadSecondBrainStartupContextSync(input?: {
+  root?: string;
+  projectKey?: string;
+  unavailableHardware?: string[];
+  unavailableApis?: string[];
+  unavailableModels?: string[];
+}): SecondBrainStartupContext {
+  return {
+    summary: summarizeSecondBrainMemorySync(input),
+    projectContext: retrieveCurrentProjectContextSync(input),
+    fallbackDecision: chooseSecondBrainFallbackModeSync(input),
   };
 }

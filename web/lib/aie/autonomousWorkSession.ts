@@ -113,6 +113,7 @@ export type AutonomousWorkSession = {
   latest_persistence_record: ChainPersistenceRecord;
   cycle_history: WorkSessionCycle[];
   max_cycles: number;
+  repo_root: string;
   session_report: WorkSessionReport;
   status: WorkSessionStatus;
 };
@@ -126,6 +127,7 @@ export type CreateAutonomousWorkSessionInput = {
   sessionApproval?: boolean;
   sessionApprovalGrantedAt?: string;
   sessionApprovalExpiresAt?: string | null;
+  repoRoot?: string;
   chainInput?: Partial<Omit<AutonomousTaskChainInput, "originalRequest" | "interpretedGoal" | "createdAt">>;
 };
 
@@ -392,6 +394,7 @@ export function createAutonomousWorkSession(input: CreateAutonomousWorkSessionIn
     latest_persistence_record: persistenceRecord,
     cycle_history: [],
     max_cycles: clampMaxCycles(input.maxCycles),
+    repo_root: normalizeText(input.repoRoot) || process.cwd(),
     session_report: {
       report_id: buildReportId(sessionId, createdAt),
       created_at: createdAt,
@@ -550,6 +553,7 @@ export function evaluateWorkSessionReadiness(session: AutonomousWorkSession, now
       chain: currentSession.active_chain,
       persistenceRecord: currentSession.latest_persistence_record,
       memory: currentSession.orchestration_memory,
+      repoRoot: currentSession.repo_root,
       supervisorApproval: true,
       now: currentTime,
     })

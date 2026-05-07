@@ -48,6 +48,7 @@ import { runAnalysis } from "./run-analysis";
 import { getRetryDecision } from "./retryPolicy";
 import { getRecoveryDecision, type AutonomousRecoveryStrategy } from "./strategySwitch";
 import { detectTestFiles, findRelevantFiles, resolveRepoRoot } from "./repoContext";
+import { updateSecondBrainOutcomeLog } from "./secondBrainMemory";
 import { saveAutonomousSession } from "./autonomousSessionStore";
 import { assignTaskToNode, enqueueTask, getRunnableTasks, listTasks, updateTaskStatus } from "./taskQueueStore";
 import {
@@ -114,6 +115,54 @@ function normalizeText(value: string | null | undefined): string {
   return String(value ?? "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+async function recordSecondBrainOutcomeForStep(input: {
+  repoRoot: string;
+  session: AutonomousSession;
+  step: AutonomousStepRecord;
+  executionResult?: ExecutionRuntimeResult;
+  nextDecision?: AutonomousStepDecision;
+}): Promise<void> {
+  const title = normalizeText(input.step.featureTitle)
+    || normalizeText(input.step.proposedAction)
+    || `Autonomous step ${input.step.index}`;
+  const attempted = normalizeText(input.step.proposedAction)
+    || normalizeText(input.step.diagnosis)
+    || title;
+  const resultStatus = input.executionResult?.status === "success"
+    ? "passed"
+    : input.executionResult?.status === "failed"
+      ? "failed"
+      : input.executionResult?.status === "blocked"
+        ? "blocked"
+        : "partial";
+  const validationResult = normalizeText(input.executionResult?.output)
+    || normalizeText(input.executionResult?.error)
+    || normalizeText(input.step.diagnosis)
+    || "No validation result recorded.";
+  const followUpRecommendation = normalizeText(input.nextDecision)
+    || normalizeText(input.session.workflowContinuity.memory.pendingNextActionSummary)
+    || normalizeText(input.session.workflowContinuity.loopHealth.loopHealthReason)
+    || "Continue with the next bounded supervised step.";
+
+  await updateSecondBrainOutcomeLog({
+    root: input.repoRoot,
+    entry: {
+      outcome_id: `${input.session.sessionId}-step-${input.step.index}`,
+      recorded_at: input.step.timestamp,
+      project_key: "babylon-2026",
+      task_source: "ai-e",
+      task_title: title,
+      attempted,
+      status: resultStatus,
+      validation_result: `${validationResult} Follow-up: ${followUpRecommendation}`,
+      should_never_repeat: resultStatus === "failed" && /legacy|anti-pattern|drift/i.test(validationResult),
+      never_repeat_reason: resultStatus === "failed" && /legacy|anti-pattern|drift/i.test(validationResult)
+        ? validationResult
+        : undefined,
+    },
+  });
 }
 
 function resolveDependencies(
@@ -1641,6 +1690,13 @@ async function runSingleAutonomousStep(params: {
     stallReason: stallDetection.shouldStallStop ? stallDetection.reason : undefined,
     goalStatus: goalEvaluation.status,
     completionConfidence: goalEvaluation.confidence,
+  });
+  await recordSecondBrainOutcomeForStep({
+    repoRoot,
+    session: nextSession,
+    step: nextSession.steps.at(-1)!,
+    executionResult,
+    nextDecision,
   });
 
   if (params.continuationState?.mode === "resume-approved") {

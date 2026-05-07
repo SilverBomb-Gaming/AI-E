@@ -104,8 +104,13 @@ test("deriveRepoAwarePlanningHintsFromSession adds repo clusters and related tes
     assert.ok(hints.recentChangeClusters.some((cluster) => /web\/lib\/aie/i.test(cluster)));
     assert.ok(hints.relatedTestFiles.includes("web/lib/aie/repoContext.test.ts"));
     assert.ok(hints.entryPoints.includes("web/headless_autonomy.ts"));
+    assert.equal(hints.secondBrainProjectKey, "babylon-2026");
+    assert.match(hints.secondBrainNextSafeTask ?? "", /Integrate second-brain context retrieval/i);
+    assert.ok(hints.secondBrainAntiPatterns.some((entry) => /legacy BABYLON/i.test(entry)));
+    assert.equal(hints.secondBrainFallbackMode, "standard_hybrid_mode");
     assert.match(hints.hintSummary, /Impact zones/i);
     assert.match(hints.hintSummary, /Pair with tests/i);
+    assert.match(hints.hintSummary, /Continue project: BABYLON 2026/i);
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
   }

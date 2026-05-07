@@ -8,6 +8,7 @@ import {
   type GoalStatus,
   type OrchestrationMemory,
 } from "./orchestrationMemory";
+import { loadSecondBrainStartupContextSync, type FallbackModeDecision } from "./secondBrainMemory";
 
 export type OrchestrationStatus =
   | "orchestration_ready"
@@ -35,6 +36,11 @@ export type OrchestrationPlan = {
   max_proposed_steps: number;
   context_summary: string;
   goal_summary: string;
+  second_brain_project_key?: string;
+  second_brain_known_good_state?: string;
+  second_brain_next_safe_task?: string;
+  second_brain_anti_patterns?: string[];
+  second_brain_fallback_mode?: string;
   proposed_steps: OrchestrationStep[];
   status: OrchestrationStatus;
 };
@@ -71,6 +77,20 @@ export type AutonomousOrchestratorInput = {
   minimumConfidence?: number;
   supervisorApproval?: boolean;
   now?: string;
+  repoRoot?: string;
+  resourcePressure?: {
+    unavailableHardware?: string[];
+    unavailableApis?: string[];
+    unavailableModels?: string[];
+  };
+};
+
+type SecondBrainOrchestrationOverlay = {
+  projectKey: string;
+  knownGoodState: string;
+  nextSafeTask: string;
+  antiPatterns: string[];
+  fallbackDecision: FallbackModeDecision;
 };
 
 const MAX_BOUND_PROPOSED_STEPS = 3;
@@ -113,6 +133,7 @@ function summarizeChainContext(
   chain: AutonomousTaskChain,
   persistenceRecord?: ChainPersistenceRecord | null,
   memory?: OrchestrationMemory | null,
+  secondBrain?: SecondBrainOrchestrationOverlay | null,
 ): string {
   const completedCount = chain.steps.filter((step) => step.status === "completed").length;
   const lastCompletedStep = chain.steps.filter((step) => step.status === "completed").at(-1);
@@ -125,7 +146,28 @@ function summarizeChainContext(
     `Last completed step: ${lastCompletedStep?.title ?? "none"}.`,
     `Persisted validation: ${validationSummary}.`,
     memory ? summarizeGoalState(memory).replace(/\n/g, " ") : "No persistent goal memory recorded.",
+    secondBrain ? `Second-brain project: ${secondBrain.projectKey}. Known-good state: ${secondBrain.knownGoodState}. Avoid: ${secondBrain.antiPatterns.join(" | ")}. Next safe task: ${secondBrain.nextSafeTask}. Fallback mode: ${secondBrain.fallbackDecision.mode}.` : "No second-brain project context loaded.",
   ].join(" ");
+}
+
+function buildSecondBrainOverlay(input: AutonomousOrchestratorInput): SecondBrainOrchestrationOverlay | null {
+  try {
+    const startup = loadSecondBrainStartupContextSync({
+      root: input.repoRoot,
+      unavailableHardware: input.resourcePressure?.unavailableHardware,
+      unavailableApis: input.resourcePressure?.unavailableApis,
+      unavailableModels: input.resourcePressure?.unavailableModels,
+    });
+    return {
+      projectKey: startup.projectContext.project.project_key,
+      knownGoodState: startup.projectContext.project.current_state.join(" | "),
+      nextSafeTask: startup.projectContext.next_safe_task,
+      antiPatterns: [...startup.projectContext.project.anti_patterns],
+      fallbackDecision: startup.fallbackDecision,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function deriveConfidence(input: AutonomousOrchestratorInput): number {
@@ -213,6 +255,7 @@ export function decideAutonomousOrchestration(input: AutonomousOrchestratorInput
   const confidence = deriveConfidence(input);
   const minimumConfidence = clampConfidence(input.minimumConfidence ?? 0.65);
   const goalState = input.memory ? evaluateGoalCompletion(input.memory) : null;
+  const secondBrain = buildSecondBrainOverlay(input);
   const blockers: OrchestrationBlocker[] = [];
 
   if (!Number.isInteger(maxProposedSteps) || maxProposedSteps <= 0) {
@@ -332,8 +375,17 @@ export function decideAutonomousOrchestration(input: AutonomousOrchestratorInput
     goal_status: goalState?.status ?? "active",
     requires_supervisor_approval: true,
     max_proposed_steps: maxProposedSteps,
-    context_summary: summarizeChainContext(input.chain, input.persistenceRecord, input.memory),
-    goal_summary: input.memory ? summarizeGoalState(input.memory) : `Goal status: ${goalState?.status ?? "active"}`,
+    context_summary: summarizeChainContext(input.chain, input.persistenceRecord, input.memory, secondBrain),
+    goal_summary: [
+      input.memory ? summarizeGoalState(input.memory) : `Goal status: ${goalState?.status ?? "active"}`,
+      secondBrain ? `Second-brain next safe task: ${secondBrain.nextSafeTask}` : "",
+      secondBrain && secondBrain.antiPatterns.length ? `Second-brain anti-patterns: ${secondBrain.antiPatterns.join(" | ")}` : "",
+    ].filter(Boolean).join("\n"),
+    second_brain_project_key: secondBrain?.projectKey,
+    second_brain_known_good_state: secondBrain?.knownGoodState,
+    second_brain_next_safe_task: secondBrain?.nextSafeTask,
+    second_brain_anti_patterns: secondBrain ? [...secondBrain.antiPatterns] : undefined,
+    second_brain_fallback_mode: secondBrain?.fallbackDecision.mode,
     proposed_steps: proposedSteps,
     status,
   };

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -22,6 +23,26 @@ test("creates session from operator goal", () => {
   assert.equal(session.operator_goal, "Stabilize the OpenClaw supervised autonomy lane.");
   assert.equal(session.checkpoints.length, 1);
   assert.equal(session.active_chain.interpreted_goal, session.operator_goal);
+  assert.ok(session.repo_root.length > 0);
+});
+
+test("readiness overlays second-brain orchestration context", () => {
+  const session = createAutonomousWorkSession({
+    operatorGoal: "Stabilize the OpenClaw supervised autonomy lane.",
+    createdAt: "2026-04-25T10:00:00.000Z",
+    sessionApproval: true,
+    repoRoot: path.resolve(process.cwd(), ".."),
+  });
+  session.active_chain.status = "chain_completed";
+  session.active_chain.steps = session.active_chain.steps.map((step) => ({ ...step, status: "completed" }));
+  session.active_chain.current_step_index = session.active_chain.steps.length - 1;
+
+  const readiness = evaluateWorkSessionReadiness(session, "2026-04-25T10:05:00.000Z");
+
+  assert.ok(readiness.orchestration_decision);
+  assert.equal(readiness.orchestration_decision?.plan.second_brain_project_key, "babylon-2026");
+  assert.match(readiness.orchestration_decision?.plan.second_brain_next_safe_task ?? "", /Integrate second-brain context retrieval/i);
+  assert.ok(readiness.orchestration_decision?.plan.second_brain_anti_patterns?.some((entry) => /legacy BABYLON/i.test(entry)));
 });
 
 test("requires explicit session approval", () => {

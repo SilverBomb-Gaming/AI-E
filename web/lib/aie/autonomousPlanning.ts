@@ -7,6 +7,7 @@ import {
   findRelevantFiles,
   summarizeDirectoryStructure,
 } from "./repoContext";
+import { loadSecondBrainStartupContext } from "./secondBrainMemory";
 
 export type AutonomousActionFamily = "write" | "test" | "validate" | "inspect" | "other";
 
@@ -20,6 +21,11 @@ export type AutonomousPlanningHints = {
   relatedTestFiles: string[];
   entryPoints: string[];
   repoContextSummary: string;
+  secondBrainProjectKey?: string;
+  secondBrainSummary?: string;
+  secondBrainNextSafeTask?: string;
+  secondBrainAntiPatterns: string[];
+  secondBrainFallbackMode?: string;
   hintSummary: string;
 };
 
@@ -138,6 +144,11 @@ export function derivePlanningHintsFromSession(
     relatedTestFiles: [],
     entryPoints: [],
     repoContextSummary: "",
+    secondBrainProjectKey: undefined,
+    secondBrainSummary: undefined,
+    secondBrainNextSafeTask: undefined,
+    secondBrainAntiPatterns: [],
+    secondBrainFallbackMode: undefined,
     hintSummary: [
       `Recent lane summary: ${recentActionSummary}`,
       `Preferred next lane: ${preferredNextActionFamily}`,
@@ -180,6 +191,7 @@ export async function deriveRepoAwarePlanningHintsFromSession(
   const relatedTestFiles = [...new Set(relevantFiles.flatMap((file) => file.pairedTestFiles))].slice(0, 4);
   const recentChangeClusters = clusterPaths(recentChangedPaths);
   const entryPoints = await detectEntryPoints(repoRoot);
+  const secondBrain = await loadSecondBrainStartupContext({ root: repoRoot });
 
   const repoSummaryParts = [
     directorySummary.summary,
@@ -187,6 +199,13 @@ export async function deriveRepoAwarePlanningHintsFromSession(
     relatedTestFiles.length ? `Related tests: ${relatedTestFiles.join(", ")}.` : "",
     recentChangeClusters.length ? `Recent change clusters: ${recentChangeClusters.join(", ")}.` : "",
     entryPoints.length ? `Entry points: ${entryPoints.slice(0, 4).join(", ")}.` : "",
+    `Second-brain project: ${secondBrain.projectContext.project.title}.`,
+    `Known-good state: ${secondBrain.projectContext.project.current_state.join(" | ")}.`,
+    `Next safe task: ${secondBrain.projectContext.next_safe_task}.`,
+    secondBrain.projectContext.project.anti_patterns.length
+      ? `Avoid: ${secondBrain.projectContext.project.anti_patterns.join(" | ")}.`
+      : "",
+    `Fallback mode: ${secondBrain.fallbackDecision.mode}.`,
   ].filter(Boolean);
 
   return {
@@ -196,11 +215,20 @@ export async function deriveRepoAwarePlanningHintsFromSession(
     relatedTestFiles,
     entryPoints,
     repoContextSummary: repoSummaryParts.join(" "),
+    secondBrainProjectKey: secondBrain.projectContext.project.project_key,
+    secondBrainSummary: secondBrain.summary.summary,
+    secondBrainNextSafeTask: secondBrain.projectContext.next_safe_task,
+    secondBrainAntiPatterns: [...secondBrain.projectContext.project.anti_patterns],
+    secondBrainFallbackMode: secondBrain.fallbackDecision.mode,
     hintSummary: [
       baseHints.hintSummary,
       likelyImpactZones.length ? `Impact zones: ${likelyImpactZones.join(", ")}.` : "",
       relatedTestFiles.length ? `Pair with tests: ${relatedTestFiles.join(", ")}.` : "",
       recentChangeClusters.length ? `Change clusters: ${recentChangeClusters.join(", ")}.` : "",
+      `Continue project: ${secondBrain.projectContext.project.title}.`,
+      `Next safe task: ${secondBrain.projectContext.next_safe_task}.`,
+      secondBrain.projectContext.project.anti_patterns.length ? `Avoid: ${secondBrain.projectContext.project.anti_patterns.join(" | ")}.` : "",
+      `Fallback mode: ${secondBrain.fallbackDecision.mode}.`,
     ].filter(Boolean).join(" "),
   };
 }
