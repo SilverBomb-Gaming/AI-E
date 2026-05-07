@@ -1,9 +1,14 @@
 import {
   approveCinematicGenerationJobs,
   archiveFailedCinematicPlan,
+  buildCinematicSubmissionPackage,
   compileCinematicProviderPayload,
+  compareCinematicProviderReadiness,
   deferCinematicExecutionPlan,
+  evaluateCinematicApprovalEscalation,
   forecastCinematicSequenceCost,
+  exportCinematicRealProviderPayloads,
+  previewCinematicRealProviderDryRun,
   readCinematicProductionMemory,
   recordCinematicBudgetOverrideDecision,
   recordCinematicContinuityReviewNote,
@@ -12,10 +17,15 @@ import {
   simulateCinematicExecutionSandbox,
   validateCinematicExecutionReadiness,
   type CinematicApprovalActionResult,
+  type CinematicApprovalEscalationReport,
   type CinematicExecutionReadinessReport,
   type CinematicGenerationJob,
   type CinematicOperatorApprovalStatus,
+  type CinematicProviderReadinessComparison,
   type CinematicProviderRoutingMode,
+  type CinematicRealProviderDryRunResult,
+  type CinematicRealProviderPayloadExport,
+  type CinematicSubmissionPackageResult,
 } from "./cinematicProductionMemory";
 
 export type CinematicOperatorQueueItem = {
@@ -41,6 +51,9 @@ export type CinematicOperatorReviewViews = {
   estimated_sequence_budget: string[];
   retry_impact_forecast: string[];
   asset_reuse_opportunities: string[];
+  provider_comparison: string[];
+  approval_escalation: string[];
+  dry_run_summary: string[];
 };
 
 export type CinematicOperatorApprovalConsole = {
@@ -111,6 +124,26 @@ export async function readCinematicOperatorApprovalConsole(input?: {
       routingMode: inferRoutingMode(jobs[0]),
     })
     : null;
+  const providerComparison = jobs.length > 0
+    ? await compareCinematicProviderReadiness({
+      root: input?.root,
+      jobIds: jobs.map((entry) => entry.job_id),
+    })
+    : [];
+  const escalation = jobs.length > 0
+    ? await evaluateCinematicApprovalEscalation({
+      root: input?.root,
+      jobIds: jobs.map((entry) => entry.job_id),
+    })
+    : null;
+  const dryRunPreview = jobs.length > 0
+    ? await previewCinematicRealProviderDryRun({
+      root: input?.root,
+      jobIds: jobs.map((entry) => entry.job_id),
+      approvalTokenId: input?.approvalTokenId,
+      persist: false,
+    })
+    : null;
 
   return {
     queue,
@@ -129,6 +162,21 @@ export async function readCinematicOperatorApprovalConsole(input?: {
       asset_reuse_opportunities: sequence
         ? sequence.shots.flatMap((entry) => entry.required_assets.map((assetId) => `${entry.shot_id}: reuse ${assetId} when possible`))
         : ["No asset reuse opportunities available."],
+      provider_comparison: providerComparison.length > 0
+        ? providerComparison.map((entry) => `${entry.provider}: cost=${entry.estimated_cost} | continuity=${entry.continuity_support} | risk=${entry.expected_risk} | valid=${entry.valid}`)
+        : ["No provider comparison available."],
+      approval_escalation: escalation
+        ? (escalation.reasons.length > 0
+          ? escalation.reasons.map((entry) => `${entry.code}: ${entry.detail}`)
+          : ["No additional approval escalation is currently required."])
+        : ["No escalation preview available."],
+      dry_run_summary: dryRunPreview
+        ? [
+          `Provider acceptance: ${dryRunPreview.preview.provider_acceptance ? "accepted" : "rejected"}`,
+          `Estimated queue: ${dryRunPreview.preview.estimated_total_queue_minutes} minute(s)`,
+          `Estimated cost impact: ${dryRunPreview.preview.estimated_total_cost_impact}`,
+        ]
+        : ["No dry-run preview available."],
     },
     readiness,
     audit_trail_preview: record.approval_audit_trail.slice(-10).map((entry) => `${entry.append_only_index}. ${entry.action} | ${entry.detail}`),
@@ -195,6 +243,49 @@ export async function reviewCinematicOperatorPayloads(input: {
   jobIds: string[];
 }) {
   return Promise.all(input.jobIds.map((jobId) => compileCinematicProviderPayload({ root: input.root, jobId })));
+}
+
+export async function exportCinematicOperatorPayloads(input: {
+  root?: string;
+  jobIds: string[];
+  provider?: CinematicGenerationJob["provider"];
+}): Promise<CinematicRealProviderPayloadExport[]> {
+  return exportCinematicRealProviderPayloads(input);
+}
+
+export async function previewCinematicOperatorRealProviderDryRun(input: {
+  root?: string;
+  jobIds: string[];
+  provider?: CinematicGenerationJob["provider"];
+  approvalTokenId?: string;
+  operatorId?: string;
+}): Promise<CinematicRealProviderDryRunResult> {
+  return previewCinematicRealProviderDryRun(input);
+}
+
+export async function compareCinematicOperatorProviders(input: {
+  root?: string;
+  jobIds: string[];
+}): Promise<CinematicProviderReadinessComparison[]> {
+  return compareCinematicProviderReadiness(input);
+}
+
+export async function reviewCinematicOperatorEscalation(input: {
+  root?: string;
+  jobIds: string[];
+  provider?: CinematicGenerationJob["provider"];
+}): Promise<CinematicApprovalEscalationReport> {
+  return evaluateCinematicApprovalEscalation(input);
+}
+
+export async function buildCinematicOperatorSubmissionPackage(input: {
+  root?: string;
+  jobIds: string[];
+  provider?: CinematicGenerationJob["provider"];
+  approvalTokenId?: string;
+  operatorId?: string;
+}): Promise<CinematicSubmissionPackageResult> {
+  return buildCinematicSubmissionPackage(input);
 }
 
 export async function recordCinematicOperatorBudgetDecision(input: {

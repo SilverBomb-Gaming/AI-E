@@ -1436,6 +1436,230 @@ function buildDeferredExecutionPlansNote(input: {
   };
 }
 
+function buildRealProviderDryRunNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const queuedJobs = production.generation_jobs.filter((entry) => entry.manual_approval_status !== "archived");
+  return {
+    title: "Real Provider Dry Run",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_real_provider_dry_run",
+      tags: ["second-brain", "provider-dry-run", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Dry-Run Readiness",
+      asBulletList(queuedJobs.length > 0
+        ? queuedJobs.slice(0, 8).map((entry) => `${entry.job_id}: provider=${entry.provider} | approval=${entry.manual_approval_status} | retry=${entry.retry_count}`)
+        : ["No real-provider dry-run previews generated yet."]),
+      "",
+      "## Guardrails",
+      asBulletList([
+        `Sandbox-only mode remains ${production.generation_budget_policy.sandbox_only_mode ? "enabled" : "disabled"}.`,
+        "Dry-run previews simulate provider acceptance or rejection without calling any provider.",
+        "Operator review remains mandatory before any manual submission package is used.",
+      ]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Operator Approval Queue"),
+        toLink("Execution Readiness Checklist"),
+        toLink("Submission Package Examples"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildSubmissionPackageExamplesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const queuedJobs = production.generation_jobs.filter((entry) => entry.manual_approval_status !== "archived");
+  return {
+    title: "Submission Package Examples",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_submission_package_examples",
+      tags: ["second-brain", "submission-package", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Package Structure",
+      asBulletList([
+        "Sequence package: sequence id, title, provider target, and bounded cost summary.",
+        "Shot package: per-shot prompt summary, continuity references, retry metadata, and asset references.",
+        "Provider package: provider-ready JSON plus execution notes for manual submission.",
+      ]),
+      "",
+      "## Current Examples",
+      asBulletList(queuedJobs.length > 0
+        ? queuedJobs.slice(0, 6).map((entry) => `${entry.job_id}: sequence=${entry.sequence_id} | shot=${entry.shot_id} | provider=${entry.provider}`)
+        : ["No submission packages prepared yet."]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Execution Manifest Examples"),
+        toLink("Real Provider Dry Run"),
+        toLink("Approval Audit Trail"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildApprovalEscalationRulesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const costThreshold = Math.floor(production.generation_budget_policy.max_estimated_sequence_cost * 0.5);
+  const retryThreshold = Math.max(1, production.generation_budget_policy.max_retries_per_job - 1);
+  const largeBatchThreshold = Math.max(4, Math.ceil(production.generation_budget_policy.max_shots_per_batch * 0.75));
+  return {
+    title: "Approval Escalation Rules",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_approval_escalation_rules",
+      tags: ["second-brain", "approval-escalation", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Escalation Thresholds",
+      asBulletList([
+        `Escalate when estimated cost exceeds ${costThreshold}.`,
+        `Escalate when retry count reaches ${retryThreshold}.`,
+        `Escalate when selected batch size reaches ${largeBatchThreshold} jobs.`,
+      ]),
+      "",
+      "## Mandatory Escalations",
+      asBulletList([
+        "Premium-provider selection requires an extra approval pass.",
+        "Continuity-risk increases require explicit operator acknowledgement.",
+        "Large sequence batches require a second review before manual submission.",
+      ]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Generation Budget Rules"),
+        toLink("Real Provider Dry Run"),
+        toLink("Execution Readiness Checklist"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildProviderConstraintMatrixNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Provider Constraint Matrix",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_provider_constraint_matrix",
+      tags: ["second-brain", "provider-constraints", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Constraint Matrix",
+      asBulletList(production.provider_capability_registry.map((entry) => `${entry.provider}: duration<=${entry.max_duration_seconds}s | prompt<=${entry.max_prompt_characters} | resolutions=${entry.supported_resolutions.join(",")} | fps=${entry.supported_frame_rates.join(",")} | continuity=${entry.continuity_support} | refs<=${entry.max_image_references}`)),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Provider Capability Registry"),
+        toLink("Real Provider Dry Run"),
+        toLink("Provider Comparison Notes"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildExecutionManifestExamplesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const approvedJobs = production.generation_jobs.filter((entry) => entry.manual_approval_status === "approved");
+  return {
+    title: "Execution Manifest Examples",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_execution_manifest_examples",
+      tags: ["second-brain", "execution-manifest", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Manifest Fields",
+      asBulletList([
+        "Manual execution only flag remains true.",
+        "Estimated queue time, cost impact, and continuity preservation are preview-only outputs.",
+        "Blocked reasons stay attached to the manifest until the operator resolves them.",
+      ]),
+      "",
+      "## Current Examples",
+      asBulletList(approvedJobs.length > 0
+        ? approvedJobs.slice(0, 6).map((entry) => `${entry.job_id}: token=${entry.approval_token_id ?? "none"} | provider=${entry.provider} | deferred_until=${entry.deferred_until ?? "n/a"}`)
+        : ["No execution manifests prepared yet."]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Submission Package Examples"),
+        toLink("Execution Readiness Checklist"),
+        toLink("Approval Audit Trail"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildProviderComparisonNotesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Provider Comparison Notes",
+    directory: "Resources",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_provider_comparison_notes",
+      tags: ["second-brain", "provider-comparison", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Comparison Snapshot",
+      asBulletList(production.provider_capability_registry.map((entry) => `${entry.provider}: draft=${entry.estimated_cost_profile.draft} | premium=${entry.estimated_cost_profile.premium} | continuity=${entry.continuity_support} | queue=${entry.queue_behavior}`)),
+      "",
+      "## Comparison Lens",
+      asBulletList([
+        "Compare providers by cost, duration support, continuity support, retry tolerance, queue behavior, and risk.",
+        "Provider selection remains advisory until the operator manually prepares a submission package.",
+      ]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Provider Constraint Matrix"),
+        toLink("Cost Forecast Examples"),
+        toLink("Real Provider Dry Run"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildCinematicExecutionLifecycleNote(input: {
   productionMemory: CinematicProductionMemoryRecord;
   latestSessionId: string;
@@ -1885,18 +2109,24 @@ export async function exportSecondBrainToObsidian(input?: {
     buildCostAwareIterationNotes({ productionMemory, latestSessionId }),
     buildGenerationJobQueueNote({ productionMemory, latestSessionId }),
     buildOperatorApprovalQueueNote({ productionMemory, latestSessionId }),
+    buildRealProviderDryRunNote({ productionMemory, latestSessionId }),
+    buildSubmissionPackageExamplesNote({ productionMemory, latestSessionId }),
     buildProviderRoutingRulesNote({ productionMemory, latestSessionId }),
     buildProviderCapabilityRegistryNote({ productionMemory, latestSessionId }),
+    buildProviderConstraintMatrixNote({ productionMemory, latestSessionId }),
     buildPromptNormalizationRulesNote({ productionMemory, latestSessionId }),
     buildGenerationBudgetRulesNote({ productionMemory, latestSessionId }),
     buildBudgetGovernanceDecisionsNote({ productionMemory, latestSessionId }),
+    buildApprovalEscalationRulesNote({ productionMemory, latestSessionId }),
     buildManualApprovalWorkflowNote({ productionMemory, latestSessionId }),
     buildExecutionReadinessChecklistNote({ productionMemory, latestSessionId }),
+    buildExecutionManifestExamplesNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),
     buildCostAwareGenerationStrategyNote({ productionMemory, latestSessionId }),
     buildCostForecastExamplesNote({ productionMemory, latestSessionId }),
+    buildProviderComparisonNotesNote({ productionMemory, latestSessionId }),
     buildProviderPayloadExamplesNote({ productionMemory, latestSessionId }),
     buildDeferredExecutionPlansNote({ productionMemory, latestSessionId }),
     buildApprovalAuditTrailNote({ productionMemory, latestSessionId }),

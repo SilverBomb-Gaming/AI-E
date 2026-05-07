@@ -180,6 +180,10 @@ export type CinematicGenerationPromptPayload = {
   camera_intent: string;
   asset_reuse_candidates: string[];
   execution_notes: string[];
+  normalized_prompt?: string;
+  duration_target_seconds?: number;
+  resolution?: CinematicVideoResolution;
+  frame_rate?: number;
 };
 
 export type CinematicGenerationContinuityContext = {
@@ -338,7 +342,9 @@ export type CinematicOperatorAction =
   | "sandbox-simulate-only"
   | "defer-execution"
   | "budget-override"
-  | "continuity-review-note";
+  | "continuity-review-note"
+  | "preview-real-provider-dry-run"
+  | "export-submission-package";
 
 export type CinematicExecutionApprovalToken = {
   token_id: string;
@@ -524,6 +530,155 @@ export type CinematicProviderOutputComparison = {
   failed_jobs: number;
   total_outputs: number;
   total_estimated_cost: number;
+};
+
+export type CinematicApprovalEscalationReasonCode =
+  | "cost-threshold"
+  | "retry-threshold"
+  | "continuity-risk"
+  | "premium-provider"
+  | "large-batch";
+
+export type CinematicApprovalEscalationReason = {
+  code: CinematicApprovalEscalationReasonCode;
+  severity: "warning" | "critical";
+  detail: string;
+};
+
+export type CinematicApprovalEscalationReport = {
+  provider: CinematicGenerationProvider;
+  sequence_id: string;
+  job_ids: string[];
+  requires_additional_approval: boolean;
+  cost_threshold: number;
+  retry_threshold: number;
+  large_batch_threshold: number;
+  reasons: CinematicApprovalEscalationReason[];
+};
+
+export type CinematicRealProviderPayloadExport = {
+  job_id: string;
+  provider: CinematicGenerationProvider;
+  sequence_id: string;
+  shot_id: string;
+  normalized_prompt: string;
+  provider_ready_json: string;
+  continuity_references: string[];
+  shot_references: string[];
+  asset_references: string[];
+  retry_metadata: string[];
+  estimated_cost: number;
+  execution_notes: string[];
+};
+
+export type CinematicProviderDryRunConstraintResult = {
+  job_id: string;
+  provider: CinematicGenerationProvider;
+  provider_response: "accepted-dry-run" | "rejected-dry-run";
+  accepted: boolean;
+  estimated_queue_minutes: number;
+  estimated_cost_impact: number;
+  retry_routing: string;
+  continuity_preservation: string;
+  issues: CinematicProviderPayloadValidationIssue[];
+};
+
+export type CinematicRealProviderDryRunPreview = {
+  provider: CinematicGenerationProvider;
+  sequence_id: string;
+  job_ids: string[];
+  payload_exports: CinematicRealProviderPayloadExport[];
+  constraint_results: CinematicProviderDryRunConstraintResult[];
+  provider_acceptance: boolean;
+  estimated_total_queue_minutes: number;
+  estimated_total_cost_impact: number;
+  retry_routing_summary: string[];
+  continuity_preservation_summary: string[];
+  additional_approval_required: boolean;
+  escalation: CinematicApprovalEscalationReport;
+};
+
+export type CinematicRealProviderDryRunResult = {
+  preview: CinematicRealProviderDryRunPreview;
+  audit_entries: CinematicApprovalAuditEntry[];
+  persisted: boolean;
+};
+
+export type CinematicSubmissionSequencePackage = {
+  sequence_id: string;
+  title: string;
+  beat_id: string;
+  provider: CinematicGenerationProvider;
+  shot_ids: string[];
+  job_ids: string[];
+  total_estimated_cost: number;
+};
+
+export type CinematicSubmissionShotPackage = {
+  shot_id: string;
+  job_id: string;
+  prompt_summary: string;
+  continuity_dependencies: string[];
+  asset_references: string[];
+  retry_count: number;
+  estimated_cost: number;
+};
+
+export type CinematicSubmissionProviderPackage = {
+  provider: CinematicGenerationProvider;
+  queue_behavior: string;
+  retry_recommendation: string;
+  payload_exports: CinematicRealProviderPayloadExport[];
+};
+
+export type CinematicExecutionManifest = {
+  manual_execution_only: true;
+  ready_for_manual_submission: boolean;
+  estimated_total_queue_minutes: number;
+  estimated_total_cost_impact: number;
+  blocked_reasons: string[];
+  continuity_preservation_summary: string[];
+};
+
+export type CinematicOperatorApprovalManifest = {
+  manual_approval_required: boolean;
+  approval_token_id: string | null;
+  approval_token_valid: boolean;
+  additional_approval_required: boolean;
+  escalation_reasons: string[];
+  blocked_reasons: string[];
+};
+
+export type CinematicSubmissionPackage = {
+  provider: CinematicGenerationProvider;
+  sequence_id: string;
+  job_ids: string[];
+  sequence_package: CinematicSubmissionSequencePackage;
+  shot_package: CinematicSubmissionShotPackage[];
+  provider_package: CinematicSubmissionProviderPackage;
+  execution_manifest: CinematicExecutionManifest;
+  operator_approval_manifest: CinematicOperatorApprovalManifest;
+  audit_references: string[];
+  package_json: string;
+};
+
+export type CinematicSubmissionPackageResult = {
+  submission_package: CinematicSubmissionPackage;
+  audit_entries: CinematicApprovalAuditEntry[];
+  persisted: boolean;
+};
+
+export type CinematicProviderReadinessComparison = {
+  provider: CinematicGenerationProvider;
+  estimated_cost: number;
+  duration_support: string;
+  continuity_support: string;
+  retry_tolerance: string;
+  quality_profile: string;
+  queue_behavior: string;
+  expected_risk: "low" | "medium" | "high";
+  valid: boolean;
+  issues: string[];
 };
 
 export type CinematicSandboxSimulationResult = {
@@ -1871,6 +2026,15 @@ function buildExecutionPromptPayload(input: {
       `Provider rationale: ${input.route.rationale}`,
       `Beat goal: ${input.beat.emotional_goal}`,
     ],
+    normalized_prompt: [
+      `Project: ${input.record.project_key}`,
+      `Sequence: ${input.sequence.title}`,
+      `Shot: ${input.shot.shot_id}`,
+      `Intent: ${input.shot.emotional_intent}`,
+    ].join(" | "),
+    duration_target_seconds: DEFAULT_TARGET_DURATION_SECONDS,
+    resolution: DEFAULT_TARGET_RESOLUTION,
+    frame_rate: DEFAULT_TARGET_FRAME_RATE,
   };
 }
 
@@ -2161,6 +2325,81 @@ export async function compileCinematicProviderPayload(input: {
   };
 }
 
+function describeContinuityPreservation(input: {
+  capability: CinematicProviderCapability;
+  payload: CinematicProviderPayload;
+}): string {
+  if (input.capability.continuity_support === "full") {
+    return `Full continuity preserved across ${input.payload.shot_references.length} shot reference(s).`;
+  }
+  if (input.capability.continuity_support === "partial") {
+    return `Continuity must be condensed to the highest-signal ${Math.min(3, input.payload.continuity_context.length)} reference(s).`;
+  }
+  return "Continuity references need manual reduction before any real submission handoff.";
+}
+
+function estimateProviderQueueMinutes(input: {
+  provider: CinematicGenerationProvider;
+  issueCount: number;
+  escalationCount: number;
+}): number {
+  const baseMinutes = (() => {
+    switch (input.provider) {
+      case "Seedance":
+        return 8;
+      case "Runway":
+        return 18;
+      case "Veo":
+        return 28;
+      case "Sora":
+        return 45;
+      case "LocalFutureProvider":
+        return 5;
+    }
+  })();
+  return baseMinutes + (input.issueCount * 6) + (input.escalationCount * 4);
+}
+
+function extendProviderConstraintIssues(input: {
+  capability: CinematicProviderCapability;
+  payload: CinematicProviderPayload;
+  issues: CinematicProviderPayloadValidationIssue[];
+}): CinematicProviderPayloadValidationIssue[] {
+  const nextIssues = [...input.issues];
+  const pushIssue = (issue: CinematicProviderPayloadValidationIssue): void => {
+    if (!nextIssues.some((entry) => entry.category === issue.category && entry.detail === issue.detail)) {
+      nextIssues.push(issue);
+    }
+  };
+
+  if (input.capability.provider === "Seedance" && input.payload.resolution === "1080p" && input.payload.frame_rate === 30 && input.payload.duration_seconds > 6) {
+    pushIssue({
+      category: "provider-specific-restriction",
+      detail: "Seedance dry-run rejects 1080p at 30fps when duration exceeds 6 seconds.",
+    });
+  }
+  if (input.capability.provider === "Runway" && input.payload.resolution === "1080p" && input.payload.frame_rate === 30) {
+    pushIssue({
+      category: "provider-specific-restriction",
+      detail: "Runway dry-run rejects the 1080p/30fps combination for this bridge profile.",
+    });
+  }
+  if (input.capability.provider === "Veo" && input.payload.frame_rate === 30 && input.payload.duration_seconds > 10) {
+    pushIssue({
+      category: "provider-specific-restriction",
+      detail: "Veo dry-run rejects 30fps requests when duration exceeds 10 seconds.",
+    });
+  }
+  if (input.capability.continuity_support !== "full" && input.payload.shot_references.length > 4) {
+    pushIssue({
+      category: "continuity-incompatibility",
+      detail: `${input.capability.provider} cannot accept the current number of continuity shot references without manual reduction.`,
+    });
+  }
+
+  return nextIssues;
+}
+
 export async function compileCinematicProviderPayloadVariants(input: {
   root?: string;
   jobId: string;
@@ -2239,10 +2478,433 @@ export async function validateCinematicProviderPayload(input: {
     });
   }
 
+  const finalIssues = extendProviderConstraintIssues({
+    capability,
+    payload: input.payload,
+    issues,
+  });
+
   return {
     provider: capability.provider,
-    valid: issues.length === 0,
-    issues,
+    valid: finalIssues.length === 0,
+    issues: finalIssues,
+  };
+}
+
+export async function exportCinematicRealProviderPayloads(input: {
+  root?: string;
+  jobIds: string[];
+  provider?: CinematicGenerationProvider;
+  targetDurationSeconds?: number;
+  targetResolution?: CinematicVideoResolution;
+  targetFrameRate?: number;
+  imageReferenceAssetIds?: string[];
+}): Promise<CinematicRealProviderPayloadExport[]> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const jobs = resolveKnownGenerationJobs(record, input.jobIds);
+  return Promise.all(jobs.map(async (job) => {
+    const payload = await compileCinematicProviderPayload({
+      root: input.root,
+      jobId: job.job_id,
+      provider: input.provider ?? job.provider,
+      targetDurationSeconds: input.targetDurationSeconds,
+      targetResolution: input.targetResolution,
+      targetFrameRate: input.targetFrameRate,
+      imageReferenceAssetIds: input.imageReferenceAssetIds,
+    });
+    return {
+      job_id: job.job_id,
+      provider: payload.provider,
+      sequence_id: job.sequence_id,
+      shot_id: job.shot_id,
+      normalized_prompt: payload.normalized_prompt,
+      provider_ready_json: JSON.stringify(payload.provider_payload, null, 2),
+      continuity_references: payload.continuity_context,
+      shot_references: payload.shot_references,
+      asset_references: payload.asset_references,
+      retry_metadata: payload.retry_metadata,
+      estimated_cost: job.estimated_cost,
+      execution_notes: [...job.prompt_payload.execution_notes],
+    } satisfies CinematicRealProviderPayloadExport;
+  }));
+}
+
+export async function evaluateCinematicApprovalEscalation(input: {
+  root?: string;
+  jobIds: string[];
+  provider?: CinematicGenerationProvider;
+  costThreshold?: number;
+  retryThreshold?: number;
+  largeBatchThreshold?: number;
+}): Promise<CinematicApprovalEscalationReport> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const jobs = resolveKnownGenerationJobs(record, input.jobIds);
+  const { provider: sharedProvider, sequenceId } = resolveSharedJobContext(jobs);
+  const provider = input.provider ?? sharedProvider;
+  const capability = resolveProviderCapability(record, provider);
+  const costThreshold = input.costThreshold ?? Math.floor(record.generation_budget_policy.max_estimated_sequence_cost * 0.5);
+  const retryThreshold = input.retryThreshold ?? Math.max(1, record.generation_budget_policy.max_retries_per_job - 1);
+  const largeBatchThreshold = input.largeBatchThreshold ?? Math.max(4, Math.ceil(record.generation_budget_policy.max_shots_per_batch * 0.75));
+  const totalEstimatedCost = jobs.reduce((sum, entry) => sum + entry.estimated_cost, 0);
+  const continuityBurden = jobs.reduce((maxCount, entry) => Math.max(maxCount, entry.continuity_context.dependency_shot_ids.length + entry.continuity_context.preserved_output_refs.length), 0);
+  const reasons: CinematicApprovalEscalationReason[] = [];
+
+  if (totalEstimatedCost > costThreshold) {
+    reasons.push({
+      code: "cost-threshold",
+      severity: "critical",
+      detail: `Estimated cost ${totalEstimatedCost} exceeds escalation threshold ${costThreshold}.`,
+    });
+  }
+  if (jobs.some((entry) => entry.retry_count >= retryThreshold)) {
+    reasons.push({
+      code: "retry-threshold",
+      severity: "warning",
+      detail: `Retry count reached escalation threshold ${retryThreshold}.`,
+    });
+  }
+  if (capability.continuity_support !== "full" && continuityBurden > 2) {
+    reasons.push({
+      code: "continuity-risk",
+      severity: "critical",
+      detail: `${provider} has ${capability.continuity_support} continuity support while current dependency burden is ${continuityBurden}.`,
+    });
+  }
+  if (capability.estimated_cost_profile.premium >= 12 || provider === "Sora" || provider === "Veo") {
+    reasons.push({
+      code: "premium-provider",
+      severity: "warning",
+      detail: `${provider} is classified as a premium-provider handoff and requires extra approval review.`,
+    });
+  }
+  if (jobs.length >= largeBatchThreshold) {
+    reasons.push({
+      code: "large-batch",
+      severity: "warning",
+      detail: `Requested batch size ${jobs.length} exceeds escalation threshold ${largeBatchThreshold}.`,
+    });
+  }
+
+  return {
+    provider,
+    sequence_id: sequenceId,
+    job_ids: input.jobIds,
+    requires_additional_approval: reasons.length > 0,
+    cost_threshold: costThreshold,
+    retry_threshold: retryThreshold,
+    large_batch_threshold: largeBatchThreshold,
+    reasons,
+  };
+}
+
+function resolveFallbackRetryRoute(input: {
+  comparisons: CinematicProviderReadinessComparison[];
+  currentProvider: CinematicGenerationProvider;
+}): string {
+  const fallback = input.comparisons.find((entry) => entry.provider !== input.currentProvider && entry.valid);
+  if (fallback) {
+    return `Manual retry route: switch to ${fallback.provider} after operator review.`;
+  }
+  return "Manual retry route: simplify prompt or references before re-exporting.";
+}
+
+function describeQualityProfile(capability: CinematicProviderCapability): string {
+  if (capability.continuity_support === "full" && capability.estimated_cost_profile.premium >= 12) {
+    return "premium cinematic continuity";
+  }
+  if (capability.continuity_support === "partial") {
+    return "balanced comparison profile";
+  }
+  return "offline bridge rehearsal";
+}
+
+export async function compareCinematicProviderReadiness(input: {
+  root?: string;
+  jobIds: string[];
+  targetDurationSeconds?: number;
+  targetResolution?: CinematicVideoResolution;
+  targetFrameRate?: number;
+  imageReferenceAssetIds?: string[];
+}): Promise<CinematicProviderReadinessComparison[]> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const jobs = resolveKnownGenerationJobs(record, input.jobIds);
+
+  const comparisons = await Promise.all(record.provider_capability_registry.map(async (capability) => {
+    const payloads = await Promise.all(jobs.map((job) => compileCinematicProviderPayload({
+      root: input.root,
+      jobId: job.job_id,
+      provider: capability.provider,
+      targetDurationSeconds: input.targetDurationSeconds,
+      targetResolution: input.targetResolution,
+      targetFrameRate: input.targetFrameRate,
+      imageReferenceAssetIds: input.imageReferenceAssetIds,
+    })));
+    const validationResults = await Promise.all(payloads.map((payload) => validateCinematicProviderPayload({
+      root: input.root,
+      payload,
+    })));
+    const issues = validationResults.flatMap((entry) => entry.issues.map((issue) => issue.detail));
+    const valid = validationResults.every((entry) => entry.valid);
+    return {
+      provider: capability.provider,
+      estimated_cost: capability.estimated_cost_profile.standard * jobs.length,
+      duration_support: `up to ${capability.max_duration_seconds}s`,
+      continuity_support: capability.continuity_support,
+      retry_tolerance: `${record.generation_budget_policy.max_retries_per_job} bounded retries | ${capability.retry_recommendation}`,
+      quality_profile: describeQualityProfile(capability),
+      queue_behavior: capability.queue_behavior,
+      expected_risk: issues.length > 0 ? "high" : capability.continuity_support === "full" ? "low" : "medium",
+      valid,
+      issues,
+    } satisfies CinematicProviderReadinessComparison;
+  }));
+
+  return comparisons.sort((left, right) => left.provider.localeCompare(right.provider));
+}
+
+export async function previewCinematicRealProviderDryRun(input: {
+  root?: string;
+  jobIds: string[];
+  provider?: CinematicGenerationProvider;
+  approvalTokenId?: string;
+  operatorId?: string;
+  targetDurationSeconds?: number;
+  targetResolution?: CinematicVideoResolution;
+  targetFrameRate?: number;
+  imageReferenceAssetIds?: string[];
+  persist?: boolean;
+}): Promise<CinematicRealProviderDryRunResult> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const jobs = resolveKnownGenerationJobs(record, input.jobIds);
+  const { provider: sharedProvider, sequenceId } = resolveSharedJobContext(jobs);
+  const provider = input.provider ?? sharedProvider;
+  const capability = resolveProviderCapability(record, provider);
+  const payloadExports = await exportCinematicRealProviderPayloads({
+    root: input.root,
+    jobIds: input.jobIds,
+    provider,
+    targetDurationSeconds: input.targetDurationSeconds,
+    targetResolution: input.targetResolution,
+    targetFrameRate: input.targetFrameRate,
+    imageReferenceAssetIds: input.imageReferenceAssetIds,
+  });
+  const comparisons = await compareCinematicProviderReadiness({
+    root: input.root,
+    jobIds: input.jobIds,
+    targetDurationSeconds: input.targetDurationSeconds,
+    targetResolution: input.targetResolution,
+    targetFrameRate: input.targetFrameRate,
+    imageReferenceAssetIds: input.imageReferenceAssetIds,
+  });
+  const escalation = await evaluateCinematicApprovalEscalation({
+    root: input.root,
+    jobIds: input.jobIds,
+    provider,
+  });
+
+  const constraintResults = await Promise.all(payloadExports.map(async (payloadExport) => {
+    const payload = await compileCinematicProviderPayload({
+      root: input.root,
+      jobId: payloadExport.job_id,
+      provider,
+      targetDurationSeconds: input.targetDurationSeconds,
+      targetResolution: input.targetResolution,
+      targetFrameRate: input.targetFrameRate,
+      imageReferenceAssetIds: input.imageReferenceAssetIds,
+    });
+    const validation = await validateCinematicProviderPayload({ root: input.root, payload });
+    const estimatedQueueMinutes = estimateProviderQueueMinutes({
+      provider,
+      issueCount: validation.issues.length,
+      escalationCount: escalation.reasons.length,
+    });
+    const relatedJob = jobs.find((entry) => entry.job_id === payloadExport.job_id)!;
+    return {
+      job_id: payloadExport.job_id,
+      provider,
+      provider_response: validation.valid ? "accepted-dry-run" : "rejected-dry-run",
+      accepted: validation.valid,
+      estimated_queue_minutes: estimatedQueueMinutes,
+      estimated_cost_impact: validation.valid ? relatedJob.estimated_cost : Math.max(1, Math.floor(relatedJob.estimated_cost / 2)),
+      retry_routing: validation.valid
+        ? `If validation drifts, retry once via ${provider} with reduced style guidance.`
+        : resolveFallbackRetryRoute({ comparisons, currentProvider: provider }),
+      continuity_preservation: describeContinuityPreservation({ capability, payload }),
+      issues: validation.issues,
+    } satisfies CinematicProviderDryRunConstraintResult;
+  }));
+
+  const preview: CinematicRealProviderDryRunPreview = {
+    provider,
+    sequence_id: sequenceId,
+    job_ids: input.jobIds,
+    payload_exports: payloadExports,
+    constraint_results: constraintResults,
+    provider_acceptance: constraintResults.every((entry) => entry.accepted),
+    estimated_total_queue_minutes: Math.max(0, ...constraintResults.map((entry) => entry.estimated_queue_minutes)),
+    estimated_total_cost_impact: constraintResults.reduce((sum, entry) => sum + entry.estimated_cost_impact, 0),
+    retry_routing_summary: constraintResults.map((entry) => `${entry.job_id}: ${entry.retry_routing}`),
+    continuity_preservation_summary: constraintResults.map((entry) => `${entry.job_id}: ${entry.continuity_preservation}`),
+    additional_approval_required: escalation.requires_additional_approval,
+    escalation,
+  };
+
+  const auditEntries = input.operatorId ? [buildApprovalAuditEntry({
+    record,
+    action: "preview-real-provider-dry-run",
+    operatorId: input.operatorId,
+    provider,
+    sequenceId,
+    jobIds: input.jobIds,
+    detail: `Prepared real-provider dry-run preview with ${constraintResults.filter((entry) => entry.accepted).length}/${constraintResults.length} accepted payload(s).`,
+    approvalTokenId: input.approvalTokenId ?? null,
+  })] : [];
+
+  if (input.persist === false || auditEntries.length === 0) {
+    return {
+      preview,
+      audit_entries: auditEntries,
+      persisted: false,
+    };
+  }
+
+  await writeCinematicProductionMemory({
+    root: input.root,
+    value: {
+      approval_audit_trail: [...record.approval_audit_trail, ...auditEntries],
+    },
+  });
+  return {
+    preview,
+    audit_entries: auditEntries,
+    persisted: true,
+  };
+}
+
+export async function buildCinematicSubmissionPackage(input: {
+  root?: string;
+  jobIds: string[];
+  provider?: CinematicGenerationProvider;
+  approvalTokenId?: string;
+  operatorId?: string;
+  targetDurationSeconds?: number;
+  targetResolution?: CinematicVideoResolution;
+  targetFrameRate?: number;
+  imageReferenceAssetIds?: string[];
+  persist?: boolean;
+}): Promise<CinematicSubmissionPackageResult> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const jobs = resolveKnownGenerationJobs(record, input.jobIds);
+  const { provider: sharedProvider, sequenceId } = resolveSharedJobContext(jobs);
+  const provider = input.provider ?? sharedProvider;
+  const sequence = record.scene_sequences.find((entry) => entry.sequence_id === sequenceId);
+  if (!sequence) {
+    throw new Error(`Unknown cinematic sequence id: ${sequenceId}`);
+  }
+  const capability = resolveProviderCapability(record, provider);
+  const dryRun = await previewCinematicRealProviderDryRun({
+    root: input.root,
+    jobIds: input.jobIds,
+    provider,
+    approvalTokenId: input.approvalTokenId,
+    targetDurationSeconds: input.targetDurationSeconds,
+    targetResolution: input.targetResolution,
+    targetFrameRate: input.targetFrameRate,
+    imageReferenceAssetIds: input.imageReferenceAssetIds,
+    persist: false,
+  });
+  const readiness = await validateCinematicExecutionReadiness({
+    root: input.root,
+    jobIds: input.jobIds,
+    approvalTokenId: input.approvalTokenId,
+  });
+  const approvalToken = resolveApprovalToken(record, input.approvalTokenId ?? jobs[0]?.approval_token_id ?? undefined);
+  const auditReferences = record.approval_audit_trail
+    .filter((entry) => entry.sequence_id === sequenceId && entry.provider === provider)
+    .slice(-10)
+    .map((entry) => `${entry.append_only_index}. ${entry.audit_id}`);
+
+  const submissionPackage: CinematicSubmissionPackage = {
+    provider,
+    sequence_id: sequenceId,
+    job_ids: input.jobIds,
+    sequence_package: {
+      sequence_id: sequence.sequence_id,
+      title: sequence.title,
+      beat_id: sequence.beat_id,
+      provider,
+      shot_ids: jobs.map((entry) => entry.shot_id),
+      job_ids: input.jobIds,
+      total_estimated_cost: jobs.reduce((sum, entry) => sum + entry.estimated_cost, 0),
+    },
+    shot_package: jobs.map((job) => ({
+      shot_id: job.shot_id,
+      job_id: job.job_id,
+      prompt_summary: job.prompt_payload.compiled_prompt.slice(0, 160),
+      continuity_dependencies: [...job.continuity_context.dependency_shot_ids],
+      asset_references: dryRun.preview.payload_exports.find((entry) => entry.job_id === job.job_id)?.asset_references ?? [],
+      retry_count: job.retry_count,
+      estimated_cost: job.estimated_cost,
+    })),
+    provider_package: {
+      provider,
+      queue_behavior: capability.queue_behavior,
+      retry_recommendation: capability.retry_recommendation,
+      payload_exports: dryRun.preview.payload_exports,
+    },
+    execution_manifest: {
+      manual_execution_only: true,
+      ready_for_manual_submission: dryRun.preview.provider_acceptance && readiness.approval_token_valid && !dryRun.preview.additional_approval_required,
+      estimated_total_queue_minutes: dryRun.preview.estimated_total_queue_minutes,
+      estimated_total_cost_impact: dryRun.preview.estimated_total_cost_impact,
+      blocked_reasons: [
+        ...readiness.blocked_reasons,
+        ...dryRun.preview.escalation.reasons.map((entry) => entry.detail),
+      ],
+      continuity_preservation_summary: dryRun.preview.continuity_preservation_summary,
+    },
+    operator_approval_manifest: {
+      manual_approval_required: record.generation_budget_policy.manual_approval_required,
+      approval_token_id: approvalToken?.token_id ?? null,
+      approval_token_valid: readiness.approval_token_valid,
+      additional_approval_required: dryRun.preview.additional_approval_required,
+      escalation_reasons: dryRun.preview.escalation.reasons.map((entry) => entry.detail),
+      blocked_reasons: readiness.blocked_reasons,
+    },
+    audit_references: auditReferences,
+    package_json: "",
+  };
+  submissionPackage.package_json = JSON.stringify(submissionPackage, null, 2);
+
+  const auditEntries = input.operatorId ? [buildApprovalAuditEntry({
+    record,
+    action: "export-submission-package",
+    operatorId: input.operatorId,
+    provider,
+    sequenceId,
+    jobIds: input.jobIds,
+    detail: `Prepared manual submission package for ${input.jobIds.length} job(s).`,
+    approvalTokenId: input.approvalTokenId ?? approvalToken?.token_id ?? null,
+  })] : [];
+
+  if (input.persist === false || auditEntries.length === 0) {
+    return {
+      submission_package: submissionPackage,
+      audit_entries: auditEntries,
+      persisted: false,
+    };
+  }
+
+  await writeCinematicProductionMemory({
+    root: input.root,
+    value: {
+      approval_audit_trail: [...record.approval_audit_trail, ...auditEntries],
+    },
+  });
+  return {
+    submission_package: submissionPackage,
+    audit_entries: auditEntries,
+    persisted: true,
   };
 }
 
