@@ -2574,7 +2574,7 @@ function buildUpdatedReadinessProgressNote(input: {
 
 function latestControlledBootstrapSimulation(production: CinematicProductionMemoryRecord): CinematicProductionMemoryRecord["sandbox_simulations"][number] | null {
   return [...production.sandbox_simulations]
-    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor")
+    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor" || entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor")
     .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
 }
 
@@ -3057,6 +3057,244 @@ function buildFutureUnlockConditionsNote(input: {
         toLink("Activation Authority Registry"),
         toLink("Pre-Inference Gate Validation"),
         toLink("Inference Entry Sequencing"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildExecutionTemperatureStatesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const temperature = latestBootstrap?.execution_temperature_state ?? production.execution_temperature_state_history[0] ?? null;
+  return {
+    title: "Execution Temperature States",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_execution_temperature_states",
+      tags: ["second-brain", "execution-temperature", "warmup", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Temperature Summary",
+      temperature
+        ? asBulletList([
+          `Current state: ${temperature.current_state}`,
+          `Transition count: ${temperature.transitions.length}`,
+        ])
+        : "- No execution temperature states recorded yet.",
+      "",
+      "## Transitions",
+      temperature?.transitions?.length
+        ? asBulletList(temperature.transitions.map((entry) => `${entry.state}: authority=${entry.authority_trigger} | reason=${entry.transition_reason} | next=${entry.next_unlock_condition}`))
+        : "- No execution temperature transitions recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Dry Inference Warmup"),
+        toLink("Frame-Stage Readiness"),
+        toLink("Future Bounded Execution Rules"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildDryInferenceWarmupNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const warmup = latestBootstrap?.dry_inference_warmup ?? production.dry_inference_warmup_history[0] ?? null;
+  return {
+    title: "Dry Inference Warmup",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_dry_inference_warmup",
+      tags: ["second-brain", "dry-warmup", "inference", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Warmup Summary",
+      warmup
+        ? asBulletList([
+          `Next unlock condition: ${warmup.next_unlock_condition}`,
+          `VRAM assumptions: ${warmup.vram_assumptions.length}`,
+        ])
+        : "- No dry inference warmup recorded yet.",
+      "",
+      "## Warmup Stages",
+      warmup?.stages?.length
+        ? asBulletList(warmup.stages.map((entry) => `${entry.stage}: ready=${entry.ready ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No dry warmup stages recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Execution Temperature States"),
+        toLink("Single-Frame Execution Precursor"),
+        toLink("Frame-Stage Readiness"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildSingleFrameExecutionPrecursorNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const precursor = latestBootstrap?.single_frame_execution_precursor ?? production.single_frame_execution_precursor_history[0] ?? null;
+  return {
+    title: "Single-Frame Execution Precursor",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_single_frame_execution_precursor",
+      tags: ["second-brain", "single-frame", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Precursor Summary",
+      precursor
+        ? asBulletList([
+          `Entry count: ${precursor.entries.length}`,
+          `Recorded at: ${precursor.recorded_at}`,
+        ])
+        : "- No single-frame execution precursor recorded yet.",
+      "",
+      "## Scaffolded Entries",
+      precursor?.entries?.length
+        ? asBulletList(precursor.entries.map((entry) => `${entry.precursor_id}: scaffolded=yes | unlocked=no | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No single-frame precursor entries recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Dry Inference Warmup"),
+        toLink("Frame-Stage Readiness"),
+        toLink("Future Bounded Execution Rules"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFrameStageReadinessNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const readiness = latestBootstrap?.frame_stage_readiness ?? production.frame_stage_readiness_history[0] ?? null;
+  return {
+    title: "Frame-Stage Readiness",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_frame_stage_readiness",
+      tags: ["second-brain", "frame-stage", "readiness", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Readiness Summary",
+      readiness
+        ? asBulletList([
+          `Valid: ${readiness.valid ? "yes" : "no"}`,
+          `Next unlock condition: ${readiness.next_unlock_condition}`,
+        ])
+        : "- No frame-stage readiness recorded yet.",
+      "",
+      "## Readiness Checks",
+      readiness?.checks?.length
+        ? asBulletList(readiness.checks.map((entry) => `${entry.check}: passed=${entry.passed ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No frame-stage readiness checks recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Execution Temperature States"),
+        toLink("Dry Inference Warmup"),
+        toLink("Warmup Escalation Modeling"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildWarmupEscalationModelingNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const escalation = latestBootstrap?.warmup_escalation_modeling ?? production.warmup_escalation_modeling_history[0] ?? null;
+  return {
+    title: "Warmup Escalation Modeling",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_warmup_escalation_modeling",
+      tags: ["second-brain", "warmup-escalation", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Escalation Scenarios",
+      escalation?.scenarios?.length
+        ? asBulletList(escalation.scenarios.map((entry) => `${entry.escalation}: triggered=${entry.triggered ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No warmup escalation modeling recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Dry Inference Warmup"),
+        toLink("Frame-Stage Readiness"),
+        toLink("Future Bounded Execution Rules"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFutureBoundedExecutionRulesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const rules = latestBootstrap?.future_bounded_execution_rules ?? production.future_bounded_execution_rules_history[0] ?? null;
+  return {
+    title: "Future Bounded Execution Rules",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_future_bounded_execution_rules",
+      tags: ["second-brain", "bounded-execution", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Rule Summary",
+      rules
+        ? asBulletList([
+          `Rule count: ${rules.rules.length}`,
+          `Recorded at: ${rules.recorded_at}`,
+        ])
+        : "- No future bounded execution rules recorded yet.",
+      "",
+      "## Rules",
+      rules?.rules?.length
+        ? asBulletList(rules.rules.map((entry) => `${entry.rule_id}: unlocked=no | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No bounded execution rules recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Execution Temperature States"),
+        toLink("Single-Frame Execution Precursor"),
+        toLink("Frame-Stage Readiness"),
       ]),
     ].join("\n"),
   };
@@ -3560,6 +3798,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildForbiddenExecutionStatesNote({ productionMemory, latestSessionId }),
     buildGovernanceEscalationModelingNote({ productionMemory, latestSessionId }),
     buildFutureUnlockConditionsNote({ productionMemory, latestSessionId }),
+    buildExecutionTemperatureStatesNote({ productionMemory, latestSessionId }),
+    buildDryInferenceWarmupNote({ productionMemory, latestSessionId }),
+    buildSingleFrameExecutionPrecursorNote({ productionMemory, latestSessionId }),
+    buildFrameStageReadinessNote({ productionMemory, latestSessionId }),
+    buildWarmupEscalationModelingNote({ productionMemory, latestSessionId }),
+    buildFutureBoundedExecutionRulesNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),

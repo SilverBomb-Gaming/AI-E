@@ -109,6 +109,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Architecture/Pre-Inference Gate Validation.md"));
     assert.ok(files.includes("Architecture/Forbidden Execution States.md"));
     assert.ok(files.includes("Architecture/Governance Escalation Modeling.md"));
+    assert.ok(files.includes("Architecture/Execution Temperature States.md"));
+    assert.ok(files.includes("Architecture/Frame-Stage Readiness.md"));
+    assert.ok(files.includes("Architecture/Warmup Escalation Modeling.md"));
     assert.ok(files.includes("Architecture/Manual Approval Workflow.md"));
     assert.ok(files.includes("Architecture/Continuity Review Notes.md"));
     assert.ok(files.includes("Architecture/Provider Constraint Matrix.md"));
@@ -134,6 +137,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Strategy/Future Inference Activation.md"));
     assert.ok(files.includes("Strategy/Inference Entry Sequencing.md"));
     assert.ok(files.includes("Strategy/Future Unlock Conditions.md"));
+    assert.ok(files.includes("Strategy/Dry Inference Warmup.md"));
+    assert.ok(files.includes("Strategy/Single-Frame Execution Precursor.md"));
+    assert.ok(files.includes("Strategy/Future Bounded Execution Rules.md"));
     assert.ok(files.includes("Strategy/Queue Orchestration Planning.md"));
     assert.ok(files.includes("Strategy/Generation Job Queue.md"));
     assert.ok(files.includes("Strategy/Operator Approval Queue.md"));
@@ -205,6 +211,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const preInferenceGateText = await readFile(path.join(vaultRoot, "Architecture", "Pre-Inference Gate Validation.md"), "utf8");
     const forbiddenStatesText = await readFile(path.join(vaultRoot, "Architecture", "Forbidden Execution States.md"), "utf8");
     const governanceEscalationText = await readFile(path.join(vaultRoot, "Architecture", "Governance Escalation Modeling.md"), "utf8");
+    const executionTemperatureText = await readFile(path.join(vaultRoot, "Architecture", "Execution Temperature States.md"), "utf8");
+    const frameStageReadinessText = await readFile(path.join(vaultRoot, "Architecture", "Frame-Stage Readiness.md"), "utf8");
+    const warmupEscalationText = await readFile(path.join(vaultRoot, "Architecture", "Warmup Escalation Modeling.md"), "utf8");
     const lifecycleText = await readFile(path.join(vaultRoot, "Architecture", "Cinematic Execution Lifecycle.md"), "utf8");
     const retryRulesText = await readFile(path.join(vaultRoot, "Architecture", "Retry Planning Rules.md"), "utf8");
     const generationStrategyText = await readFile(path.join(vaultRoot, "Resources", "Cost-Aware Generation Strategy.md"), "utf8");
@@ -218,6 +227,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const futureInferenceText = await readFile(path.join(vaultRoot, "Strategy", "Future Inference Activation.md"), "utf8");
     const inferenceSequencingText = await readFile(path.join(vaultRoot, "Strategy", "Inference Entry Sequencing.md"), "utf8");
     const futureUnlockConditionsText = await readFile(path.join(vaultRoot, "Strategy", "Future Unlock Conditions.md"), "utf8");
+    const dryInferenceWarmupText = await readFile(path.join(vaultRoot, "Strategy", "Dry Inference Warmup.md"), "utf8");
+    const singleFramePrecursorText = await readFile(path.join(vaultRoot, "Strategy", "Single-Frame Execution Precursor.md"), "utf8");
+    const futureBoundedExecutionRulesText = await readFile(path.join(vaultRoot, "Strategy", "Future Bounded Execution Rules.md"), "utf8");
     const framePipelineText = await readFile(path.join(vaultRoot, "Strategy", "Frame Generation Pipeline Planning.md"), "utf8");
     const rendererRoadmapText = await readFile(path.join(vaultRoot, "Strategy", "Renderer Capability Roadmap.md"), "utf8");
     const hybridStrategyText = await readFile(path.join(vaultRoot, "Strategy", "Hybrid Local Cloud Strategy.md"), "utf8");
@@ -281,6 +293,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(preInferenceGateText, /No pre-inference gate validation recorded yet\./i);
     assert.match(forbiddenStatesText, /No forbidden execution states recorded yet\./i);
     assert.match(governanceEscalationText, /No governance escalation modeling recorded yet\./i);
+    assert.match(executionTemperatureText, /No execution temperature states recorded yet\./i);
+    assert.match(frameStageReadinessText, /No frame-stage readiness recorded yet\./i);
+    assert.match(warmupEscalationText, /No warmup escalation modeling recorded yet\./i);
     assert.match(lifecycleText, /Execution lifecycle remains append-only/i);
     assert.match(retryRulesText, /Retry planning must preserve successful shot outputs/i);
     assert.match(generationStrategyText, /Use cheap draft routing for first-pass framing validation/i);
@@ -294,6 +309,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(futureInferenceText, /No future inference activation scaffolds recorded yet\./i);
     assert.match(inferenceSequencingText, /No inference entry sequencing recorded yet\./i);
     assert.match(futureUnlockConditionsText, /No future unlock conditions recorded yet\./i);
+    assert.match(dryInferenceWarmupText, /No dry inference warmup recorded yet\./i);
+    assert.match(singleFramePrecursorText, /No single-frame execution precursor recorded yet\./i);
+    assert.match(futureBoundedExecutionRulesText, /No future bounded execution rules recorded yet\./i);
     assert.match(framePipelineText, /Prompt Compilation/i);
     assert.match(rendererRoadmapText, /Image Sequence Rendering/i);
     assert.match(hybridStrategyText, /Local Draft Rendering/i);
@@ -491,10 +509,16 @@ test("exportSecondBrainToObsidian projects controlled local bootstrap into the n
     const preInferenceGateText = await readFile(path.join(vaultRoot, "Architecture", "Pre-Inference Gate Validation.md"), "utf8");
     const forbiddenStatesText = await readFile(path.join(vaultRoot, "Architecture", "Forbidden Execution States.md"), "utf8");
     const governanceEscalationText = await readFile(path.join(vaultRoot, "Architecture", "Governance Escalation Modeling.md"), "utf8");
+    const executionTemperatureText = await readFile(path.join(vaultRoot, "Architecture", "Execution Temperature States.md"), "utf8");
+    const frameStageReadinessText = await readFile(path.join(vaultRoot, "Architecture", "Frame-Stage Readiness.md"), "utf8");
+    const warmupEscalationText = await readFile(path.join(vaultRoot, "Architecture", "Warmup Escalation Modeling.md"), "utf8");
     const controlledProfilesText = await readFile(path.join(vaultRoot, "Strategy", "Controlled Runtime Profiles.md"), "utf8");
     const futureInferenceText = await readFile(path.join(vaultRoot, "Strategy", "Future Inference Activation.md"), "utf8");
     const inferenceSequencingText = await readFile(path.join(vaultRoot, "Strategy", "Inference Entry Sequencing.md"), "utf8");
     const futureUnlockConditionsText = await readFile(path.join(vaultRoot, "Strategy", "Future Unlock Conditions.md"), "utf8");
+    const dryInferenceWarmupText = await readFile(path.join(vaultRoot, "Strategy", "Dry Inference Warmup.md"), "utf8");
+    const singleFramePrecursorText = await readFile(path.join(vaultRoot, "Strategy", "Single-Frame Execution Precursor.md"), "utf8");
+    const futureBoundedExecutionRulesText = await readFile(path.join(vaultRoot, "Strategy", "Future Bounded Execution Rules.md"), "utf8");
 
     assert.match(dryBootstrapText, /Valid: yes/i);
     assert.match(dryBootstrapText, /runtime-binary-presence: passed=yes/i);
@@ -509,12 +533,21 @@ test("exportSecondBrainToObsidian projects controlled local bootstrap into the n
     assert.match(preInferenceGateText, /runtime-integrity-acceptable: passed=no/i);
     assert.match(forbiddenStatesText, /inference_execute: blocked=yes/i);
     assert.match(governanceEscalationText, /runtime-risk-escalation: triggered=yes/i);
+    assert.match(executionTemperatureText, /Current state: simulated_only/i);
+    assert.match(executionTemperatureText, /warming: authority=authority-runtime-integrity-review/i);
+    assert.match(frameStageReadinessText, /scheduler-readiness: passed=yes/i);
+    assert.match(frameStageReadinessText, /runtime-integrity-sufficiency: passed=no/i);
+    assert.match(warmupEscalationText, /warmup-risk-escalation: triggered=yes/i);
     assert.match(controlledProfilesText, /Low VRAM Safe|Offline Safe/i);
     assert.match(controlledProfilesText, /viable=yes|viable=no/i);
     assert.match(futureInferenceText, /Dry model initialization: yes/i);
     assert.match(futureInferenceText, /Dry pipeline binding: yes/i);
     assert.match(inferenceSequencingText, /gated_inference_prepare: status=blocked/i);
     assert.match(futureUnlockConditionsText, /Milestone unlocking real inference: reviewed-real-inference-bridge/i);
+    assert.match(dryInferenceWarmupText, /scheduler_warmup: ready=yes/i);
+    assert.match(dryInferenceWarmupText, /continuity_state_preparation: ready=no|yes/i);
+    assert.match(singleFramePrecursorText, /gated_single_frame_prepare: scaffolded=yes \| unlocked=no/i);
+    assert.match(futureBoundedExecutionRulesText, /single-frame-only-execution: unlocked=no/i);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

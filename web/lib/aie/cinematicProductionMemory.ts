@@ -503,7 +503,7 @@ export type CinematicGenerationJobHistoryEntry = {
 
 export type CinematicSandboxSimulationRecord = {
   simulation_id: string;
-  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor";
+  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor";
   sequence_id: string;
   routing_mode: CinematicProviderRoutingMode;
   provider: CinematicGenerationProvider;
@@ -535,6 +535,12 @@ export type CinematicSandboxSimulationRecord = {
   forbidden_execution_states?: CinematicForbiddenExecutionStateEnforcement;
   governance_escalation_modeling?: CinematicGovernanceEscalationModeling;
   future_unlock_conditions?: CinematicFutureUnlockConditions;
+  execution_temperature_state?: CinematicExecutionTemperatureStateRecord;
+  dry_inference_warmup?: CinematicDryInferenceWarmup;
+  single_frame_execution_precursor?: CinematicSingleFrameExecutionPrecursor;
+  frame_stage_readiness?: CinematicFrameStageReadinessValidation;
+  warmup_escalation_modeling?: CinematicWarmupEscalationModeling;
+  future_bounded_execution_rules?: CinematicFutureBoundedExecutionRules;
   readiness_tracking_id?: string | null;
   hybrid_escalation?: CinematicHybridEscalationSimulation | null;
   recorded_at: string;
@@ -1068,6 +1074,137 @@ export type CinematicFutureInferenceActivationPlan = {
   notes: string[];
 };
 
+export type CinematicExecutionTemperatureState = "cold" | "warming" | "staged" | "gated" | "blocked" | "simulated_only";
+
+export type CinematicExecutionTemperatureTransition = {
+  state: CinematicExecutionTemperatureState;
+  authority_trigger: string;
+  transition_reason: string;
+  blockers: string[];
+  next_unlock_condition: string;
+  governance_state: string;
+  continuity_state: string;
+};
+
+export type CinematicExecutionTemperatureStateRecord = {
+  temperature_id: string;
+  recorded_at: string;
+  current_state: CinematicExecutionTemperatureState;
+  transitions: CinematicExecutionTemperatureTransition[];
+};
+
+export type CinematicDryInferenceWarmupStageName =
+  | "scheduler_warmup"
+  | "pipeline_warmup"
+  | "frame_stage_preparation"
+  | "continuity_state_preparation"
+  | "vram_staging_assumptions"
+  | "dry_execution_sequencing";
+
+export type CinematicDryInferenceWarmupStage = {
+  stage: CinematicDryInferenceWarmupStageName;
+  simulated: true;
+  ready: boolean;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicDryInferenceWarmup = {
+  warmup_id: string;
+  recorded_at: string;
+  stages: CinematicDryInferenceWarmupStage[];
+  next_unlock_condition: string;
+  vram_assumptions: string[];
+};
+
+export type CinematicSingleFrameExecutionPrecursorId =
+  | "gated_single_frame_prepare"
+  | "gated_low_resolution_prepare"
+  | "gated_preview_prepare"
+  | "gated_temporal_prepare"
+  | "governed_output_prepare";
+
+export type CinematicSingleFrameExecutionPrecursorEntry = {
+  precursor_id: CinematicSingleFrameExecutionPrecursorId;
+  scaffolded: true;
+  unlocked: false;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicSingleFrameExecutionPrecursor = {
+  precursor_set_id: string;
+  recorded_at: string;
+  entries: CinematicSingleFrameExecutionPrecursorEntry[];
+};
+
+export type CinematicFrameStageReadinessCheckName =
+  | "scheduler-readiness"
+  | "pipeline-binding-readiness"
+  | "continuity-readiness"
+  | "execution-boundary-integrity"
+  | "authority-approval-state"
+  | "forbidden-state-enforcement"
+  | "runtime-integrity-sufficiency";
+
+export type CinematicFrameStageReadinessCheck = {
+  check: CinematicFrameStageReadinessCheckName;
+  passed: boolean;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicFrameStageReadinessValidation = {
+  validation_id: string;
+  recorded_at: string;
+  valid: boolean;
+  checks: CinematicFrameStageReadinessCheck[];
+  next_unlock_condition: string;
+};
+
+export type CinematicWarmupEscalationKind =
+  | "warmup-risk-escalation"
+  | "low-vram-escalation"
+  | "continuity-risk-escalation"
+  | "offline-escalation"
+  | "hybrid-escalation"
+  | "blocked-warmup-recovery";
+
+export type CinematicWarmupEscalationScenario = {
+  escalation: CinematicWarmupEscalationKind;
+  triggered: boolean;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicWarmupEscalationModeling = {
+  escalation_id: string;
+  recorded_at: string;
+  scenarios: CinematicWarmupEscalationScenario[];
+};
+
+export type CinematicFutureBoundedExecutionRuleId =
+  | "single-frame-only-execution"
+  | "low-resolution-only-execution"
+  | "governed-preview-generation"
+  | "bounded-retry-limits"
+  | "manual-only-escalation"
+  | "continuity-safe-execution";
+
+export type CinematicFutureBoundedExecutionRule = {
+  rule_id: CinematicFutureBoundedExecutionRuleId;
+  unlocked: false;
+  detail: string;
+  governance_requirements: string[];
+  blockers: string[];
+};
+
+export type CinematicFutureBoundedExecutionRules = {
+  rule_set_id: string;
+  recorded_at: string;
+  rules: CinematicFutureBoundedExecutionRule[];
+};
+
 export type CinematicFutureActivationPlan = {
   future_frame_synthesis_activation: boolean;
   future_temporal_pipeline_activation: boolean;
@@ -1104,6 +1241,12 @@ export type CinematicControlledLocalInferenceBootstrapValidation = {
   forbidden_execution_states: CinematicForbiddenExecutionStateEnforcement;
   governance_escalation_modeling: CinematicGovernanceEscalationModeling;
   future_unlock_conditions: CinematicFutureUnlockConditions;
+  execution_temperature_state: CinematicExecutionTemperatureStateRecord;
+  dry_inference_warmup: CinematicDryInferenceWarmup;
+  single_frame_execution_precursor: CinematicSingleFrameExecutionPrecursor;
+  frame_stage_readiness: CinematicFrameStageReadinessValidation;
+  warmup_escalation_modeling: CinematicWarmupEscalationModeling;
+  future_bounded_execution_rules: CinematicFutureBoundedExecutionRules;
   execution_enabled: false;
 };
 
@@ -1368,7 +1511,7 @@ export type CinematicReadinessMilestoneDelta = {
 
 export type CinematicReadinessDeltaTrackingRecord = {
   tracking_id: string;
-  source: "local-readiness-validation" | "local-execution-sandbox" | "runtime-activation-simulation" | "controlled-local-inference-bootstrap";
+  source: "local-readiness-validation" | "local-execution-sandbox" | "runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor";
   recorded_at: string;
   milestones: CinematicReadinessMilestoneDelta[];
 };
@@ -1543,6 +1686,7 @@ export type CinematicProductionMemoryRecord = {
   local_runtime_capability_registry: CinematicLocalRuntimeCapability[];
   controlled_runtime_profiles: CinematicControlledRuntimeProfile[];
   activation_authority_registry: CinematicActivationAuthorityRegistryEntry[];
+  execution_temperature_state_history: CinematicExecutionTemperatureStateRecord[];
   local_hardware_profiles: CinematicLocalHardwareProfile[];
   local_runtime_readiness_rules: string[];
   local_provider_routing_rules: string[];
@@ -1562,6 +1706,11 @@ export type CinematicProductionMemoryRecord = {
   forbidden_execution_state_history: CinematicForbiddenExecutionStateEnforcement[];
   governance_escalation_modeling_history: CinematicGovernanceEscalationModeling[];
   future_unlock_conditions_history: CinematicFutureUnlockConditions[];
+  dry_inference_warmup_history: CinematicDryInferenceWarmup[];
+  single_frame_execution_precursor_history: CinematicSingleFrameExecutionPrecursor[];
+  frame_stage_readiness_history: CinematicFrameStageReadinessValidation[];
+  warmup_escalation_modeling_history: CinematicWarmupEscalationModeling[];
+  future_bounded_execution_rules_history: CinematicFutureBoundedExecutionRules[];
   provider_routing_rules: string[];
   prompt_normalization_rules: string[];
   provider_validation_rules: string[];
@@ -2169,6 +2318,7 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
     },
   ],
   activation_authority_registry: [],
+  execution_temperature_state_history: [],
   local_runtime_capability_registry: [
     {
       runtime_id: "comfyui-local-video-lane",
@@ -2496,6 +2646,11 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
   forbidden_execution_state_history: [],
   governance_escalation_modeling_history: [],
   future_unlock_conditions_history: [],
+  dry_inference_warmup_history: [],
+  single_frame_execution_precursor_history: [],
+  frame_stage_readiness_history: [],
+  warmup_escalation_modeling_history: [],
+  future_bounded_execution_rules_history: [],
   provider_routing_rules: [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
@@ -2644,6 +2799,7 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     local_runtime_capability_registry: nextRecord.local_runtime_capability_registry ?? defaults.local_runtime_capability_registry,
     controlled_runtime_profiles: nextRecord.controlled_runtime_profiles ?? defaults.controlled_runtime_profiles,
     activation_authority_registry: nextRecord.activation_authority_registry ?? defaults.activation_authority_registry,
+    execution_temperature_state_history: nextRecord.execution_temperature_state_history ?? defaults.execution_temperature_state_history,
     local_hardware_profiles: nextRecord.local_hardware_profiles ?? defaults.local_hardware_profiles,
     local_runtime_readiness_rules: nextRecord.local_runtime_readiness_rules ?? defaults.local_runtime_readiness_rules,
     local_provider_routing_rules: nextRecord.local_provider_routing_rules ?? defaults.local_provider_routing_rules,
@@ -2663,6 +2819,11 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     forbidden_execution_state_history: nextRecord.forbidden_execution_state_history ?? defaults.forbidden_execution_state_history,
     governance_escalation_modeling_history: nextRecord.governance_escalation_modeling_history ?? defaults.governance_escalation_modeling_history,
     future_unlock_conditions_history: nextRecord.future_unlock_conditions_history ?? defaults.future_unlock_conditions_history,
+    dry_inference_warmup_history: nextRecord.dry_inference_warmup_history ?? defaults.dry_inference_warmup_history,
+    single_frame_execution_precursor_history: nextRecord.single_frame_execution_precursor_history ?? defaults.single_frame_execution_precursor_history,
+    frame_stage_readiness_history: nextRecord.frame_stage_readiness_history ?? defaults.frame_stage_readiness_history,
+    warmup_escalation_modeling_history: nextRecord.warmup_escalation_modeling_history ?? defaults.warmup_escalation_modeling_history,
+    future_bounded_execution_rules_history: nextRecord.future_bounded_execution_rules_history ?? defaults.future_bounded_execution_rules_history,
     provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
     prompt_normalization_rules: nextRecord.prompt_normalization_rules ?? defaults.prompt_normalization_rules,
     provider_validation_rules: nextRecord.provider_validation_rules ?? defaults.provider_validation_rules,
@@ -4896,6 +5057,375 @@ function buildFutureUnlockConditions(input: {
   };
 }
 
+function buildExecutionTemperatureState(input: {
+  readiness: CinematicLocalInferenceReadinessReport;
+  gateValidation: CinematicPreInferenceGateValidation;
+  frameStageReadiness: CinematicFrameStageReadinessValidation;
+  warmup: CinematicDryInferenceWarmup;
+  boundary: CinematicExecutionBoundaryState;
+}): CinematicExecutionTemperatureStateRecord {
+  const continuityProgress = input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation")?.percentage ?? 0;
+  const blockedReasons = uniqueNormalizedStrings([
+    ...input.gateValidation.checks.filter((entry) => !entry.passed).flatMap((entry) => entry.blockers),
+    ...input.frameStageReadiness.checks.filter((entry) => !entry.passed).flatMap((entry) => entry.blockers),
+  ]);
+  const nextUnlockCondition = input.frameStageReadiness.next_unlock_condition;
+  const governanceState = input.gateValidation.valid
+    ? "governance-reviewed-but-hard-gated"
+    : "governance-blocked-until-gates-pass";
+  const continuityState = continuityProgress >= 70
+    ? `continuity_ready_${continuityProgress}`
+    : `continuity_blocked_${continuityProgress}`;
+  return {
+    temperature_id: `execution-temperature-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    current_state: "simulated_only",
+    transitions: [
+      {
+        state: "cold",
+        authority_trigger: "authority-manual-operator-gate",
+        transition_reason: "Execution begins from a cold non-executing state with inference and rendering disabled.",
+        blockers: blockedReasons,
+        next_unlock_condition: nextUnlockCondition,
+        governance_state: governanceState,
+        continuity_state: continuityState,
+      },
+      {
+        state: "warming",
+        authority_trigger: "authority-runtime-integrity-review",
+        transition_reason: "Dry scheduler and pipeline warmup planning is simulated without loading a model or launching a runtime.",
+        blockers: blockedReasons,
+        next_unlock_condition: input.warmup.next_unlock_condition,
+        governance_state: governanceState,
+        continuity_state: continuityState,
+      },
+      {
+        state: "staged",
+        authority_trigger: "authority-continuity-governor",
+        transition_reason: "Frame-stage preparation and continuity state are staged for future reviewed single-frame preparation only.",
+        blockers: blockedReasons,
+        next_unlock_condition: nextUnlockCondition,
+        governance_state: governanceState,
+        continuity_state: continuityState,
+      },
+      {
+        state: "gated",
+        authority_trigger: "authority-manual-operator-gate",
+        transition_reason: "Single-frame execution remains gated behind explicit approval and frame-stage readiness.",
+        blockers: blockedReasons,
+        next_unlock_condition: nextUnlockCondition,
+        governance_state: governanceState,
+        continuity_state: continuityState,
+      },
+      {
+        state: "blocked",
+        authority_trigger: "authority-manual-operator-gate",
+        transition_reason: "Unsafe transitions remain blocked because frame-stage readiness and pre-inference gates are not fully satisfied.",
+        blockers: blockedReasons,
+        next_unlock_condition: nextUnlockCondition,
+        governance_state: governanceState,
+        continuity_state: continuityState,
+      },
+      {
+        state: "simulated_only",
+        authority_trigger: "authority-render-output-governor",
+        transition_reason: `Execution temperature resolves to simulated_only while boundary ${input.boundary.current_status} preserves hard non-executing limits.`,
+        blockers: blockedReasons,
+        next_unlock_condition: "reviewed-single-frame-execution-bridge",
+        governance_state: governanceState,
+        continuity_state: continuityState,
+      },
+    ],
+  };
+}
+
+function buildDryInferenceWarmup(input: {
+  gateValidation: CinematicPreInferenceGateValidation;
+  futureInferenceActivation: CinematicFutureInferenceActivationPlan;
+  readiness: CinematicLocalInferenceReadinessReport;
+  loaderRegistry: CinematicLocalModelLoaderRecord[];
+}): CinematicDryInferenceWarmup {
+  const continuityReady = (input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation")?.percentage ?? 0) >= 70;
+  const gateBlockers = input.gateValidation.checks.filter((entry) => !entry.passed).flatMap((entry) => entry.blockers);
+  return {
+    warmup_id: `dry-inference-warmup-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    stages: [
+      {
+        stage: "scheduler_warmup",
+        simulated: true,
+        ready: input.futureInferenceActivation.dry_scheduler_initialization,
+        detail: "Scheduler warmup is simulated as a governed preparation sequence only.",
+        blockers: input.futureInferenceActivation.dry_scheduler_initialization ? [] : ["Dry scheduler planning scaffold is missing."],
+      },
+      {
+        stage: "pipeline_warmup",
+        simulated: true,
+        ready: input.futureInferenceActivation.dry_pipeline_binding,
+        detail: "Pipeline warmup remains descriptive and cannot bind or execute a live graph.",
+        blockers: input.futureInferenceActivation.dry_pipeline_binding ? [] : ["Dry pipeline binding scaffold is missing."],
+      },
+      {
+        stage: "frame_stage_preparation",
+        simulated: true,
+        ready: input.gateValidation.checks.find((entry) => entry.gate === "dry-pipeline-binding-complete")?.passed ?? false,
+        detail: "Frame-stage preparation is modeled for future bounded single-frame review only.",
+        blockers: gateBlockers,
+      },
+      {
+        stage: "continuity_state_preparation",
+        simulated: true,
+        ready: continuityReady,
+        detail: "Continuity-state preparation keeps sequence evidence explicit before any future frame work.",
+        blockers: continuityReady ? [] : ["Continuity readiness remains below governed warmup threshold."],
+      },
+      {
+        stage: "vram_staging_assumptions",
+        simulated: true,
+        ready: input.futureInferenceActivation.dry_vram_reservation,
+        detail: "VRAM staging assumptions remain dry bookkeeping only.",
+        blockers: input.futureInferenceActivation.dry_vram_reservation ? [] : ["Dry VRAM reservation scaffold is missing."],
+      },
+      {
+        stage: "dry_execution_sequencing",
+        simulated: true,
+        ready: input.gateValidation.valid,
+        detail: "Dry execution sequencing stays gated and cannot cross into inference execution.",
+        blockers: gateBlockers,
+      },
+    ],
+    next_unlock_condition: "Frame-stage readiness must pass before any future reviewed warmup bridge is considered.",
+    vram_assumptions: uniqueNormalizedStrings([
+      ...input.loaderRegistry.map((entry) => `${entry.loader_id}: reserve up to ${entry.estimated_vram}GB in dry warmup only.`),
+      "VRAM staging assumptions remain modeled only and cannot allocate live resources.",
+    ]),
+  };
+}
+
+function buildSingleFrameExecutionPrecursor(input: {
+  gateValidation: CinematicPreInferenceGateValidation;
+  frameStageReadiness: CinematicFrameStageReadinessValidation;
+}): CinematicSingleFrameExecutionPrecursor {
+  const blockers = uniqueNormalizedStrings([
+    ...input.gateValidation.checks.filter((entry) => !entry.passed).flatMap((entry) => entry.blockers),
+    ...input.frameStageReadiness.checks.filter((entry) => !entry.passed).flatMap((entry) => entry.blockers),
+  ]);
+  return {
+    precursor_set_id: `single-frame-precursor-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    entries: [
+      {
+        precursor_id: "gated_single_frame_prepare",
+        scaffolded: true,
+        unlocked: false,
+        detail: "Prepare a future single-frame-only reviewed execution bridge without enabling inference.",
+        blockers,
+      },
+      {
+        precursor_id: "gated_low_resolution_prepare",
+        scaffolded: true,
+        unlocked: false,
+        detail: "Prepare a future low-resolution bounded review lane while keeping output disabled.",
+        blockers,
+      },
+      {
+        precursor_id: "gated_preview_prepare",
+        scaffolded: true,
+        unlocked: false,
+        detail: "Prepare a governed preview path that remains render-disabled in this phase.",
+        blockers,
+      },
+      {
+        precursor_id: "gated_temporal_prepare",
+        scaffolded: true,
+        unlocked: false,
+        detail: "Prepare temporal sequencing controls without permitting temporal synthesis.",
+        blockers,
+      },
+      {
+        precursor_id: "governed_output_prepare",
+        scaffolded: true,
+        unlocked: false,
+        detail: "Prepare governed output packaging rules with render output still blocked.",
+        blockers,
+      },
+    ],
+  };
+}
+
+function buildFrameStageReadinessValidation(input: {
+  gateValidation: CinematicPreInferenceGateValidation;
+  warmup: CinematicDryInferenceWarmup;
+  forbiddenExecutionStates: CinematicForbiddenExecutionStateEnforcement;
+  activationAuthorityRegistry: CinematicActivationAuthorityRegistryEntry[];
+  boundary: CinematicExecutionBoundaryState;
+  integrity: CinematicRuntimeIntegrityValidation;
+  readiness: CinematicLocalInferenceReadinessReport;
+}): CinematicFrameStageReadinessValidation {
+  const continuityProgress = input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation")?.percentage ?? 0;
+  const schedulerWarmup = input.warmup.stages.find((entry) => entry.stage === "scheduler_warmup");
+  const pipelineWarmup = input.warmup.stages.find((entry) => entry.stage === "pipeline_warmup");
+  const checks: CinematicFrameStageReadinessCheck[] = [
+    {
+      check: "scheduler-readiness",
+      passed: schedulerWarmup?.ready ?? false,
+      detail: "Scheduler warmup simulation must exist before frame-stage readiness can advance.",
+      blockers: schedulerWarmup?.blockers ?? ["Scheduler warmup simulation missing."],
+    },
+    {
+      check: "pipeline-binding-readiness",
+      passed: pipelineWarmup?.ready ?? false,
+      detail: "Pipeline binding readiness must remain dry and recorded before single-frame preparation is considered.",
+      blockers: pipelineWarmup?.blockers ?? ["Pipeline warmup simulation missing."],
+    },
+    {
+      check: "continuity-readiness",
+      passed: continuityProgress >= 70,
+      detail: "Continuity readiness must reach the governed threshold before any frame-stage transition is modeled as ready.",
+      blockers: continuityProgress >= 70 ? [] : ["Continuity readiness remains below the frame-stage threshold."],
+    },
+    {
+      check: "execution-boundary-integrity",
+      passed: input.boundary.tracked_statuses.includes("inference_disabled") && input.boundary.tracked_statuses.includes("rendering_disabled"),
+      detail: "Execution boundary integrity must keep inference and rendering disabled throughout warmup modeling.",
+      blockers: input.boundary.activation_blockers,
+    },
+    {
+      check: "authority-approval-state",
+      passed: input.activationAuthorityRegistry.length >= 4,
+      detail: "Authority approval state must stay explicit for bounded single-frame preparation.",
+      blockers: input.activationAuthorityRegistry.length >= 4 ? [] : ["Activation authority coverage is incomplete."],
+    },
+    {
+      check: "forbidden-state-enforcement",
+      passed: input.forbiddenExecutionStates.states.every((entry) => entry.blocked),
+      detail: "All forbidden execution states must remain explicitly blocked.",
+      blockers: input.forbiddenExecutionStates.states.every((entry) => entry.blocked) ? [] : ["A forbidden execution state is no longer blocked."],
+    },
+    {
+      check: "runtime-integrity-sufficiency",
+      passed: input.integrity.valid,
+      detail: "Runtime integrity sufficiency remains required even for dry warmup and frame-stage planning.",
+      blockers: input.integrity.blockers,
+    },
+  ];
+  return {
+    validation_id: `frame-stage-readiness-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    valid: checks.every((entry) => entry.passed) && input.gateValidation.valid,
+    checks,
+    next_unlock_condition: checks.find((entry) => !entry.passed)?.detail ?? input.gateValidation.next_unlock_condition,
+  };
+}
+
+function buildWarmupEscalationModeling(input: {
+  readiness: CinematicLocalInferenceReadinessReport;
+  warmup: CinematicDryInferenceWarmup;
+  loaderRegistry: CinematicLocalModelLoaderRecord[];
+  frameStageReadiness: CinematicFrameStageReadinessValidation;
+}): CinematicWarmupEscalationModeling {
+  const continuityProgress = input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation")?.percentage ?? 0;
+  const offlineMode = input.readiness.recommended_routing_mode === "offline-planning-mode";
+  const lowVramBlockers = input.loaderRegistry.filter((entry) => entry.estimated_vram >= 14).map((entry) => `${entry.loader_id} requires ${entry.estimated_vram}GB VRAM.`);
+  return {
+    escalation_id: `warmup-escalation-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    scenarios: [
+      {
+        escalation: "warmup-risk-escalation",
+        triggered: input.warmup.stages.some((entry) => !entry.ready),
+        detail: "Warmup-risk escalation preserves dry-only governance when warmup stages remain blocked.",
+        blockers: input.warmup.stages.filter((entry) => !entry.ready).flatMap((entry) => entry.blockers),
+      },
+      {
+        escalation: "low-vram-escalation",
+        triggered: lowVramBlockers.length > 0,
+        detail: "Low-VRAM escalation keeps future single-frame preparation conservative under tight memory assumptions.",
+        blockers: lowVramBlockers,
+      },
+      {
+        escalation: "continuity-risk-escalation",
+        triggered: continuityProgress < 70,
+        detail: "Continuity-risk escalation blocks frame-stage advancement until continuity evidence improves.",
+        blockers: continuityProgress < 70 ? ["Continuity readiness remains below governed threshold."] : [],
+      },
+      {
+        escalation: "offline-escalation",
+        triggered: offlineMode,
+        detail: "Offline escalation keeps the warmup lane planning-only when runtime integrity or environment evidence is incomplete.",
+        blockers: offlineMode ? ["Routing remains in offline-planning-mode."] : [],
+      },
+      {
+        escalation: "hybrid-escalation",
+        triggered: input.readiness.recommended_routing_mode === "balanced-comparison-mode",
+        detail: "Hybrid escalation keeps local and cloud options advisory while local warmup remains non-executing.",
+        blockers: input.readiness.recommended_routing_mode === "balanced-comparison-mode" ? ["Hybrid comparison remains advisory only."] : [],
+      },
+      {
+        escalation: "blocked-warmup-recovery",
+        triggered: !input.frameStageReadiness.valid,
+        detail: "Blocked warmup recovery models the path back to safe dry preparation instead of execution.",
+        blockers: input.frameStageReadiness.checks.filter((entry) => !entry.passed).flatMap((entry) => entry.blockers),
+      },
+    ],
+  };
+}
+
+function buildFutureBoundedExecutionRules(input: {
+  frameStageReadiness: CinematicFrameStageReadinessValidation;
+  executionTemperatureState: CinematicExecutionTemperatureStateRecord;
+}): CinematicFutureBoundedExecutionRules {
+  const blockers = input.frameStageReadiness.checks.filter((entry) => !entry.passed).flatMap((entry) => entry.blockers);
+  return {
+    rule_set_id: `future-bounded-execution-rules-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    rules: [
+      {
+        rule_id: "single-frame-only-execution",
+        unlocked: false,
+        detail: "Any future execution bridge must begin with a single-frame-only reviewed lane.",
+        governance_requirements: ["manual operator approval", "reviewed single-frame bridge"],
+        blockers,
+      },
+      {
+        rule_id: "low-resolution-only-execution",
+        unlocked: false,
+        detail: "Any first bounded output must stay low-resolution-only until stability evidence accumulates.",
+        governance_requirements: ["low-resolution governance review", "runtime integrity approval"],
+        blockers,
+      },
+      {
+        rule_id: "governed-preview-generation",
+        unlocked: false,
+        detail: "Preview generation must remain governed and cannot bypass render-output restrictions.",
+        governance_requirements: ["preview governance approval", "render-output guardrails"],
+        blockers,
+      },
+      {
+        rule_id: "bounded-retry-limits",
+        unlocked: false,
+        detail: "Any future bounded execution must keep retry counts explicitly limited and reviewed.",
+        governance_requirements: ["bounded retry plan", "manual-only escalation"],
+        blockers,
+      },
+      {
+        rule_id: "manual-only-escalation",
+        unlocked: false,
+        detail: "Escalation out of dry warmup must remain manual-only with no autonomous promotion.",
+        governance_requirements: ["manual operator approval", "governance escalation record"],
+        blockers,
+      },
+      {
+        rule_id: "continuity-safe-execution",
+        unlocked: false,
+        detail: `Continuity-safe execution can only be considered after execution temperature leaves ${input.executionTemperatureState.current_state} through a reviewed bridge.`,
+        governance_requirements: ["continuity review approval", "frame-stage readiness pass"],
+        blockers,
+      },
+    ],
+  };
+}
+
 function applyGatedInferencePrecursorReadiness(input: {
   readiness: CinematicLocalInferenceReadinessReport;
   activationAuthorityRegistry: CinematicActivationAuthorityRegistryEntry[];
@@ -4903,57 +5433,68 @@ function applyGatedInferencePrecursorReadiness(input: {
   sequencing: CinematicInferenceEntrySequencing;
   escalationModeling: CinematicGovernanceEscalationModeling;
   futureUnlockConditions: CinematicFutureUnlockConditions;
+  executionTemperatureState: CinematicExecutionTemperatureStateRecord;
+  dryInferenceWarmup: CinematicDryInferenceWarmup;
+  singleFrameExecutionPrecursor: CinematicSingleFrameExecutionPrecursor;
+  frameStageReadiness: CinematicFrameStageReadinessValidation;
+  warmupEscalationModeling: CinematicWarmupEscalationModeling;
+  futureBoundedExecutionRules: CinematicFutureBoundedExecutionRules;
 }): CinematicLocalInferenceReadinessReport {
   const sequencingCoverage = input.sequencing.stages.length > 0;
   const unlockCoverage = input.futureUnlockConditions.conditions.length > 0;
   const triggeredEscalations = input.escalationModeling.scenarios.filter((entry) => entry.triggered).length;
   const authorityCoverage = input.activationAuthorityRegistry.length > 0;
+  const warmupCoverage = input.dryInferenceWarmup.stages.filter((entry) => entry.ready).length;
+  const precursorCoverage = input.singleFrameExecutionPrecursor.entries.length > 0;
+  const frameStageCoverage = input.frameStageReadiness.checks.filter((entry) => entry.passed).length;
+  const boundedRuleCoverage = input.futureBoundedExecutionRules.rules.length > 0;
   const updatedMilestones = input.readiness.milestone_progress.map((entry) => {
     const blockers = uniqueNormalizedStrings([
       ...entry.blockers,
       ...input.gateValidation.checks.filter((check) => !check.passed).flatMap((check) => check.blockers),
+      ...input.frameStageReadiness.checks.filter((check) => !check.passed).flatMap((check) => check.blockers),
     ]);
     switch (entry.milestone) {
       case "local-inference-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (authorityCoverage ? 5 : 0) + (sequencingCoverage ? 4 : 0) + (unlockCoverage ? 3 : 0)),
+          percentage: clampPercentage(entry.percentage + (authorityCoverage ? 4 : 0) + (sequencingCoverage ? 3 : 0) + (unlockCoverage ? 2 : 0) + (warmupCoverage >= 4 ? 5 : 0) + (input.executionTemperatureState.current_state === "simulated_only" ? 2 : 0)),
           blockers,
         };
       case "local-runtime-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "execution-boundary-intact")?.passed ? 4 : 0) + (triggeredEscalations > 0 ? 2 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "execution-boundary-intact")?.passed ? 3 : 0) + (triggeredEscalations > 0 ? 2 : 0) + (warmupCoverage >= 2 ? 4 : 0)),
           blockers,
         };
       case "local-frame-generation-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_frame_stage_prepare") ? 4 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_frame_stage_prepare") ? 3 : 0) + (frameStageCoverage >= 5 ? 5 : 0) + (precursorCoverage ? 3 : 0)),
           blockers,
         };
       case "local-renderer-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_render_output_prepare") ? 3 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_render_output_prepare") ? 2 : 0) + (precursorCoverage ? 3 : 0) + (boundedRuleCoverage ? 2 : 0)),
           blockers,
         };
       case "continuity-preserving-local-generation":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "continuity-state-available")?.passed ? 4 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "continuity-state-available")?.passed ? 3 : 0) + (input.frameStageReadiness.checks.find((check) => check.check === "continuity-readiness")?.passed ? 4 : 0)),
           blockers,
         };
       case "hybrid-local-cloud-orchestration":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.escalationModeling.scenarios.some((scenario) => scenario.escalation === "offline-mode-escalation") ? 3 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.escalationModeling.scenarios.some((scenario) => scenario.escalation === "offline-mode-escalation") ? 2 : 0) + (input.warmupEscalationModeling.scenarios.some((scenario) => scenario.escalation === "hybrid-escalation") ? 3 : 0)),
           blockers,
         };
       case "self-sustaining-generation-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + 2),
+          percentage: clampPercentage(entry.percentage + 3),
           blockers: uniqueNormalizedStrings([...blockers, "Self-sustaining generation remains forbidden pending a reviewed real-inference bridge."]),
         };
       default:
@@ -4966,11 +5507,15 @@ function applyGatedInferencePrecursorReadiness(input: {
       ...input.readiness.planning_notes,
       `Activation authority registry entries recorded: ${input.activationAuthorityRegistry.length}.`,
       `Pre-inference gate validation: ${input.gateValidation.valid ? "passed" : "blocked"}.`,
+      `Execution temperature current state: ${input.executionTemperatureState.current_state}.`,
+      `Dry warmup stages ready: ${warmupCoverage}/${input.dryInferenceWarmup.stages.length}.`,
+      `Single-frame precursor entries scaffolded: ${input.singleFrameExecutionPrecursor.entries.length}.`,
       `Future real inference remains locked behind ${input.futureUnlockConditions.milestone_unlocks_real_inference}.`,
     ]),
     blocked_reasons: uniqueNormalizedStrings([
       ...input.readiness.blocked_reasons,
       ...input.gateValidation.checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
+      ...input.frameStageReadiness.checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
     ]),
     milestone_progress: updatedMilestones,
   };
@@ -6255,6 +6800,42 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
   const futureUnlockConditions = buildFutureUnlockConditions({
     gateValidation: preInferenceGateValidation,
   });
+  const dryInferenceWarmup = buildDryInferenceWarmup({
+    gateValidation: preInferenceGateValidation,
+    futureInferenceActivation,
+    readiness,
+    loaderRegistry,
+  });
+  const frameStageReadiness = buildFrameStageReadinessValidation({
+    gateValidation: preInferenceGateValidation,
+    warmup: dryInferenceWarmup,
+    forbiddenExecutionStates,
+    activationAuthorityRegistry,
+    boundary: executionBoundaryState,
+    integrity: runtimeIntegrityValidation,
+    readiness,
+  });
+  const executionTemperatureState = buildExecutionTemperatureState({
+    readiness,
+    gateValidation: preInferenceGateValidation,
+    frameStageReadiness,
+    warmup: dryInferenceWarmup,
+    boundary: executionBoundaryState,
+  });
+  const singleFrameExecutionPrecursor = buildSingleFrameExecutionPrecursor({
+    gateValidation: preInferenceGateValidation,
+    frameStageReadiness,
+  });
+  const warmupEscalationModeling = buildWarmupEscalationModeling({
+    readiness,
+    warmup: dryInferenceWarmup,
+    loaderRegistry,
+    frameStageReadiness,
+  });
+  const futureBoundedExecutionRules = buildFutureBoundedExecutionRules({
+    frameStageReadiness,
+    executionTemperatureState,
+  });
   const readinessWithPrecursor = applyGatedInferencePrecursorReadiness({
     readiness,
     activationAuthorityRegistry,
@@ -6262,21 +6843,33 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     sequencing: inferenceEntrySequencing,
     escalationModeling: governanceEscalationModeling,
     futureUnlockConditions,
+    executionTemperatureState,
+    dryInferenceWarmup,
+    singleFrameExecutionPrecursor,
+    frameStageReadiness,
+    warmupEscalationModeling,
+    futureBoundedExecutionRules,
   });
   const trackingUpdate = appendReadinessDeltaTracking({
     record: nextRecord,
     readiness: readinessWithPrecursor,
-    source: "gated-inference-activation-precursor",
+    source: "dry-inference-warmup-single-frame-precursor",
   });
   await writeProductionMemoryRecord(initialization.productionMemoryPath, {
     ...trackingUpdate.record,
     activation_authority_registry: activationAuthorityRegistry,
+    execution_temperature_state_history: [executionTemperatureState, ...trackingUpdate.record.execution_temperature_state_history].slice(0, 24),
     execution_boundary_status_history: [executionBoundaryState, ...trackingUpdate.record.execution_boundary_status_history].slice(0, 24),
     pre_inference_gate_validation_history: [preInferenceGateValidation, ...trackingUpdate.record.pre_inference_gate_validation_history].slice(0, 24),
     inference_entry_sequencing_history: [inferenceEntrySequencing, ...trackingUpdate.record.inference_entry_sequencing_history].slice(0, 24),
     forbidden_execution_state_history: [forbiddenExecutionStates, ...trackingUpdate.record.forbidden_execution_state_history].slice(0, 24),
     governance_escalation_modeling_history: [governanceEscalationModeling, ...trackingUpdate.record.governance_escalation_modeling_history].slice(0, 24),
     future_unlock_conditions_history: [futureUnlockConditions, ...trackingUpdate.record.future_unlock_conditions_history].slice(0, 24),
+    dry_inference_warmup_history: [dryInferenceWarmup, ...trackingUpdate.record.dry_inference_warmup_history].slice(0, 24),
+    single_frame_execution_precursor_history: [singleFrameExecutionPrecursor, ...trackingUpdate.record.single_frame_execution_precursor_history].slice(0, 24),
+    frame_stage_readiness_history: [frameStageReadiness, ...trackingUpdate.record.frame_stage_readiness_history].slice(0, 24),
+    warmup_escalation_modeling_history: [warmupEscalationModeling, ...trackingUpdate.record.warmup_escalation_modeling_history].slice(0, 24),
+    future_bounded_execution_rules_history: [futureBoundedExecutionRules, ...trackingUpdate.record.future_bounded_execution_rules_history].slice(0, 24),
   });
   return {
     readiness: readinessWithPrecursor,
@@ -6294,6 +6887,12 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     forbidden_execution_states: forbiddenExecutionStates,
     governance_escalation_modeling: governanceEscalationModeling,
     future_unlock_conditions: futureUnlockConditions,
+    execution_temperature_state: executionTemperatureState,
+    dry_inference_warmup: dryInferenceWarmup,
+    single_frame_execution_precursor: singleFrameExecutionPrecursor,
+    frame_stage_readiness: frameStageReadiness,
+    warmup_escalation_modeling: warmupEscalationModeling,
+    future_bounded_execution_rules: futureBoundedExecutionRules,
     execution_enabled: false,
   };
 }
@@ -6308,7 +6907,7 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
   const record = await readCinematicProductionMemory({ root: input?.root });
   const simulation: CinematicSandboxSimulationRecord = {
     simulation_id: `bootstrap-sandbox-${Date.now()}`,
-    sandbox_kind: "gated-inference-activation-precursor",
+    sandbox_kind: "dry-inference-warmup-single-frame-precursor",
     sequence_id: "controlled-local-bootstrap-planning-only",
     routing_mode: validation.readiness.recommended_routing_mode,
     provider: "LocalFutureProvider",
@@ -6337,6 +6936,12 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
     forbidden_execution_states: validation.forbidden_execution_states,
     governance_escalation_modeling: validation.governance_escalation_modeling,
     future_unlock_conditions: validation.future_unlock_conditions,
+    execution_temperature_state: validation.execution_temperature_state,
+    dry_inference_warmup: validation.dry_inference_warmup,
+    single_frame_execution_precursor: validation.single_frame_execution_precursor,
+    frame_stage_readiness: validation.frame_stage_readiness,
+    warmup_escalation_modeling: validation.warmup_escalation_modeling,
+    future_bounded_execution_rules: validation.future_bounded_execution_rules,
     readiness_tracking_id: validation.readiness_delta.tracking_id,
     hybrid_escalation: null,
     recorded_at: new Date().toISOString(),
