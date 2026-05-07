@@ -21,6 +21,11 @@ import {
   type PostPlaytestExecutionResult,
 } from "./postPlaytestExecutor";
 import {
+  selectPostPlaytestFeature,
+  type PostPlaytestFeatureEvidenceSnapshot,
+  type PostPlaytestFeatureSelectorResult,
+} from "./postPlaytestFeatureSelector";
+import {
   buildPostPlaytestFixPlan,
   type PostPlaytestFixPlanResult,
 } from "./postPlaytestFixPlanner";
@@ -97,6 +102,12 @@ export type UnityValidationExecutionOptions = {
     feature?: string | null;
     projectPath?: string | null;
     runtimeLogPath?: string | null;
+  };
+  post_playtest_feature_selection?: {
+    feature_pool?: string[];
+    completed_features?: string[];
+    attempted_features?: string[];
+    feature_evidence?: PostPlaytestFeatureEvidenceSnapshot[];
   };
   post_playtest_executor?: {
     operator_approval?: boolean;
@@ -557,7 +568,7 @@ export type UnityMutationExecutionChainDependencyNode = {
 export type UnityMutationExecutionChainRollbackNode = {
   order: number;
   source_action_id: string;
-  rollback_action_type: UnityMutationExecutionChainActionType;
+  rollback_action_type: "unity_scene_object_removal";
   target_scene: string;
   target_object_name: string;
 };
@@ -1134,10 +1145,8 @@ function getChainActionRequiredApprovals(actionType: UnityMutationExecutionChain
       ];
 }
 
-function getChainRollbackActionType(actionType: UnityMutationExecutionChainActionType): UnityMutationExecutionChainActionType {
-  return actionType === "unity_scene_object_creation"
-    ? "unity_scene_object_rollback"
-    : "unity_scene_object_creation";
+function getChainRollbackActionType(_actionType: UnityMutationExecutionChainActionType): "unity_scene_object_removal" {
+  return "unity_scene_object_removal";
 }
 
 function resolveUnityMutationExecutionChainPlan(
@@ -1351,7 +1360,7 @@ function resolveUnityMutationExecutionChainPlan(
     };
   }
 
-  const orderedActions = orderedActionIds.map((actionId, index) => {
+  const orderedActions: UnityMutationExecutionChainPlannedAction[] = orderedActionIds.map((actionId, index) => {
     const action = actionMap.get(actionId)!;
     const requiredApprovals = [...new Set([...getChainActionRequiredApprovals(action.action_type), ...action.required_approvals])];
     const approvalBlocked = (!reviewApproved || !operatorApproved)
@@ -1501,7 +1510,8 @@ function evaluateChainReadinessExecutionPlanStatus(
 
   if (action.action_type === "unity_scene_object_creation") {
     if (
-      executionPlan.request_id !== expectedRequestId
+      !("request_id" in executionPlan)
+      || executionPlan.request_id !== expectedRequestId
       || executionPlan.target_scene !== action.target_scene.trim()
       || executionPlan.requested_object_name !== action.target_object_name.trim()
       || executionPlan.execution_kind !== "execution_plan_only"
@@ -1513,7 +1523,8 @@ function evaluateChainReadinessExecutionPlanStatus(
     }
   } else {
     if (
-      executionPlan.rollback_request_id !== expectedRequestId
+      !("rollback_request_id" in executionPlan)
+      || executionPlan.rollback_request_id !== expectedRequestId
       || executionPlan.target_scene !== action.target_scene.trim()
       || executionPlan.target_object_name !== action.target_object_name.trim()
       || executionPlan.execution_kind !== "rollback_plan_only"
@@ -1874,7 +1885,7 @@ function createUnityMutationExecutionChainExecutionPackages(
           "CONTROLLED UNITY CHAIN EXECUTION",
           ...(result.state_snapshots.length > 0 ? ["STATE SNAPSHOT CAPTURED", "PRE-ACTION STATE GATE PASSED", "POST-ACTION STATE VERIFIED"] : []),
         ],
-    recommended_decision: result.execution_status === "success" ? "approve" : "review_required",
+    recommended_decision: result.execution_status === "success" ? "approve" : "request_changes",
     rollback_notes: result.rollback_order.length > 0
       ? `ROLLBACK ORDER PREVIEW: ${result.rollback_order.join(" -> ")}`
       : "No rollback order preview is available for this chain.",
@@ -1997,7 +2008,7 @@ function createUnityPlannedChainRollbackExecutionPackages(
     risks: result.execution_status === "success"
       ? ["ROLLBACK EXECUTION", "MANUAL TRIGGER", "MANUAL ROLLBACK EXECUTED", rollbackTargetOutcome, "ROLLBACK NOT AUTO-EXECUTED"]
       : ["ROLLBACK EXECUTION STOPPED", "MANUAL TRIGGER", "ROLLBACK NOT AUTO-EXECUTED"],
-    recommended_decision: result.execution_status === "success" ? "approve" : "review_required",
+    recommended_decision: result.execution_status === "success" ? "approve" : "request_changes",
     rollback_notes: `ROLLBACK PLAN ${result.rollback_plan_id ?? "unknown"}: ${result.remaining_actions_not_executed.join(" | ") || "fully executed"}`,
     operator_actions: ["approve", "archive"],
   });
@@ -4206,7 +4217,6 @@ function createUnitySceneObjectCreationPreviewPackages(
     files_changed: [],
     validation_results: proofResults,
     proof_results: [result.execution_kind, "DRY RUN ONLY", "NOT EXECUTED"],
-    validation_results: proofResults,
     risk_summary: `Dry-run Unity mutation preview only. Risk level ${result.risk_level}. Final execution not authorized. No mutation path enabled.`,
     rollback_plan: "Discard the dry-run mutation preview package if the operator rejects it.",
     release_notes: summary,
@@ -4265,7 +4275,9 @@ function buildBlockedValidationResult(
     review_package: null,
     delivery_package: null,
     post_playtest_learning: null,
+    post_playtest_feature_selection: null,
     post_playtest_decision: null,
+    post_playtest_strategy_selection: null,
     post_playtest_fix_plan: null,
     post_playtest_execution_plan: null,
     post_playtest_execution_result: null,
@@ -4308,6 +4320,40 @@ function buildPostPlaytestLearningValidationLines(result: AutoRecordOutcomeResul
     `Post-playtest learning inferred result: ${result.evaluation.parsedResult.inferredResult}`,
     `Post-playtest learning session mode: ${result.evaluation.session.mode}`,
     `Post-playtest learning evaluated lines: ${result.evaluation.evaluatedLineCount}`,
+  ];
+}
+
+function buildPostPlaytestFeatureSelectionSummary(result: PostPlaytestFeatureSelectorResult | null): string | null {
+  if (!result) {
+    return null;
+  }
+
+  const selected = result.selected_feature
+    ? `Selected feature ${result.selected_feature}.`
+    : "No feature selected.";
+  const alternatives = result.candidate_scores
+    .filter((candidate) => candidate.feature !== result.selected_feature)
+    .slice(0, 2)
+    .map((candidate) => `${candidate.feature} (${candidate.score})`)
+    .join(", ");
+
+  return alternatives.length > 0
+    ? `Post-playtest feature selection status: ${result.status}. ${selected} ${result.selected_reason} Top-ranked alternatives: ${alternatives}.`
+    : `Post-playtest feature selection status: ${result.status}. ${selected} ${result.selected_reason}`;
+}
+
+function buildPostPlaytestFeatureSelectionValidationLines(result: PostPlaytestFeatureSelectorResult | null): string[] {
+  if (!result) {
+    return [];
+  }
+
+  return [
+    `Post-playtest feature selection status: ${result.status}`,
+    `Post-playtest feature selection: ${result.selected_feature ?? "none"}`,
+    `Post-playtest feature selection reason: ${result.selected_reason}`,
+    `Post-playtest feature selection confidence: ${result.confidence}`,
+    ...result.candidate_scores.map((candidate) => `Candidate score: ${candidate.feature} = ${candidate.score} (${candidate.reason}) [${candidate.known_outcome_state}]`),
+    ...result.rejected_features.map((entry) => `Rejected: ${entry.feature} (${entry.reason})`),
   ];
 }
 
@@ -4467,6 +4513,7 @@ function buildPostPlaytestExecutionResultValidationLines(result: PostPlaytestExe
 
 type PostPlaytestFollowupLoopResult = {
   learning: AutoRecordOutcomeResult;
+  featureSelection: PostPlaytestFeatureSelectorResult;
   decision: PostPlaytestDecisionResult;
   strategySelection: PostPlaytestStrategySelectorResult;
   fixPlan: PostPlaytestFixPlanResult;
@@ -4480,6 +4527,7 @@ function buildPostPlaytestFollowupSummary(result: PostPlaytestFollowupLoopResult
 
   return [
     `Post-playtest follow-up learning status: ${result.learning.status}.`,
+    `Post-playtest follow-up feature selection status: ${result.featureSelection.status}.`,
     `Post-playtest follow-up decision status: ${result.decision.status}.`,
     `Post-playtest follow-up strategy selection status: ${result.strategySelection.status}.`,
     `Post-playtest follow-up fix plan status: ${result.fixPlan.status}.`,
@@ -4494,11 +4542,45 @@ function buildPostPlaytestFollowupValidationLines(result: PostPlaytestFollowupLo
 
   return [
     `Post-playtest follow-up learning status: ${result.learning.status}`,
+    `Post-playtest follow-up feature selection status: ${result.featureSelection.status}`,
     `Post-playtest follow-up decision status: ${result.decision.status}`,
     `Post-playtest follow-up strategy selection status: ${result.strategySelection.status}`,
     `Post-playtest follow-up fix plan status: ${result.fixPlan.status}`,
     `Post-playtest follow-up execution plan status: ${result.executionPlan.status}`,
   ];
+}
+
+function buildPostPlaytestFeatureSelection(
+  learning: AutoRecordOutcomeResult | null,
+  options: UnityValidationExecutionOptions | undefined,
+): PostPlaytestFeatureSelectorResult {
+  const configuredPool = options?.post_playtest_feature_selection?.feature_pool
+    ?.map((feature) => feature.trim())
+    .filter((feature) => feature.length > 0) ?? [];
+  const fallbackFeature = learning && learning.status !== "blocked"
+    ? learning.feature
+    : null;
+  const featurePool = configuredPool.length > 0
+    ? configuredPool
+    : fallbackFeature
+      ? [fallbackFeature]
+      : [];
+  const configuredEvidence = options?.post_playtest_feature_selection?.feature_evidence ?? [];
+  const evidenceMap = new Map(configuredEvidence.map((entry) => [entry.feature, entry]));
+
+  if (fallbackFeature && !evidenceMap.has(fallbackFeature)) {
+    evidenceMap.set(fallbackFeature, {
+      feature: fallbackFeature,
+      latest_outcome: learning,
+    });
+  }
+
+  return selectPostPlaytestFeature({
+    feature_pool: featurePool,
+    completed_features: options?.post_playtest_feature_selection?.completed_features,
+    attempted_features: options?.post_playtest_feature_selection?.attempted_features,
+    feature_evidence: Array.from(evidenceMap.values()),
+  });
 }
 
 async function runOutcomeLearningConfig(
@@ -4544,6 +4626,7 @@ function createUnityValidationEvidencePackages(
     | "raw_evidence_summary"
     | "evidence_timestamp"
     | "post_playtest_learning"
+    | "post_playtest_feature_selection"
     | "post_playtest_decision"
     | "post_playtest_strategy_selection"
     | "post_playtest_fix_plan"
@@ -4578,6 +4661,7 @@ function createUnityValidationEvidencePackages(
       `Evidence timestamp: ${result.evidence_timestamp}`,
       `Recommended next operator action: ${result.recommended_next_operator_action}`,
       ...buildPostPlaytestLearningValidationLines(result.post_playtest_learning),
+      ...buildPostPlaytestFeatureSelectionValidationLines(result.post_playtest_feature_selection),
       ...buildPostPlaytestDecisionValidationLines(result.post_playtest_decision),
       ...buildPostPlaytestStrategySelectionValidationLines(result.post_playtest_strategy_selection),
       ...buildPostPlaytestFixPlanValidationLines(result.post_playtest_fix_plan),
@@ -4612,6 +4696,7 @@ function createUnityValidationEvidencePackages(
       `Evidence timestamp: ${result.evidence_timestamp}`,
       `Recommended next operator action: ${result.recommended_next_operator_action}`,
       ...buildPostPlaytestLearningValidationLines(result.post_playtest_learning),
+      ...buildPostPlaytestFeatureSelectionValidationLines(result.post_playtest_feature_selection),
       ...buildPostPlaytestDecisionValidationLines(result.post_playtest_decision),
       ...buildPostPlaytestStrategySelectionValidationLines(result.post_playtest_strategy_selection),
       ...buildPostPlaytestFixPlanValidationLines(result.post_playtest_fix_plan),
@@ -4781,11 +4866,11 @@ export async function executeReviewedUnityValidation(
       review_package: null,
       delivery_package: null,
       post_playtest_learning: null,
+      post_playtest_feature_selection: null,
       post_playtest_decision: null,
       post_playtest_strategy_selection: null,
       post_playtest_fix_plan: null,
       post_playtest_execution_plan: null,
-      post_playtest_execution_result: null,
       post_playtest_execution_result: null,
       mutating: false,
     };
@@ -4801,6 +4886,8 @@ export async function executeReviewedUnityValidation(
 
   const postPlaytestLearning = await runPostPlaytestLearningHook(options);
   const postPlaytestLearningSummary = buildPostPlaytestLearningSummary(postPlaytestLearning);
+  const postPlaytestFeatureSelection = buildPostPlaytestFeatureSelection(postPlaytestLearning, options);
+  const postPlaytestFeatureSelectionSummary = buildPostPlaytestFeatureSelectionSummary(postPlaytestFeatureSelection);
   const postPlaytestDecision = decidePostPlaytestNextAction(postPlaytestLearning);
   const postPlaytestDecisionSummary = buildPostPlaytestDecisionSummary(postPlaytestDecision);
   const postPlaytestStrategySelection = selectPostPlaytestStrategy({
@@ -4857,6 +4944,7 @@ export async function executeReviewedUnityValidation(
 
   if (postPlaytestExecutionResult.followup_learning_required && options?.post_playtest_executor?.followup_learning) {
     const followupLearning = await runOutcomeLearningConfig(options.post_playtest_executor.followup_learning);
+    const followupFeatureSelection = buildPostPlaytestFeatureSelection(followupLearning, options);
     const followupDecision = decidePostPlaytestNextAction(followupLearning);
     const followupStrategySelection = selectPostPlaytestStrategy({
       decision: followupDecision,
@@ -4870,6 +4958,7 @@ export async function executeReviewedUnityValidation(
 
     resolvedPostPlaytestFollowupLoop = {
       learning: followupLearning,
+      featureSelection: followupFeatureSelection,
       decision: followupDecision,
       strategySelection: followupStrategySelection,
       fixPlan: followupFixPlan,
@@ -4902,6 +4991,7 @@ export async function executeReviewedUnityValidation(
     delivery_summary: [
       bridgeResult.summary,
       postPlaytestLearningSummary,
+      postPlaytestFeatureSelectionSummary,
       postPlaytestDecisionSummary,
       postPlaytestStrategySelectionSummary,
       postPlaytestFixPlanSummary,
@@ -4914,6 +5004,7 @@ export async function executeReviewedUnityValidation(
     review_package: null,
     delivery_package: null,
     post_playtest_learning: postPlaytestLearning,
+    post_playtest_feature_selection: postPlaytestFeatureSelection,
     post_playtest_decision: postPlaytestDecision,
     post_playtest_strategy_selection: postPlaytestStrategySelection,
     post_playtest_fix_plan: postPlaytestFixPlan,
@@ -5203,7 +5294,7 @@ export function evaluateUnityMutationExecutionChainReadiness(
     input.actions.map((action) => [action.action_id.trim(), evaluateUnityMutationExecutionChainActionReadiness(input, action)]),
   );
 
-  const orderedActions = resolvedPlan.orderedActions.map((plannedAction) => {
+  const orderedActions: UnityMutationExecutionChainReadinessActionResult[] = resolvedPlan.orderedActions.map((plannedAction) => {
     const baseReadiness = readinessByActionId.get(plannedAction.action_id);
     if (!baseReadiness) {
       return {
@@ -5880,9 +5971,9 @@ export async function executeUnityMutationExecutionChain(
     return buildChainExecutionBlockedResult(
       input,
       readinessResult,
-      `Controlled Unity chain execution does not support action type ${actionInput.action_type}.`,
+      `Controlled Unity chain execution does not support action type ${plannedAction.action_type}.`,
       "unsupported_action",
-      actionInput.action_id,
+      plannedAction.action_id,
     );
   }
 

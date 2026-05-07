@@ -8,7 +8,10 @@ import {
   createAutonomousWorkItem,
   createAutonomousWorkItemPolicyFeedback,
 } from "../lib/aie/autonomousWorkPlanning";
-import type { OperatorDashboardState } from "../lib/aie/operatorDashboardState";
+import type {
+  OperatorDashboardState,
+  OperatorRuntimeObservability,
+} from "../lib/aie/operatorDashboardState";
 import {
   createRuntimeStateStore,
   loadRuntimeState,
@@ -20,6 +23,7 @@ import {
   createOvernightAutonomyPolicyId,
   createOvernightAutonomyReviewId,
   createSupervisedAutonomySessionId,
+  type SupervisedAutonomySessionRecord,
 } from "../lib/aie/supervisedAutonomySession";
 import { createOperatorDashboardDemoState } from "../lib/aie/operatorDashboardDemoState";
 
@@ -37,6 +41,23 @@ export type ContinuousRuntimeProofSeedOptions = {
 
 function isoOffset(baseMs: number, offsetMs: number): string {
   return new Date(baseMs + offsetMs).toISOString();
+}
+
+function withRuntimeObservability(
+  value: Partial<OperatorRuntimeObservability> | undefined,
+  overrides: Partial<OperatorRuntimeObservability> = {},
+): OperatorRuntimeObservability {
+  return {
+    current_tick: value?.current_tick ?? 0,
+    last_tick_at: value?.last_tick_at ?? null,
+    last_mutation: value?.last_mutation ?? null,
+    last_semantic_transition: value?.last_semantic_transition ?? null,
+    latest_safety_gate_decision: value?.latest_safety_gate_decision ?? null,
+    next_scheduled_action: value?.next_scheduled_action ?? null,
+    next_scheduled_tick_at: value?.next_scheduled_tick_at ?? null,
+    event_log: value?.event_log ?? [],
+    ...overrides,
+  };
 }
 
 function createGoal(
@@ -310,10 +331,9 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         status: "goal_selected",
         explanation: "Deterministic planning recommendations are ready for operator approval.",
       },
-      runtime_observability: {
-        ...currentRecord.operator_dashboard_state.runtime_observability,
+      runtime_observability: withRuntimeObservability(currentRecord.operator_dashboard_state.runtime_observability, {
         next_scheduled_action: "Approve the top-ranked autonomous work item to start the bounded planning execution chain.",
-      },
+      }),
       proposed_work_items: [seededLowRiskItem, seededHighRiskItem],
       scheduled_work_items: [],
       running_work_items: [],
@@ -412,11 +432,10 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         status: "scheduler_idle",
         explanation: "The bounded scheduler is waiting for an operator delivery decision.",
       },
-      runtime_observability: {
-        ...currentRecord.operator_dashboard_state.runtime_observability,
+      runtime_observability: withRuntimeObservability(currentRecord.operator_dashboard_state.runtime_observability, {
         next_scheduled_action: "Approve the delivery package to record bounded commit authorization.",
         latest_safety_gate_decision: "passed",
-      },
+      }),
       proposed_work_items: [],
       scheduled_work_items: [],
       running_work_items: [],
@@ -469,11 +488,10 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         status: "goal_selected",
         explanation: "The bounded scheduler is coordinating runnable autonomous sessions.",
       },
-      runtime_observability: {
-        ...currentRecord.operator_dashboard_state.runtime_observability,
+      runtime_observability: withRuntimeObservability(currentRecord.operator_dashboard_state.runtime_observability, {
         next_scheduled_action: "Review or adjust the bounded autonomous session schedule.",
         latest_safety_gate_decision: "passed",
-      },
+      }),
       proposed_work_items: [],
       scheduled_work_items: [],
       running_work_items: [],
@@ -565,12 +583,11 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         status: "goal_selected",
         explanation: "The studio command center is highlighting the next operator-safe decision.",
       },
-      runtime_observability: {
-        ...currentRecord.operator_dashboard_state.runtime_observability,
+      runtime_observability: withRuntimeObservability(currentRecord.operator_dashboard_state.runtime_observability, {
         current_tick: 0,
         next_scheduled_action: "Review the blocked session, the pending review package, and the pending delivery queue before resuming safe work.",
         latest_safety_gate_decision: "passed",
-      },
+      }),
       proposed_work_items: demoState.proposed_work_items,
       scheduled_work_items: demoState.scheduled_work_items,
       running_work_items: demoState.running_work_items,
@@ -612,7 +629,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
     const demoState = createOperatorDashboardDemoState();
 
     currentRecord.last_status = "service_paused";
-    currentRecord.stop_reason = "operator_pause";
+    currentRecord.stop_reason = "operator_stopped";
     currentRecord.blockers = [];
     currentRecord.continuous_loop.reason = "Continuous runtime loop is paused while the operator reviews bounded meta-intelligence evidence.";
     currentRecord.operator_dashboard_state = {
@@ -644,12 +661,11 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         status: "scheduler_idle",
         explanation: "The next safe operator action is to review bounded meta-intelligence recommendations.",
       },
-      runtime_observability: {
-        ...currentRecord.operator_dashboard_state.runtime_observability,
+      runtime_observability: withRuntimeObservability(currentRecord.operator_dashboard_state.runtime_observability, {
         current_tick: 0,
         next_scheduled_action: "Review a detected pattern, decide whether to approve a bounded policy recommendation, and optionally request a fresh meta summary.",
         latest_safety_gate_decision: "passed",
-      },
+      }),
       proposed_work_items: demoState.proposed_work_items,
       scheduled_work_items: demoState.scheduled_work_items,
       running_work_items: demoState.running_work_items,
@@ -698,7 +714,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
     const demoState = createOperatorDashboardDemoState();
 
     currentRecord.last_status = "service_paused";
-    currentRecord.stop_reason = "operator_pause";
+    currentRecord.stop_reason = "operator_stopped";
     currentRecord.blockers = [];
     currentRecord.continuous_loop.reason = "Continuous runtime loop is paused while the operator reviews bounded strategy portfolio actions.";
     currentRecord.operator_dashboard_state = {
@@ -730,12 +746,11 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         status: "scheduler_idle",
         explanation: "The next safe operator action is to review, activate, or decompose a strategic goal.",
       },
-      runtime_observability: {
-        ...currentRecord.operator_dashboard_state.runtime_observability,
+      runtime_observability: withRuntimeObservability(currentRecord.operator_dashboard_state.runtime_observability, {
         current_tick: 0,
         next_scheduled_action: "Review a proposed strategic goal, activate an approved goal, decompose bounded work, and request a fresh strategy summary.",
         latest_safety_gate_decision: "passed",
-      },
+      }),
       proposed_work_items: demoState.proposed_work_items,
       scheduled_work_items: demoState.scheduled_work_items,
       running_work_items: demoState.running_work_items,
@@ -789,7 +804,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
     const demoState = createOperatorDashboardDemoState();
 
     currentRecord.last_status = "service_paused";
-    currentRecord.stop_reason = "operator_pause";
+    currentRecord.stop_reason = "operator_stopped";
     currentRecord.blockers = [];
     currentRecord.continuous_loop.reason = "Continuous runtime loop is paused while the operator routes requests through the bounded conversational command layer.";
     currentRecord.operator_dashboard_state = {
@@ -821,12 +836,11 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         status: "scheduler_idle",
         explanation: "The next safe operator action is to submit a chat message, review the proposed route, and request a bounded summary if needed.",
       },
-      runtime_observability: {
-        ...currentRecord.operator_dashboard_state.runtime_observability,
+      runtime_observability: withRuntimeObservability(currentRecord.operator_dashboard_state.runtime_observability, {
         current_tick: 0,
         next_scheduled_action: "Submit a chat message, review the bounded proposal, optionally select a chat option, and request a persisted summary.",
         latest_safety_gate_decision: "passed",
-      },
+      }),
       proposed_work_items: demoState.proposed_work_items,
       scheduled_work_items: demoState.scheduled_work_items,
       running_work_items: demoState.running_work_items,
@@ -879,7 +893,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
   if (mode === "supervised-autonomy" || mode === "overnight-autonomy") {
     const startedAt = new Date(nowMs).toISOString();
     const sessionId = createSupervisedAutonomySessionId(record.runtime_id, startedAt);
-    const supervisedSession = {
+    const supervisedSession: SupervisedAutonomySessionRecord = {
       session_id: sessionId,
       runtime_id: record.runtime_id,
       status: mode === "overnight-autonomy" ? "waiting_for_operator" as const : "pending_approval" as const,
@@ -991,12 +1005,14 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         ? "The overnight autonomy session is waiting for operator review."
         : "The supervised autonomy session is pending operator approval.",
     };
-    currentRecord.operator_dashboard_state.runtime_observability = {
-      ...currentRecord.operator_dashboard_state.runtime_observability,
-      next_scheduled_action: mode === "overnight-autonomy"
-        ? "Resolve the overnight review queue item before the next bounded resume."
-        : "Approve the pending supervised session to start bounded autonomous ticks.",
-    };
+    currentRecord.operator_dashboard_state.runtime_observability = withRuntimeObservability(
+      currentRecord.operator_dashboard_state.runtime_observability,
+      {
+        next_scheduled_action: mode === "overnight-autonomy"
+          ? "Resolve the overnight review queue item before the next bounded resume."
+          : "Approve the pending supervised session to start bounded autonomous ticks.",
+      },
+    );
   }
 
   persistRuntimeStateRecord(store, currentRecord);

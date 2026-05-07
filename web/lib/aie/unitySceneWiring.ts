@@ -3,6 +3,11 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 
 import { inspectGameProject, type GameProjectSnapshot } from "./gameProjectInspector";
+import type { UnityPatchArtifact } from "./gameTaskGenerator";
+
+function sha256(source: string): string {
+  return createHash("sha256").update(source).digest("hex");
+}
 
 export type UnitySceneWiringSnapshot = {
   projectPath: string;
@@ -360,6 +365,69 @@ export type UnityPlayerAttackRollbackResult = {
   };
 };
 
+export type UnityGameLoopStatus = {
+  scenePath: string;
+  sceneAbsolutePath: string;
+  gameLoopName: string | null;
+  winMessageName: string | null;
+  gameLoopScriptExists: boolean;
+  gameLoopMetaExists: boolean;
+  basicEnemyScriptExists: boolean;
+  basicEnemyMetaExists: boolean;
+  gameLoopAttached: boolean;
+  winFeedbackPresent: boolean;
+  enemyDefeatConnected: boolean;
+  backupExists: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  details: string[];
+  safety: {
+    readOnly: true;
+    noUnityExecution: true;
+  };
+};
+
+export type UnityGameLoopApplyResult = {
+  applied: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  gameLoopName: string | null;
+  winMessageName: string | null;
+  scriptPath: string;
+  backupPath: string;
+  gameLoopScriptExists: boolean;
+  gameLoopAttached: boolean;
+  winFeedbackPresent: boolean;
+  enemyDefeatConnected: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupCreated: boolean;
+    sceneWritten: boolean;
+  };
+};
+
+export type UnityGameLoopRollbackResult = {
+  restored: boolean;
+  scenePath: string;
+  sceneAbsolutePath: string;
+  gameLoopName: string | null;
+  winMessageName: string | null;
+  scriptPath: string;
+  backupPath: string;
+  gameLoopScriptExists: boolean;
+  gameLoopAttached: boolean;
+  winFeedbackPresent: boolean;
+  enemyDefeatConnected: boolean;
+  safeToOpenUnityForCompileOrPlaytest: boolean;
+  blockedReasons: string[];
+  safety: {
+    noUnityExecution: true;
+    backupRetained: true;
+    scriptRemoved: boolean;
+  };
+};
+
 export type UnityAttackFeedbackStatus = {
   scenePath: string;
   sceneAbsolutePath: string;
@@ -594,6 +662,11 @@ const PLAYER_ATTACK_SCENE_BACKUP_TAG = "player-attack";
 const PLAYER_ATTACK_STATE_DIR = ".aie-state/player-attack";
 const PLAYER_ATTACK_CREATED_SCRIPT_MARKER = `${PLAYER_ATTACK_STATE_DIR}/PlayerAttack.cs.created`;
 const PLAYER_ATTACK_CREATED_META_MARKER = `${PLAYER_ATTACK_STATE_DIR}/PlayerAttack.cs.meta.created`;
+const GAME_LOOP_NAME = "AIE_GameLoop";
+const GAME_LOOP_WIN_MESSAGE_NAME = "AIE_WinMessage";
+const GAME_LOOP_SCRIPT_PATH = "Assets/Scripts/GameLoopController.cs";
+const GAME_LOOP_META_PATH = `${GAME_LOOP_SCRIPT_PATH}.meta`;
+const GAME_LOOP_WIRING_BACKUP_TAG = "game-loop-wiring";
 const ATTACK_FEEDBACK_BACKUP_TAG = "attack-feedback";
 const ENEMY_HEALTH_BACKUP_TAG = "enemy-health";
 const VISUAL_DEBUG_MATERIAL_DIR = "Assets/Materials";
@@ -1026,6 +1099,13 @@ function buildBasicEnemySource(): string {
     "            }",
     "",
     "            ResetVisualState();",
+    "",
+    "            GameLoopController gameLoop = FindFirstObjectByType<GameLoopController>();",
+    "            if (gameLoop != null)",
+    "            {",
+    "                gameLoop.RegisterWin(\"Enemy defeated. Objective complete.\");",
+    "            }",
+    "",
     "            gameObject.SetActive(false);",
     "        }",
     "",
@@ -1071,6 +1151,78 @@ async function ensureBasicEnemyScript(projectRoot: string): Promise<{ scriptExis
     scriptExisted,
     metaExisted,
     guid,
+  };
+}
+
+export async function generateBasicEnemyScriptArtifact(
+  snapshot: GameProjectSnapshot,
+  targetFile = BASIC_ENEMY_SCRIPT_PATH,
+): Promise<UnityPatchArtifact> {
+  if (snapshot.engine !== "unity") {
+    throw new Error("Basic enemy script generation requires a Unity project.");
+  }
+
+  const absoluteTargetPath = path.join(snapshot.rootPath, targetFile);
+  if (await fileExists(absoluteTargetPath)) {
+    throw new Error(`Basic enemy target already exists: ${targetFile}`);
+  }
+
+  const replacementCode = buildBasicEnemySource();
+  return {
+    patchKind: "gameplay-update",
+    operation: "create-new-script",
+    targetFile,
+    absoluteTargetPath,
+    originalSha256: "missing-file",
+    replacementSha256: sha256(replacementCode),
+    replacementCode,
+    validationRules: {
+      preserveClassName: "BasicEnemy",
+      preserveNamespace: "EnemyAIDemo",
+      forbiddenClassNames: ["PlayerController"],
+      requireNoDuplicateMethods: true,
+    },
+    safety: {
+      requiresCleanRecoveryState: true,
+      createsBackupBeforeApply: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function generatePlayerAttackScriptArtifact(
+  snapshot: GameProjectSnapshot,
+  targetFile = PLAYER_ATTACK_SCRIPT_PATH,
+): Promise<UnityPatchArtifact> {
+  if (snapshot.engine !== "unity") {
+    throw new Error("Player attack script generation requires a Unity project.");
+  }
+
+  const absoluteTargetPath = path.join(snapshot.rootPath, targetFile);
+  if (await fileExists(absoluteTargetPath)) {
+    throw new Error(`Player attack target already exists: ${targetFile}`);
+  }
+
+  const replacementCode = buildPlayerAttackSource();
+  return {
+    patchKind: "gameplay-update",
+    operation: "create-new-script",
+    targetFile,
+    absoluteTargetPath,
+    originalSha256: "missing-file",
+    replacementSha256: sha256(replacementCode),
+    replacementCode,
+    validationRules: {
+      preserveClassName: "PlayerAttack",
+      preserveNamespace: "EnemyAIDemo",
+      forbiddenClassNames: ["PlayerController"],
+      requireNoDuplicateMethods: true,
+    },
+    safety: {
+      requiresCleanRecoveryState: true,
+      createsBackupBeforeApply: true,
+      noUnityExecution: true,
+    },
   };
 }
 
@@ -1164,6 +1316,95 @@ function buildPlayerAttackSource(): string {
     "        private Vector3 GetAttackOrigin()",
     "        {",
     "            return transform.position + Vector3.up + (transform.forward * Mathf.Min(attackRange * 0.6f, 1.5f));",
+    "        }",
+    "    }",
+    "}",
+    "",
+  ].join("\n");
+}
+
+function buildGameLoopControllerSource(): string {
+  return [
+    "using UnityEngine;",
+    "using UnityEngine.SceneManagement;",
+    "",
+    "namespace EnemyAIDemo",
+    "{",
+    "    /// <summary>",
+    "    /// Tracks a minimal win/lose loop for the current prototype, reveals a visible completion marker, and supports quick restart.",
+    "    /// </summary>",
+    "    [DisallowMultipleComponent]",
+    "    public sealed class GameLoopController : MonoBehaviour",
+    "    {",
+    "        [SerializeField] private string sceneName = \"EnemyAIDemo\";",
+    "        [SerializeField] private KeyCode restartKey = KeyCode.R;",
+    "        [SerializeField] private GameObject winFeedbackRoot;",
+    "        [SerializeField] private bool hideWinFeedbackOnStart = true;",
+    "        [SerializeField] private bool debugGameLoop = true;",
+    "",
+    "        private bool gameOver;",
+    "        private string gameOverReason = string.Empty;",
+    "",
+    "        public bool IsGameOver => gameOver;",
+    "        public string GameOverReason => gameOverReason;",
+    "",
+    "        private void Awake()",
+    "        {",
+    "            if (hideWinFeedbackOnStart)",
+    "            {",
+    "                SetWinFeedbackVisible(false);",
+    "            }",
+    "        }",
+    "",
+    "        private void Update()",
+    "        {",
+    "            if (gameOver && Input.GetKeyDown(restartKey))",
+    "            {",
+    "                RestartLevel();",
+    "            }",
+    "        }",
+    "",
+    "        public void RegisterWin(string reason = \"Objective complete. You win.\")",
+    "        {",
+    "            SetGameOver(reason, true);",
+    "        }",
+    "",
+    "        public void RegisterLoss(string reason = \"Player lost the encounter.\")",
+    "        {",
+    "            SetGameOver(reason, false);",
+    "        }",
+    "",
+    "        public void RestartLevel()",
+    "        {",
+    "            string targetScene = string.IsNullOrWhiteSpace(sceneName)",
+    "                ? SceneManager.GetActiveScene().name",
+    "                : sceneName;",
+    "            SceneManager.LoadScene(targetScene);",
+    "        }",
+    "",
+    "        private void SetGameOver(string reason, bool showWinFeedback)",
+    "        {",
+    "            gameOver = true;",
+    "            gameOverReason = string.IsNullOrWhiteSpace(reason) ? \"Game over.\" : reason;",
+    "            if (showWinFeedback)",
+    "            {",
+    "                SetWinFeedbackVisible(true);",
+    "            }",
+    "",
+    "            if (debugGameLoop)",
+    "            {",
+    "                Debug.Log($\"[AIE Game Loop] {gameOverReason}\", this);",
+    "            }",
+    "        }",
+    "",
+    "        private void SetWinFeedbackVisible(bool visible)",
+    "        {",
+    "            if (winFeedbackRoot == null)",
+    "            {",
+    "                return;",
+    "            }",
+    "",
+    "            winFeedbackRoot.SetActive(visible);",
     "        }",
     "    }",
     "}",
@@ -1384,7 +1625,7 @@ function isDebugMaterialAssigned(material: UnityMaterialReference | null, debugM
 }
 
 function scoreGroundCandidate(blocks: readonly SceneBlock[], sceneObject: SceneObject): number {
-  const normalizedName = sceneObject.name.trim().toLowerCase();
+  const normalizedName = String(sceneObject.name ?? "").trim().toLowerCase();
   const hasRenderer = findComponentFileIdByType(blocks, sceneObject, "23") !== null;
   const hasMeshFilter = findComponentFileIdByType(blocks, sceneObject, "33") !== null;
   const hasMeshCollider = findComponentFileIdByType(blocks, sceneObject, "64") !== null;
@@ -1410,7 +1651,7 @@ function scoreGroundCandidate(blocks: readonly SceneBlock[], sceneObject: SceneO
   if (usesBuiltinPlaneMesh) {
     score += 10;
   }
-  if (sceneObject.tag.toLowerCase() === "untagged") {
+  if (String(sceneObject.tag ?? "").toLowerCase() === "untagged") {
     score += 1;
   }
   return score;
@@ -1462,6 +1703,11 @@ function extractBlockTargetFileId(block: SceneBlock | null): string | null {
 }
 
 function extractNamedTransformFileId(block: SceneBlock | null, fieldName: string): string | null {
+  const escapedFieldName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return block?.body.match(new RegExp(`^  ${escapedFieldName}: \\{fileID: (\\d+)\\}$`, "m"))?.[1] ?? null;
+}
+
+function extractNamedGameObjectFileId(block: SceneBlock | null, fieldName: string): string | null {
   const escapedFieldName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return block?.body.match(new RegExp(`^  ${escapedFieldName}: \\{fileID: (\\d+)\\}$`, "m"))?.[1] ?? null;
 }
@@ -3592,6 +3838,812 @@ export async function rollbackUnityPlayerAttack(projectPath: string, recoverySaf
   };
 }
 
+type GameLoopVerification = {
+  componentFileId: string | null;
+  componentListLinked: boolean;
+  monoBehaviourBlockExists: boolean;
+  scriptGuidMatchesMeta: boolean;
+  winFeedbackAssigned: boolean;
+  componentVisibleToUnity: boolean;
+  brokenLinks: string[];
+};
+
+type LoadedGameLoopContext = {
+  parsedScene: ParsedScene;
+  gameLoopObject: SceneObject | null;
+  gameLoopTransformFileId: string | null;
+  winMessageObject: SceneObject | null;
+  winMessageTransformFileId: string | null;
+  enemyObject: SceneObject | null;
+  enemyTransformFileId: string | null;
+  enemyPosition: { x: number; y: number; z: number } | null;
+  playerPosition: { x: number; y: number; z: number } | null;
+  groundPosition: { x: number; y: number; z: number } | null;
+  gameLoopScriptGuid: string | null;
+  verification: GameLoopVerification;
+};
+
+function inspectGameLoopControllerSource(source: string): { winFeedbackFieldsPresent: boolean; winFeedbackMethodsPresent: boolean; } {
+  const winFeedbackFieldsPresent = /winFeedbackRoot/.test(source)
+    && /hideWinFeedbackOnStart/.test(source)
+    && /debugGameLoop/.test(source);
+  const winFeedbackMethodsPresent = /RegisterWin\(string reason/.test(source)
+    && /SetGameOver\(string reason, bool showWinFeedback\)/.test(source)
+    && /SetWinFeedbackVisible\(bool visible\)/.test(source)
+    && /winFeedbackRoot\.SetActive\(visible\)/.test(source);
+
+  return {
+    winFeedbackFieldsPresent,
+    winFeedbackMethodsPresent,
+  };
+}
+
+function inspectBasicEnemyGameLoopSource(source: string): { enemyDefeatConnected: boolean; } {
+  return {
+    enemyDefeatConnected: /FindFirstObjectByType<GameLoopController>\(\)/.test(source)
+      && /RegisterWin\("Enemy defeated\. Objective complete\."\)/.test(source),
+  };
+}
+
+function isGameLoopCandidateBlock(block: SceneBlock, gameLoopGameObjectFileId: string | null, scriptGuid: string | null): boolean {
+  if (block.typeId !== "114") {
+    return false;
+  }
+
+  if (gameLoopGameObjectFileId && extractBlockGameObjectFileId(block) !== gameLoopGameObjectFileId) {
+    return false;
+  }
+
+  const blockScriptGuid = extractBlockScriptGuid(block);
+  if (scriptGuid && blockScriptGuid === scriptGuid) {
+    return true;
+  }
+
+  return /winFeedbackRoot/.test(block.body)
+    || /^  hideWinFeedbackOnStart:/m.test(block.body)
+    || /^  debugGameLoop:/m.test(block.body)
+    || /^  restartKey:/m.test(block.body);
+}
+
+function hasExpectedGameLoopSerializedFields(block: SceneBlock | null, winFeedbackGameObjectFileId: string | null): boolean {
+  if (!block) {
+    return false;
+  }
+
+  return /^  m_EditorClassIdentifier:\s*$/m.test(block.body)
+    && /^  sceneName: EnemyAIDemo$/m.test(block.body)
+    && /^  restartKey: 114$/m.test(block.body)
+    && extractNamedGameObjectFileId(block, "winFeedbackRoot") === winFeedbackGameObjectFileId
+    && /^  hideWinFeedbackOnStart: 1$/m.test(block.body)
+    && /^  debugGameLoop: 1$/m.test(block.body);
+}
+
+function buildGameLoopVerification(
+  blocks: readonly SceneBlock[],
+  gameLoopObject: SceneObject | null,
+  winFeedbackGameObjectFileId: string | null,
+  scriptGuid: string | null,
+): GameLoopVerification {
+  if (!gameLoopObject) {
+    return {
+      componentFileId: null,
+      componentListLinked: false,
+      monoBehaviourBlockExists: false,
+      scriptGuidMatchesMeta: false,
+      winFeedbackAssigned: false,
+      componentVisibleToUnity: false,
+      brokenLinks: [`${GAME_LOOP_NAME} GameObject was not found.`],
+    };
+  }
+
+  const brokenLinks: string[] = [];
+  const linkedComponentIds = gameLoopObject.componentFileIds.filter((componentFileId) => {
+    const block = findBlock(blocks, componentFileId);
+    return block !== null && isGameLoopCandidateBlock(block, gameLoopObject.gameObjectFileId, scriptGuid);
+  });
+  const componentFileId = linkedComponentIds[0] ?? null;
+  const linkedComponentBlock = findBlock(blocks, componentFileId);
+  const componentListLinked = componentFileId !== null && isSafeSceneFileId(componentFileId);
+  const monoBehaviourBlockExists = linkedComponentBlock?.typeId === "114" && extractBlockGameObjectFileId(linkedComponentBlock) === gameLoopObject.gameObjectFileId;
+  const scriptGuidMatchesMeta = scriptGuid !== null && extractBlockScriptGuid(linkedComponentBlock) === scriptGuid;
+  const winFeedbackAssigned = winFeedbackGameObjectFileId !== null && extractNamedGameObjectFileId(linkedComponentBlock, "winFeedbackRoot") === winFeedbackGameObjectFileId;
+  const componentVisibleToUnity = componentListLinked
+    && monoBehaviourBlockExists
+    && scriptGuidMatchesMeta
+    && winFeedbackAssigned
+    && hasExpectedGameLoopSerializedFields(linkedComponentBlock, winFeedbackGameObjectFileId);
+
+  if (linkedComponentIds.length === 0) {
+    brokenLinks.push(`${GAME_LOOP_NAME} m_Component list does not link a GameLoopController MonoBehaviour block.`);
+  }
+
+  if (componentFileId !== null && !isSafeSceneFileId(componentFileId)) {
+    brokenLinks.push(`${GAME_LOOP_NAME} references GameLoopController with unsafe scene fileID ${componentFileId}.`);
+  }
+
+  if (!monoBehaviourBlockExists) {
+    brokenLinks.push("Referenced GameLoopController MonoBehaviour block is missing or not linked back to AIE_GameLoop.");
+  }
+
+  if (scriptGuid === null) {
+    brokenLinks.push("GameLoopController.cs.meta is missing, so Unity cannot resolve the script GUID.");
+  } else if (!scriptGuidMatchesMeta) {
+    brokenLinks.push("GameLoopController MonoBehaviour block does not reference the GameLoopController.cs.meta GUID.");
+  }
+
+  if (!winFeedbackAssigned) {
+    brokenLinks.push("GameLoopController MonoBehaviour block does not assign the AIE_WinMessage object.");
+  }
+
+  if (linkedComponentBlock && !hasExpectedGameLoopSerializedFields(linkedComponentBlock, winFeedbackGameObjectFileId)) {
+    brokenLinks.push("GameLoopController MonoBehaviour block uses stale or incomplete serialized fields.");
+  }
+
+  return {
+    componentFileId,
+    componentListLinked,
+    monoBehaviourBlockExists,
+    scriptGuidMatchesMeta,
+    winFeedbackAssigned,
+    componentVisibleToUnity,
+    brokenLinks,
+  };
+}
+
+function replaceGameObjectActiveState(gameObjectRaw: string, active: boolean): string {
+  return gameObjectRaw.replace(/^  m_IsActive: [01]$/m, `  m_IsActive: ${active ? "1" : "0"}`);
+}
+
+function buildGameLoopComponentBlock(
+  componentFileId: string,
+  gameLoopGameObjectFileId: string,
+  scriptGuid: string,
+  winFeedbackGameObjectFileId: string,
+): string {
+  return [
+    `--- !u!114 &${componentFileId}`,
+    "MonoBehaviour:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${gameLoopGameObjectFileId}}`,
+    "  m_Enabled: 1",
+    "  m_EditorHideFlags: 0",
+    `  m_Script: {fileID: 11500000, guid: ${scriptGuid}, type: 3}`,
+    "  m_Name: ",
+    "  m_EditorClassIdentifier:",
+    "  sceneName: EnemyAIDemo",
+    "  restartKey: 114",
+    `  winFeedbackRoot: {fileID: ${winFeedbackGameObjectFileId}}`,
+    "  hideWinFeedbackOnStart: 1",
+    "  debugGameLoop: 1",
+    "",
+  ].join("\n");
+}
+
+function buildWinMessageRendererBlock(rendererFileId: string, gameObjectFileId: string): string {
+  return [
+    `--- !u!23 &${rendererFileId}`,
+    "MeshRenderer:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${gameObjectFileId}}`,
+    "  m_Enabled: 1",
+    "  m_CastShadows: 1",
+    "  m_ReceiveShadows: 1",
+    "  m_DynamicOccludee: 1",
+    "  m_StaticShadowCaster: 0",
+    "  m_MotionVectors: 1",
+    "  m_LightProbeUsage: 1",
+    "  m_ReflectionProbeUsage: 1",
+    "  m_RayTracingMode: 2",
+    "  m_RayTraceProcedural: 0",
+    "  m_RayTracingAccelStructBuildFlagsOverride: 0",
+    "  m_RayTracingAccelStructBuildFlags: 1",
+    "  m_SmallMeshCulling: 1",
+    "  m_ForceMeshLod: -1",
+    "  m_MeshLodSelectionBias: 0",
+    "  m_RenderingLayerMask: 1",
+    "  m_RendererPriority: 0",
+    "  m_Materials:",
+    "  - {fileID: 10303, guid: 0000000000000000f000000000000000, type: 0}",
+    "  m_StaticBatchInfo:",
+    "    firstSubMesh: 0",
+    "    subMeshCount: 0",
+    "  m_StaticBatchRoot: {fileID: 0}",
+    "  m_ProbeAnchor: {fileID: 0}",
+    "  m_LightProbeVolumeOverride: {fileID: 0}",
+    "  m_ScaleInLightmap: 1",
+    "  m_ReceiveGI: 1",
+    "  m_PreserveUVs: 1",
+    "  m_IgnoreNormalsForChartDetection: 0",
+    "  m_ImportantGI: 0",
+    "  m_StitchLightmapSeams: 1",
+    "  m_SelectedEditorRenderState: 3",
+    "  m_MinimumChartSize: 4",
+    "  m_AutoUVMaxDistance: 0.5",
+    "  m_AutoUVMaxAngle: 89",
+    "  m_LightmapParameters: {fileID: 0}",
+    "  m_GlobalIlluminationMeshLod: 0",
+    "  m_SortingLayerID: 0",
+    "  m_SortingLayer: 0",
+    "  m_SortingOrder: 0",
+    "  m_AdditionalVertexStreams: {fileID: 0}",
+    "",
+  ].join("\n");
+}
+
+function buildWinMessageColliderBlock(colliderFileId: string, gameObjectFileId: string): string {
+  return [
+    `--- !u!136 &${colliderFileId}`,
+    "CapsuleCollider:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${gameObjectFileId}}`,
+    "  m_Material: {fileID: 0}",
+    "  m_IncludeLayers:",
+    "    serializedVersion: 2",
+    "    m_Bits: 0",
+    "  m_ExcludeLayers:",
+    "    serializedVersion: 2",
+    "    m_Bits: 0",
+    "  m_LayerOverridePriority: 0",
+    "  m_IsTrigger: 1",
+    "  m_ProvidesContacts: 0",
+    "  m_Enabled: 1",
+    "  serializedVersion: 2",
+    "  m_Radius: 0.5",
+    "  m_Height: 2",
+    "  m_Direction: 1",
+    "  m_Center: {x: 0, y: 0, z: 0}",
+    "",
+  ].join("\n");
+}
+
+function buildWinMessageMeshFilterBlock(meshFilterFileId: string, gameObjectFileId: string): string {
+  return [
+    `--- !u!33 &${meshFilterFileId}`,
+    "MeshFilter:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${gameObjectFileId}}`,
+    "  m_Mesh: {fileID: 10208, guid: 0000000000000000e000000000000000, type: 0}",
+    "",
+  ].join("\n");
+}
+
+function buildWinMessageBlocks(
+  gameObjectFileId: string,
+  transformFileId: string,
+  rendererFileId: string,
+  colliderFileId: string,
+  meshFilterFileId: string,
+  position: { x: number; y: number; z: number },
+): string {
+  return [
+    `--- !u!1 &${gameObjectFileId}`,
+    "GameObject:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    "  serializedVersion: 6",
+    "  m_Component:",
+    `  - component: {fileID: ${transformFileId}}`,
+    `  - component: {fileID: ${rendererFileId}}`,
+    `  - component: {fileID: ${colliderFileId}}`,
+    `  - component: {fileID: ${meshFilterFileId}}`,
+    "  m_Layer: 0",
+    `  m_Name: ${GAME_LOOP_WIN_MESSAGE_NAME}`,
+    "  m_TagString: Untagged",
+    "  m_Icon: {fileID: 0}",
+    "  m_NavMeshLayer: 0",
+    "  m_StaticEditorFlags: 0",
+    "  m_IsActive: 0",
+    buildWinMessageRendererBlock(rendererFileId, gameObjectFileId).trimEnd(),
+    buildWinMessageColliderBlock(colliderFileId, gameObjectFileId).trimEnd(),
+    buildWinMessageMeshFilterBlock(meshFilterFileId, gameObjectFileId).trimEnd(),
+    `--- !u!4 &${transformFileId}`,
+    "Transform:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${gameObjectFileId}}`,
+    "  serializedVersion: 2",
+    "  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}",
+    `  m_LocalPosition: {x: ${position.x}, y: ${position.y}, z: ${position.z}}`,
+    "  m_LocalScale: {x: 4.5, y: 1.2, z: 1.2}",
+    "  m_ConstrainProportionsScale: 0",
+    "  m_Children: []",
+    "  m_Father: {fileID: 0}",
+    "  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}",
+    "",
+  ].join("\n");
+}
+
+function buildGameLoopBlocks(
+  gameObjectFileId: string,
+  transformFileId: string,
+  componentFileId: string,
+  scriptGuid: string,
+  winFeedbackGameObjectFileId: string,
+  position: { x: number; y: number; z: number },
+): string {
+  return [
+    `--- !u!1 &${gameObjectFileId}`,
+    "GameObject:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    "  serializedVersion: 6",
+    "  m_Component:",
+    `  - component: {fileID: ${transformFileId}}`,
+    `  - component: {fileID: ${componentFileId}}`,
+    "  m_Layer: 0",
+    `  m_Name: ${GAME_LOOP_NAME}`,
+    "  m_TagString: Untagged",
+    "  m_Icon: {fileID: 0}",
+    "  m_NavMeshLayer: 0",
+    "  m_StaticEditorFlags: 0",
+    "  m_IsActive: 1",
+    buildGameLoopComponentBlock(componentFileId, gameObjectFileId, scriptGuid, winFeedbackGameObjectFileId).trimEnd(),
+    `--- !u!4 &${transformFileId}`,
+    "Transform:",
+    "  m_ObjectHideFlags: 0",
+    "  m_CorrespondingSourceObject: {fileID: 0}",
+    "  m_PrefabInstance: {fileID: 0}",
+    "  m_PrefabAsset: {fileID: 0}",
+    `  m_GameObject: {fileID: ${gameObjectFileId}}`,
+    "  serializedVersion: 2",
+    "  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}",
+    `  m_LocalPosition: {x: ${position.x}, y: ${position.y}, z: ${position.z}}`,
+    "  m_LocalScale: {x: 1, y: 1, z: 1}",
+    "  m_ConstrainProportionsScale: 0",
+    "  m_Children: []",
+    "  m_Father: {fileID: 0}",
+    "  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}",
+    "",
+  ].join("\n");
+}
+
+function collectStaleGameLoopComponentIds(parsedScene: ParsedScene, gameLoopObject: SceneObject, scriptGuid: string | null): string[] {
+  return parsedScene.blocks
+    .filter((block) => isGameLoopCandidateBlock(block, gameLoopObject.gameObjectFileId, scriptGuid))
+    .map((block) => block.fileId);
+}
+
+function nextSceneFileIdAllocator(blocks: readonly SceneBlock[]): () => string {
+  const safeIds = blocks
+    .map((block) => Number(block.fileId))
+    .filter((value) => Number.isInteger(value) && value > 0 && value <= MAX_SAFE_UNITY_SCENE_FILE_ID);
+  let nextId = (safeIds.length > 0 ? Math.max(...safeIds) : 0) + 1;
+  return () => String(nextId++);
+}
+
+async function loadGameLoopContext(projectPath: string): Promise<LoadedGameLoopContext> {
+  const parsedScene = await parseProjectScene(projectPath);
+  const gameLoopObject = findSceneObjectByName(parsedScene.objects, GAME_LOOP_NAME);
+  const gameLoopTransformFileId = gameLoopObject ? findComponentFileIdByType(parsedScene.blocks, gameLoopObject, "4") : null;
+  const winMessageObject = findSceneObjectByName(parsedScene.objects, GAME_LOOP_WIN_MESSAGE_NAME);
+  const winMessageTransformFileId = winMessageObject ? findComponentFileIdByType(parsedScene.blocks, winMessageObject, "4") : null;
+  const enemyObject = findSceneObjectByName(parsedScene.objects, BASIC_ENEMY_NAME);
+  const enemyTransformFileId = enemyObject ? findComponentFileIdByType(parsedScene.blocks, enemyObject, "4") : null;
+  const enemyPosition = parseVector3FromTransformBlock(findBlock(parsedScene.blocks, enemyTransformFileId));
+  const playerPosition = parseVector3FromTransformBlock(findBlock(parsedScene.blocks, parsedScene.playerTransformFileId));
+  const groundDetection = detectPrimaryGroundRenderer(parsedScene.blocks, parsedScene.objects);
+  const groundTransformFileId = groundDetection ? findComponentFileIdByType(parsedScene.blocks, groundDetection.sceneObject, "4") : null;
+  const groundPosition = parseVector3FromTransformBlock(findBlock(parsedScene.blocks, groundTransformFileId));
+  const gameLoopScriptGuid = await readGuidFromMeta(path.join(parsedScene.rootPath, GAME_LOOP_META_PATH));
+  const verification = buildGameLoopVerification(parsedScene.blocks, gameLoopObject, winMessageObject?.gameObjectFileId ?? null, gameLoopScriptGuid);
+
+  return {
+    parsedScene,
+    gameLoopObject,
+    gameLoopTransformFileId,
+    winMessageObject,
+    winMessageTransformFileId,
+    enemyObject,
+    enemyTransformFileId,
+    enemyPosition,
+    playerPosition,
+    groundPosition,
+    gameLoopScriptGuid,
+    verification,
+  };
+}
+
+export async function inspectUnityGameLoopStatus(projectPath: string, recoverySafe: boolean): Promise<UnityGameLoopStatus> {
+  const context = await loadGameLoopContext(projectPath);
+  const gameLoopScriptAbsolutePath = path.join(context.parsedScene.rootPath, GAME_LOOP_SCRIPT_PATH);
+  const basicEnemyScriptAbsolutePath = path.join(context.parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+  const backupPath = sceneBackupPathFor(context.parsedScene.sceneAbsolutePath, GAME_LOOP_WIRING_BACKUP_TAG);
+  const gameLoopScriptExists = await fileExists(gameLoopScriptAbsolutePath);
+  const gameLoopMetaExists = await fileExists(path.join(context.parsedScene.rootPath, GAME_LOOP_META_PATH));
+  const basicEnemyScriptExists = await fileExists(basicEnemyScriptAbsolutePath);
+  const basicEnemyMetaExists = await fileExists(path.join(context.parsedScene.rootPath, BASIC_ENEMY_META_PATH));
+  const backupExists = await fileExists(backupPath);
+  const gameLoopSource = gameLoopScriptExists ? await readFile(gameLoopScriptAbsolutePath, "utf-8") : "";
+  const basicEnemySource = basicEnemyScriptExists ? await readFile(basicEnemyScriptAbsolutePath, "utf-8") : "";
+  const gameLoopSourceStatus = inspectGameLoopControllerSource(gameLoopSource);
+  const basicEnemyGameLoopStatus = inspectBasicEnemyGameLoopSource(basicEnemySource);
+  const winMessageRendererId = context.winMessageObject ? findComponentFileIdByType(context.parsedScene.blocks, context.winMessageObject, "23") : null;
+  const winMessageMeshFilterId = context.winMessageObject ? findComponentFileIdByType(context.parsedScene.blocks, context.winMessageObject, "33") : null;
+  const winMessageColliderId = context.winMessageObject ? findComponentFileIdByType(context.parsedScene.blocks, context.winMessageObject, "136") : null;
+  const winFeedbackPresent = context.winMessageObject !== null
+    && context.winMessageTransformFileId !== null
+    && winMessageRendererId !== null
+    && winMessageMeshFilterId !== null
+    && winMessageColliderId !== null;
+  const enemyDefeatConnected = basicEnemyGameLoopStatus.enemyDefeatConnected;
+  const details: string[] = [
+    `Game Loop Script: ${gameLoopScriptExists && gameLoopMetaExists && gameLoopSourceStatus.winFeedbackFieldsPresent && gameLoopSourceStatus.winFeedbackMethodsPresent ? "YES" : "NO"}`,
+    `Game Loop Attached: ${context.verification.componentVisibleToUnity ? "YES" : "NO"}`,
+    `Win Feedback Present: ${winFeedbackPresent ? "YES" : "NO"}`,
+    `Enemy Defeat Connected: ${enemyDefeatConnected ? "YES" : "NO"}`,
+  ];
+
+  for (const brokenLink of context.verification.brokenLinks) {
+    details.push(brokenLink);
+  }
+
+  if (!gameLoopScriptExists) {
+    details.push(`Game loop script asset is missing: ${GAME_LOOP_SCRIPT_PATH}`);
+  } else if (!gameLoopMetaExists) {
+    details.push(`Game loop script meta is missing: ${GAME_LOOP_META_PATH}`);
+  }
+
+  if (!basicEnemyScriptExists) {
+    details.push(`Basic enemy script asset is missing: ${BASIC_ENEMY_SCRIPT_PATH}`);
+  } else if (!basicEnemyMetaExists) {
+    details.push(`Basic enemy script meta is missing: ${BASIC_ENEMY_META_PATH}`);
+  }
+
+  if (!gameLoopSourceStatus.winFeedbackFieldsPresent || !gameLoopSourceStatus.winFeedbackMethodsPresent) {
+    details.push("GameLoopController.cs does not yet contain the expected win-feedback source markers.");
+  }
+
+  if (!enemyDefeatConnected) {
+    details.push("BasicEnemy.cs does not yet notify GameLoopController.RegisterWin() on defeat.");
+  }
+
+  if (!winFeedbackPresent) {
+    details.push(`${GAME_LOOP_WIN_MESSAGE_NAME} does not yet exist with visible mesh components.`);
+  }
+
+  const safeToOpenUnityForCompileOrPlaytest = recoverySafe
+    && gameLoopScriptExists
+    && gameLoopMetaExists
+    && basicEnemyScriptExists
+    && basicEnemyMetaExists
+    && gameLoopSourceStatus.winFeedbackFieldsPresent
+    && gameLoopSourceStatus.winFeedbackMethodsPresent
+    && context.verification.componentVisibleToUnity
+    && winFeedbackPresent
+    && enemyDefeatConnected;
+
+  details.push(`Safe To Open Unity/Playtest: ${safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`);
+
+  return {
+    scenePath: context.parsedScene.scenePath,
+    sceneAbsolutePath: context.parsedScene.sceneAbsolutePath,
+    gameLoopName: context.gameLoopObject?.name ?? null,
+    winMessageName: context.winMessageObject?.name ?? null,
+    gameLoopScriptExists,
+    gameLoopMetaExists,
+    basicEnemyScriptExists,
+    basicEnemyMetaExists,
+    gameLoopAttached: context.verification.componentVisibleToUnity,
+    winFeedbackPresent,
+    enemyDefeatConnected,
+    backupExists,
+    safeToOpenUnityForCompileOrPlaytest,
+    details,
+    safety: {
+      readOnly: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+export async function applyUnityGameLoopWiring(projectPath: string, recoverySafe: boolean): Promise<UnityGameLoopApplyResult> {
+  const contextBefore = await loadGameLoopContext(projectPath);
+  const backupPath = sceneBackupPathFor(contextBefore.parsedScene.sceneAbsolutePath, GAME_LOOP_WIRING_BACKUP_TAG);
+  const blockedReasons: string[] = [];
+
+  if (!recoverySafe) {
+    blockedReasons.push("Unity recovery guard did not report a safe state for game loop scene wiring.");
+  }
+
+  if (!(await fileExists(path.join(contextBefore.parsedScene.rootPath, GAME_LOOP_SCRIPT_PATH)))) {
+    blockedReasons.push("GameLoopController.cs must already exist before scene wiring can run.");
+  }
+
+  if (!(await fileExists(path.join(contextBefore.parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH)))) {
+    blockedReasons.push("BasicEnemy.cs must already exist before game loop scene wiring can run.");
+  }
+
+  if (blockedReasons.length > 0) {
+    const status = await inspectUnityGameLoopStatus(projectPath, recoverySafe);
+    return {
+      applied: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      gameLoopName: status.gameLoopName,
+      winMessageName: status.winMessageName,
+      scriptPath: GAME_LOOP_SCRIPT_PATH,
+      backupPath,
+      gameLoopScriptExists: status.gameLoopScriptExists,
+      gameLoopAttached: status.gameLoopAttached,
+      winFeedbackPresent: status.winFeedbackPresent,
+      enemyDefeatConnected: status.enemyDefeatConnected,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons,
+      safety: {
+        noUnityExecution: true,
+        backupCreated: await fileExists(backupPath),
+        sceneWritten: false,
+      },
+    };
+  }
+
+  const statusBefore = await inspectUnityGameLoopStatus(projectPath, recoverySafe);
+  if (statusBefore.safeToOpenUnityForCompileOrPlaytest) {
+    return {
+      applied: false,
+      scenePath: statusBefore.scenePath,
+      sceneAbsolutePath: statusBefore.sceneAbsolutePath,
+      gameLoopName: statusBefore.gameLoopName,
+      winMessageName: statusBefore.winMessageName,
+      scriptPath: GAME_LOOP_SCRIPT_PATH,
+      backupPath,
+      gameLoopScriptExists: statusBefore.gameLoopScriptExists,
+      gameLoopAttached: statusBefore.gameLoopAttached,
+      winFeedbackPresent: statusBefore.winFeedbackPresent,
+      enemyDefeatConnected: statusBefore.enemyDefeatConnected,
+      safeToOpenUnityForCompileOrPlaytest: statusBefore.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons: ["Game loop scene wiring is already present in the expected Unity-visible shape."],
+      safety: {
+        noUnityExecution: true,
+        backupCreated: await fileExists(backupPath),
+        sceneWritten: false,
+      },
+    };
+  }
+
+  const gameLoopScriptAbsolutePath = path.join(contextBefore.parsedScene.rootPath, GAME_LOOP_SCRIPT_PATH);
+  const basicEnemyScriptAbsolutePath = path.join(contextBefore.parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+  await ensureFileBackup(gameLoopScriptAbsolutePath, GAME_LOOP_WIRING_BACKUP_TAG);
+  await ensureFileBackup(basicEnemyScriptAbsolutePath, GAME_LOOP_WIRING_BACKUP_TAG);
+  await writeFile(gameLoopScriptAbsolutePath, buildGameLoopControllerSource(), "utf-8");
+  await writeFile(basicEnemyScriptAbsolutePath, buildBasicEnemySource(), "utf-8");
+  await ensureScriptMeta(contextBefore.parsedScene.rootPath, GAME_LOOP_SCRIPT_PATH);
+  await ensureScriptMeta(contextBefore.parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+
+  const contextAfterScript = await loadGameLoopContext(projectPath);
+  if (!(await fileExists(backupPath))) {
+    await copyFile(contextAfterScript.parsedScene.sceneAbsolutePath, backupPath);
+  }
+
+  const allocateId = nextSceneFileIdAllocator(contextAfterScript.parsedScene.blocks);
+  const groundY = contextAfterScript.groundPosition?.y ?? 0;
+  const winMessagePosition = {
+    x: contextAfterScript.enemyPosition?.x ?? contextAfterScript.playerPosition?.x ?? 0,
+    y: groundY + 2.75,
+    z: contextAfterScript.enemyPosition?.z ?? ((contextAfterScript.playerPosition?.z ?? 0) + 4),
+  };
+  const gameLoopPosition = {
+    x: winMessagePosition.x,
+    y: winMessagePosition.y + 1.5,
+    z: winMessagePosition.z - 2,
+  };
+
+  let updatedSource = contextAfterScript.parsedScene.source;
+  let winMessageGameObjectFileId: string;
+
+  if (contextAfterScript.winMessageObject) {
+    const winObject = contextAfterScript.winMessageObject;
+    const winGameObjectBlock = findBlock(contextAfterScript.parsedScene.blocks, winObject.gameObjectFileId);
+    const winTransformBlock = findBlock(contextAfterScript.parsedScene.blocks, contextAfterScript.winMessageTransformFileId);
+    if (!winGameObjectBlock || !winTransformBlock) {
+      throw new Error("AIE_WinMessage GameObject or Transform block was not found during game loop wiring.");
+    }
+
+    const rendererFileId = findComponentFileIdByType(contextAfterScript.parsedScene.blocks, winObject, "23") ?? allocateId();
+    const colliderFileId = findComponentFileIdByType(contextAfterScript.parsedScene.blocks, winObject, "136") ?? allocateId();
+    const meshFilterFileId = findComponentFileIdByType(contextAfterScript.parsedScene.blocks, winObject, "33") ?? allocateId();
+    const requiredComponentIds = Array.from(new Set([...winObject.componentFileIds, rendererFileId, colliderFileId, meshFilterFileId]));
+    const updatedWinGameObjectRaw = replaceGameObjectComponentList(
+      {
+        ...winGameObjectBlock,
+        raw: replaceGameObjectActiveState(winGameObjectBlock.raw, false),
+      },
+      requiredComponentIds,
+    );
+    updatedSource = updatedSource.replace(winGameObjectBlock.raw, updatedWinGameObjectRaw);
+    let updatedWinTransformBlock = replaceNamedVector3(winTransformBlock.raw, "m_LocalPosition", winMessagePosition);
+    updatedWinTransformBlock = replaceNamedVector3(updatedWinTransformBlock, "m_LocalScale", { x: 4.5, y: 1.2, z: 1.2 });
+    updatedSource = updatedSource.replace(winTransformBlock.raw, updatedWinTransformBlock);
+
+    if (!findComponentFileIdByType(contextAfterScript.parsedScene.blocks, winObject, "23")) {
+      updatedSource = `${updatedSource.trimEnd()}\n${buildWinMessageRendererBlock(rendererFileId, winObject.gameObjectFileId)}`;
+    }
+
+    if (!findComponentFileIdByType(contextAfterScript.parsedScene.blocks, winObject, "136")) {
+      updatedSource = `${updatedSource.trimEnd()}\n${buildWinMessageColliderBlock(colliderFileId, winObject.gameObjectFileId)}`;
+    }
+
+    if (!findComponentFileIdByType(contextAfterScript.parsedScene.blocks, winObject, "33")) {
+      updatedSource = `${updatedSource.trimEnd()}\n${buildWinMessageMeshFilterBlock(meshFilterFileId, winObject.gameObjectFileId)}`;
+    }
+
+    winMessageGameObjectFileId = winObject.gameObjectFileId;
+  } else {
+    const winGameObjectFileId = allocateId();
+    const winTransformFileId = allocateId();
+    const winRendererFileId = allocateId();
+    const winColliderFileId = allocateId();
+    const winMeshFilterFileId = allocateId();
+    updatedSource = `${updatedSource.trimEnd()}\n${buildWinMessageBlocks(
+      winGameObjectFileId,
+      winTransformFileId,
+      winRendererFileId,
+      winColliderFileId,
+      winMeshFilterFileId,
+      winMessagePosition,
+    )}`;
+    winMessageGameObjectFileId = winGameObjectFileId;
+  }
+
+  if (contextAfterScript.gameLoopObject) {
+    const gameLoopObject = contextAfterScript.gameLoopObject;
+    const gameLoopBlock = findBlock(contextAfterScript.parsedScene.blocks, gameLoopObject.gameObjectFileId);
+    const gameLoopTransformBlock = findBlock(contextAfterScript.parsedScene.blocks, contextAfterScript.gameLoopTransformFileId);
+    if (!gameLoopBlock || !gameLoopTransformBlock) {
+      throw new Error("AIE_GameLoop GameObject or Transform block was not found during game loop wiring.");
+    }
+
+    const staleComponentIds = collectStaleGameLoopComponentIds(contextAfterScript.parsedScene, gameLoopObject, contextAfterScript.gameLoopScriptGuid);
+    const filteredComponentIds = gameLoopObject.componentFileIds.filter((componentFileId) => !staleComponentIds.includes(componentFileId));
+    const newComponentFileId = allocateId();
+    updatedSource = updatedSource.replace(gameLoopBlock.raw, replaceGameObjectComponentList(gameLoopBlock, [...filteredComponentIds, newComponentFileId]));
+
+    for (const staleComponentId of staleComponentIds) {
+      const staleBlock = findBlock(contextAfterScript.parsedScene.blocks, staleComponentId);
+      if (staleBlock) {
+        updatedSource = updatedSource.replace(staleBlock.raw, "");
+      }
+    }
+
+    let updatedTransformBlock = replaceNamedVector3(gameLoopTransformBlock.raw, "m_LocalPosition", gameLoopPosition);
+    updatedTransformBlock = replaceNamedVector3(updatedTransformBlock, "m_LocalScale", { x: 1, y: 1, z: 1 });
+    updatedSource = updatedSource.replace(gameLoopTransformBlock.raw, updatedTransformBlock);
+    updatedSource = `${updatedSource.trimEnd()}\n${buildGameLoopComponentBlock(
+      newComponentFileId,
+      gameLoopObject.gameObjectFileId,
+      contextAfterScript.gameLoopScriptGuid ?? await ensureScriptMeta(contextAfterScript.parsedScene.rootPath, GAME_LOOP_SCRIPT_PATH),
+      winMessageGameObjectFileId,
+    )}`;
+  } else {
+    const gameLoopGameObjectFileId = allocateId();
+    const gameLoopTransformFileId = allocateId();
+    const gameLoopComponentFileId = allocateId();
+    updatedSource = `${updatedSource.trimEnd()}\n${buildGameLoopBlocks(
+      gameLoopGameObjectFileId,
+      gameLoopTransformFileId,
+      gameLoopComponentFileId,
+      contextAfterScript.gameLoopScriptGuid ?? await ensureScriptMeta(contextAfterScript.parsedScene.rootPath, GAME_LOOP_SCRIPT_PATH),
+      winMessageGameObjectFileId,
+      gameLoopPosition,
+    )}`;
+  }
+
+  await writeFile(contextAfterScript.parsedScene.sceneAbsolutePath, `${updatedSource.trimEnd()}\n`, "utf-8");
+
+  const status = await inspectUnityGameLoopStatus(projectPath, recoverySafe);
+  return {
+    applied: status.safeToOpenUnityForCompileOrPlaytest,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    gameLoopName: status.gameLoopName,
+    winMessageName: status.winMessageName,
+    scriptPath: GAME_LOOP_SCRIPT_PATH,
+    backupPath,
+    gameLoopScriptExists: status.gameLoopScriptExists,
+    gameLoopAttached: status.gameLoopAttached,
+    winFeedbackPresent: status.winFeedbackPresent,
+    enemyDefeatConnected: status.enemyDefeatConnected,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: status.safeToOpenUnityForCompileOrPlaytest ? [] : ["Game loop scene wiring was written but the expected Unity-visible shape was not fully detected afterward."],
+    safety: {
+      noUnityExecution: true,
+      backupCreated: true,
+      sceneWritten: true,
+    },
+  };
+}
+
+export async function rollbackUnityGameLoopWiring(projectPath: string, recoverySafe: boolean): Promise<UnityGameLoopRollbackResult> {
+  const contextBefore = await loadGameLoopContext(projectPath);
+  const backupPath = sceneBackupPathFor(contextBefore.parsedScene.sceneAbsolutePath, GAME_LOOP_WIRING_BACKUP_TAG);
+  const gameLoopScriptAbsolutePath = path.join(contextBefore.parsedScene.rootPath, GAME_LOOP_SCRIPT_PATH);
+  const basicEnemyScriptAbsolutePath = path.join(contextBefore.parsedScene.rootPath, BASIC_ENEMY_SCRIPT_PATH);
+  const gameLoopScriptBackupPath = fileBackupPathFor(gameLoopScriptAbsolutePath, GAME_LOOP_WIRING_BACKUP_TAG);
+  const basicEnemyScriptBackupPath = fileBackupPathFor(basicEnemyScriptAbsolutePath, GAME_LOOP_WIRING_BACKUP_TAG);
+  const blockedReasons: string[] = [];
+
+  if (!(await fileExists(backupPath))) {
+    blockedReasons.push("No game loop wiring scene backup was found for rollback.");
+  }
+
+  if (!(await fileExists(gameLoopScriptBackupPath))) {
+    blockedReasons.push("No GameLoopController.cs wiring backup was found for rollback.");
+  }
+
+  if (!(await fileExists(basicEnemyScriptBackupPath))) {
+    blockedReasons.push("No BasicEnemy.cs wiring backup was found for rollback.");
+  }
+
+  if (blockedReasons.length > 0) {
+    const status = await inspectUnityGameLoopStatus(projectPath, recoverySafe);
+    return {
+      restored: false,
+      scenePath: status.scenePath,
+      sceneAbsolutePath: status.sceneAbsolutePath,
+      gameLoopName: status.gameLoopName,
+      winMessageName: status.winMessageName,
+      scriptPath: GAME_LOOP_SCRIPT_PATH,
+      backupPath,
+      gameLoopScriptExists: status.gameLoopScriptExists,
+      gameLoopAttached: status.gameLoopAttached,
+      winFeedbackPresent: status.winFeedbackPresent,
+      enemyDefeatConnected: status.enemyDefeatConnected,
+      safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+      blockedReasons,
+      safety: {
+        noUnityExecution: true,
+        backupRetained: true,
+        scriptRemoved: false,
+      },
+    };
+  }
+
+  const backupSource = await readFile(backupPath, "utf-8");
+  await writeFile(contextBefore.parsedScene.sceneAbsolutePath, backupSource, "utf-8");
+  const restoredGameLoopRemoved = await restoreFileBackup(gameLoopScriptAbsolutePath, gameLoopScriptBackupPath);
+  const restoredBasicEnemyRemoved = await restoreFileBackup(basicEnemyScriptAbsolutePath, basicEnemyScriptBackupPath);
+
+  const status = await inspectUnityGameLoopStatus(projectPath, recoverySafe);
+  return {
+    restored: true,
+    scenePath: status.scenePath,
+    sceneAbsolutePath: status.sceneAbsolutePath,
+    gameLoopName: status.gameLoopName,
+    winMessageName: status.winMessageName,
+    scriptPath: GAME_LOOP_SCRIPT_PATH,
+    backupPath,
+    gameLoopScriptExists: status.gameLoopScriptExists,
+    gameLoopAttached: status.gameLoopAttached,
+    winFeedbackPresent: status.winFeedbackPresent,
+    enemyDefeatConnected: status.enemyDefeatConnected,
+    safeToOpenUnityForCompileOrPlaytest: status.safeToOpenUnityForCompileOrPlaytest,
+    blockedReasons: [],
+    safety: {
+      noUnityExecution: true,
+      backupRetained: true,
+      scriptRemoved: restoredGameLoopRemoved || restoredBasicEnemyRemoved,
+    },
+  };
+}
+
 function inspectBasicEnemyFeedbackSource(source: string): {
   basicEnemyVisualFeedbackPresent: boolean;
   hitFlashPresent: boolean;
@@ -4432,14 +5484,16 @@ export async function applyUnityVisualDebugFloor(projectPath: string): Promise<U
     };
   }
 
+  const detectedFloor = floorDetection as FloorRendererDetection;
+
   const debugMaterial = await ensureVisualDebugMaterial(parsedScene.rootPath);
-  if (isDebugMaterialAssigned(floorDetection.currentMaterial, debugMaterial.guid)) {
+  if (isDebugMaterialAssigned(detectedFloor.currentMaterial, debugMaterial.guid)) {
     const status = await inspectUnityVisualDebugStatus(projectPath);
     return {
       applied: false,
       scenePath: parsedScene.scenePath,
       sceneAbsolutePath: parsedScene.sceneAbsolutePath,
-      floorName: floorDetection.sceneObject.name,
+      floorName: detectedFloor.sceneObject.name,
       materialPath: VISUAL_DEBUG_MATERIAL_PATH,
       backupPath,
       floorDetected: status.floorDetected,
@@ -4459,8 +5513,8 @@ export async function applyUnityVisualDebugFloor(projectPath: string): Promise<U
     await copyFile(parsedScene.sceneAbsolutePath, backupPath);
   }
 
-  const updatedRendererBlock = replaceRendererMaterial(floorDetection.rendererBlock, buildSceneMaterialReference(debugMaterial.guid));
-  const updatedSource = parsedScene.source.replace(floorDetection.rendererBlock.raw, updatedRendererBlock);
+  const updatedRendererBlock = replaceRendererMaterial(detectedFloor.rendererBlock, buildSceneMaterialReference(debugMaterial.guid));
+  const updatedSource = parsedScene.source.replace(detectedFloor.rendererBlock.raw, updatedRendererBlock);
   await writeFile(parsedScene.sceneAbsolutePath, updatedSource, "utf-8");
 
   const status = await inspectUnityVisualDebugStatus(projectPath);
@@ -4841,6 +5895,86 @@ export function renderUnityBasicEnemyRollbackResult(result: UnityBasicEnemyRollb
     `Enemy GameObject Exists: ${result.enemyExists ? "YES" : "NO"}`,
     `BasicEnemy Attached: ${result.scriptAttached ? "YES" : "NO"}`,
     `Positioned On Ground: ${result.positionedOnGround ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityGameLoopStatus(status: UnityGameLoopStatus): string {
+  return [
+    "UNITY GAME LOOP STATUS",
+    "",
+    `Scene: ${status.scenePath}`,
+    `Scene Path: ${status.sceneAbsolutePath}`,
+    `Game Loop Object: ${status.gameLoopName ?? "none"}`,
+    `Win Message Object: ${status.winMessageName ?? "none"}`,
+    `Game Loop Script: ${status.gameLoopScriptExists && status.gameLoopMetaExists ? "YES" : "NO"}`,
+    `Game Loop Attached: ${status.gameLoopAttached ? "YES" : "NO"}`,
+    `Win Feedback Present: ${status.winFeedbackPresent ? "YES" : "NO"}`,
+    `Enemy Defeat Connected: ${status.enemyDefeatConnected ? "YES" : "NO"}`,
+    `Backup Exists: ${status.backupExists ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${status.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+    "",
+    "Details:",
+    ...status.details.map((detail, index) => `${index + 1}. ${detail}`),
+  ].join("\n");
+}
+
+export function renderUnityGameLoopApplyResult(result: UnityGameLoopApplyResult): string {
+  if (!result.applied) {
+    return [
+      "UNITY GAME LOOP APPLY BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `Script Path: ${result.scriptPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY GAME LOOP APPLY COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `Script Path: ${result.scriptPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `Game Loop Object: ${result.gameLoopName ?? "none"}`,
+    `Win Message Object: ${result.winMessageName ?? "none"}`,
+    `Game Loop Attached: ${result.gameLoopAttached ? "YES" : "NO"}`,
+    `Win Feedback Present: ${result.winFeedbackPresent ? "YES" : "NO"}`,
+    `Enemy Defeat Connected: ${result.enemyDefeatConnected ? "YES" : "NO"}`,
+    `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
+  ].join("\n");
+}
+
+export function renderUnityGameLoopRollbackResult(result: UnityGameLoopRollbackResult): string {
+  if (!result.restored) {
+    return [
+      "UNITY GAME LOOP ROLLBACK BLOCKED",
+      "",
+      `Scene: ${result.scenePath}`,
+      `Scene Path: ${result.sceneAbsolutePath}`,
+      `Script Path: ${result.scriptPath}`,
+      `Backup Path: ${result.backupPath}`,
+      "",
+      "Blocked Reasons:",
+      ...result.blockedReasons.map((reason, index) => `${index + 1}. ${reason}`),
+    ].join("\n");
+  }
+
+  return [
+    "UNITY GAME LOOP ROLLBACK COMPLETE",
+    "",
+    `Scene: ${result.scenePath}`,
+    `Scene Path: ${result.sceneAbsolutePath}`,
+    `Script Path: ${result.scriptPath}`,
+    `Backup Path: ${result.backupPath}`,
+    `Game Loop Attached: ${result.gameLoopAttached ? "YES" : "NO"}`,
+    `Win Feedback Present: ${result.winFeedbackPresent ? "YES" : "NO"}`,
+    `Enemy Defeat Connected: ${result.enemyDefeatConnected ? "YES" : "NO"}`,
     `Safe To Open Unity/Playtest: ${result.safeToOpenUnityForCompileOrPlaytest ? "YES" : "NO"}`,
   ].join("\n");
 }

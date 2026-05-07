@@ -1,6 +1,8 @@
 import { createContinuousRuntimeProofSeedPayload } from "./continuousRuntimeProofSeed";
 
-const seeded = createContinuousRuntimeProofSeedPayload(process.env.AIE_OPERATOR_PROOF_RUNTIME_ID);
+const seeded = createContinuousRuntimeProofSeedPayload({
+  runtimeId: process.env.AIE_OPERATOR_PROOF_RUNTIME_ID,
+});
 
 process.stdout.write(JSON.stringify({
   runtimeId: seeded.runtimeId,

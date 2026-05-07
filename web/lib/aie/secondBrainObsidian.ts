@@ -2768,8 +2768,8 @@ function buildControlledRuntimeProfilesNote(input: {
       "## Profiles",
       profiles.length > 0
         ? asBulletList(profiles.map((entry) => {
-          if ("viable" in entry) {
-            return `${entry.display_name}: viable=${entry.viable ? "yes" : "no"} | mode=${entry.routing_mode}`;
+          if ("reasons" in entry) {
+            return `${entry.display_name}: viable=${entry.viable ? "yes" : "no"} | boundary=${entry.execution_boundary_status}`;
           }
           return `${entry.display_name}: mode=${entry.routing_mode}`;
         }))
@@ -2777,7 +2777,7 @@ function buildControlledRuntimeProfilesNote(input: {
       "",
       "## Profile Notes",
       profiles.length > 0
-        ? asBulletList(profiles.flatMap((entry) => ("reasons" in entry ? entry.reasons : entry.governance_notes).map((note) => `${entry.profile_id}: ${note}`)))
+        ? asBulletList(profiles.flatMap((entry) => ("reasons" in entry ? entry.reasons : entry.governance_notes).map((note) => `${entry.display_name}: ${note}`)))
         : "- No controlled runtime profile notes recorded yet.",
       "",
       "## Related",
@@ -4690,9 +4690,12 @@ function buildProviderPayloadExamplesNote(input: {
 }): ObsidianExportNote {
   const production = input.productionMemory;
   const preparedPayloads = production.generation_jobs
-    .filter((entry) => entry.prompt_payload.normalized_prompt.length > 0)
+    .filter((entry) => typeof entry.prompt_payload.normalized_prompt === "string" && entry.prompt_payload.normalized_prompt.length > 0)
     .slice(0, 6)
-    .map((entry) => `${entry.provider}: ${entry.shot_id} | duration=${entry.prompt_payload.duration_target_seconds}s | resolution=${entry.prompt_payload.resolution} | prompt=${entry.prompt_payload.normalized_prompt.slice(0, 96)}...`);
+    .map((entry) => {
+      const normalizedPrompt = entry.prompt_payload.normalized_prompt ?? "";
+      return `${entry.provider}: ${entry.shot_id} | duration=${entry.prompt_payload.duration_target_seconds}s | resolution=${entry.prompt_payload.resolution} | prompt=${normalizedPrompt.slice(0, 96)}...`;
+    });
   return {
     title: "Provider Payload Examples",
     directory: "Strategy",

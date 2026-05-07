@@ -2035,6 +2035,10 @@ export type CinematicLocalReadinessCheckName =
   | "model-registry-populated"
   | "runtime-detection-configured"
   | "hardware-profile-recorded"
+  | "runtime-probe-recorded"
+  | "python-runtime-detected"
+  | "inference-runtime-detected"
+  | "local-model-path-detected"
   | "routing-rules-defined"
   | "governance-guardrails-preserved"
   | "cache-strategy-defined";
@@ -4519,7 +4523,7 @@ function buildReadinessMilestoneProgress(input: {
     { passed: bootstrapSimulationPresent, weight: 10 },
     { passed: false, weight: 60 },
   ]);
-  return [
+  const milestones: CinematicReadinessMilestoneProgress[] = [
     {
       milestone: "local-inference-readiness",
       percentage: localInferencePercentage,
@@ -4633,7 +4637,9 @@ function buildReadinessMilestoneProgress(input: {
         "governed recovery loop",
       ],
     },
-  ].map((entry) => ({
+  ];
+
+  return milestones.map((entry) => ({
     ...entry,
     blockers: uniqueNormalizedStrings(entry.blockers),
     missing_dependencies: uniqueNormalizedStrings(entry.missing_dependencies),
@@ -4848,6 +4854,9 @@ function summarizeLocalReadiness(input: {
     (entry) => entry.model_name === preferredModel?.display_name && entry.runtime_target === preferredRuntime?.runtime_id,
   ) ?? null;
   const localProviderAvailable = candidateSupport
+    && preferredModel !== null
+    && preferredRuntime !== null
+    && preferredHardware !== null
     && preferredLoader !== null
     && preferredLoader.status !== "blocked"
     && localRuntimeStatusWeight(preferredRuntime.status) >= 2
@@ -5375,7 +5384,7 @@ async function buildRuntimeIntegrityValidation(input: {
     issues.push({ code: "invalid-cache-locations", detail: "No writable cache location is available for dry bootstrap planning." });
   }
   if (!preferredHardware || preferredHardware.status === "planned") {
-    issues.push({ code: "unsupported-hardware-profile", detail: "Preferred hardware profile remains unvalidated for the requested bootstrap profile." });
+    issues.push({ code: "unsupported-hardware-profiles", detail: "Preferred hardware profile remains unvalidated for the requested bootstrap profile." });
   }
   const blockers = uniqueNormalizedStrings(issues.map((entry) => entry.detail));
   const missingDependencies = uniqueNormalizedStrings([
@@ -5384,7 +5393,7 @@ async function buildRuntimeIntegrityValidation(input: {
     ...(issues.some((entry) => entry.code === "unsupported-runtime-versions") ? ["runtime version evidence"] : []),
     ...(issues.some((entry) => entry.code === "incompatible-dependency-sets") ? ["compatible dependency set"] : []),
     ...(issues.some((entry) => entry.code === "invalid-cache-locations") ? ["writable cache path"] : []),
-    ...(issues.some((entry) => entry.code === "unsupported-hardware-profile") ? ["validated hardware profile"] : []),
+    ...(issues.some((entry) => entry.code === "unsupported-hardware-profiles") ? ["validated hardware profile"] : []),
   ]);
   return {
     valid: issues.length === 0,
@@ -5542,7 +5551,7 @@ function buildControlledRuntimeProfiles(input: {
         if (!viable) reasons.push("No CPU fallback planning profile is currently recorded.");
         break;
     }
-    if (input.integrity.issues.some((entry) => entry.code === "unsupported-hardware-profile")) {
+    if (input.integrity.issues.some((entry) => entry.code === "unsupported-hardware-profiles")) {
       viable = profile.profile_id === "offline_safe" || profile.profile_id === "cloud_hybrid_safe";
       reasons.push("Hardware integrity blockers limit this profile.");
     }
@@ -5751,18 +5760,20 @@ function buildForbiddenExecutionStateEnforcement(input: {
   boundary: CinematicExecutionBoundaryState;
 }): CinematicForbiddenExecutionStateEnforcement {
   const reason = `Execution boundary ${input.boundary.current_status} keeps live execution blocked in this precursor layer.`;
+  const states: CinematicForbiddenExecutionState[] = [
+    "inference_execute",
+    "frame_generate",
+    "renderer_activate",
+    "temporal_render",
+    "unattended_execution",
+    "autonomous_retry_loops",
+    "uncontrolled_runtime_launch",
+  ];
+
   return {
     enforcement_id: `forbidden-execution-states-${Date.now()}`,
     recorded_at: new Date().toISOString(),
-    states: [
-      "inference_execute",
-      "frame_generate",
-      "renderer_activate",
-      "temporal_render",
-      "unattended_execution",
-      "autonomous_retry_loops",
-      "uncontrolled_runtime_launch",
-    ].map((state) => ({
+    states: states.map((state) => ({
       state,
       blocked: true as const,
       reason,
@@ -6669,9 +6680,9 @@ function buildSynthesisValidationLayer(input: {
     },
     {
       check: "governance-approval-state",
-      passed: input.preInferenceGateValidation.checks.find((entry) => entry.gate === "manual-governance-review")?.passed ?? false,
+      passed: input.preInferenceGateValidation.checks.find((entry) => entry.gate === "governance-approval-present")?.passed ?? false,
       detail: "Governance approval state must remain manually reviewed before synthesis preparation advances.",
-      blockers: input.preInferenceGateValidation.checks.find((entry) => entry.gate === "manual-governance-review")?.blockers ?? ["Manual governance review is not satisfied."],
+      blockers: input.preInferenceGateValidation.checks.find((entry) => entry.gate === "governance-approval-present")?.blockers ?? ["Manual governance review is not satisfied."],
     },
     {
       check: "forbidden-state-enforcement",
@@ -8638,7 +8649,7 @@ function appendReadinessDeltaTracking(input: {
         confidence_trend: confidenceTrend({ previous: previousMilestone?.current_confidence ?? null, current: milestone.confidence }),
         architectural_readiness_notes: uniqueNormalizedStrings([
           milestone.estimated_architectural_dependency,
-          `Next milestone: ${milestone.next_milestone}`,
+          `Next milestone: ${milestone.next_required_milestone}`,
           milestone.missing_dependencies.length > 0
             ? `Missing dependencies: ${milestone.missing_dependencies.join(", ")}`
             : "No missing dependencies currently recorded.",

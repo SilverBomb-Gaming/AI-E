@@ -7,8 +7,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { inspectGameProject, renderGameProjectSummary } from "../lib/aie/gameProjectInspector";
 import { determineGameProgression, renderNextGameTask } from "../lib/aie/gameProgression";
 import {
+  executeBoundedAutonomousActionChain,
   executeNextAutonomousAction,
+  renderAutonomousCheckpointRollbackResult,
   renderActionExecutionResult,
+  renderBoundedAutonomousExecutionChain,
+  rollbackAutonomousCheckpoint,
 } from "../lib/aie/actionExecutor";
 import {
   autoRecordOutcomeForFeature,
@@ -25,6 +29,7 @@ import {
   suggestRetryForLatestOutcome,
 } from "../lib/aie/retryEngine";
 import {
+  buildOutcomeSessionKey,
   recordOutcome,
   readOutcomeRecords,
   renderOutcomeRecord,
@@ -41,10 +46,27 @@ import {
 } from "../lib/aie/postPlaytestFeatureSelector";
 import {
   autoEvaluateUnityRuntime,
+  buildAutoOutcomeObservation,
   discoverUnityLogCandidates,
   renderAutoEvaluation,
   renderUnityLogDiscovery,
 } from "../lib/aie/runtimeSignals";
+
+function buildRuntimeAutoSessionKey(
+  feature: string,
+  evaluation: Awaited<ReturnType<typeof autoEvaluateUnityRuntime>>,
+): string | undefined {
+  if (!evaluation.session.startMarker || !evaluation.logPath || evaluation.evaluatedLineCount <= 0) {
+    return undefined;
+  }
+
+  return buildOutcomeSessionKey({
+    feature,
+    selectedLogPath: evaluation.logPath,
+    sessionStartMarker: evaluation.session.startMarker,
+    evaluatedLineCount: evaluation.evaluatedLineCount,
+  });
+}
 import {
   applyUnityPatchArtifact,
   buildExistingCameraFollowArtifact,
@@ -77,6 +99,7 @@ import {
   applyUnityBasicEnemy,
   applyUnityAttackFeedback,
   applyUnityFallRecovery,
+  applyUnityGameLoopWiring,
   applyUnityPlaytestSessionMarker,
   applyUnityPlayerAttack,
   applyUnityVisualDebugFloor,
@@ -84,6 +107,7 @@ import {
   inspectUnityBasicEnemyStatus,
   inspectUnityCameraWiringStatus,
   inspectUnityFallRecoveryStatus,
+  inspectUnityGameLoopStatus,
   inspectUnityPlaytestSessionMarkerStatus,
   inspectUnityPlayerAttackStatus,
   inspectUnitySceneWiring,
@@ -98,6 +122,9 @@ import {
   renderUnityFallRecoveryApplyResult,
   renderUnityFallRecoveryRollbackResult,
   renderUnityFallRecoveryStatus,
+  renderUnityGameLoopApplyResult,
+  renderUnityGameLoopRollbackResult,
+  renderUnityGameLoopStatus,
   renderUnityPlaytestSessionMarkerApplyResult,
   renderUnityPlaytestSessionMarkerRollbackResult,
   renderUnityPlaytestSessionMarkerStatus,
@@ -116,11 +143,17 @@ import {
   rollbackUnityBasicEnemy,
   rollbackUnityCameraWiring,
   rollbackUnityFallRecovery,
+  rollbackUnityGameLoopWiring,
   rollbackUnityPlaytestSessionMarker,
   rollbackUnityPlayerAttack,
   rollbackUnityVisualDebugFloor,
 } from "../lib/aie/unitySceneWiring";
-import { inspectUnityPlaytestRecovery, renderUnityPlaytestRecovery } from "../lib/aie/unityPlaytestRecovery";
+import {
+  inspectLegacyCompileRecovery,
+  inspectUnityPlaytestRecovery,
+  renderLegacyCompileRecovery,
+  renderUnityPlaytestRecovery,
+} from "../lib/aie/unityPlaytestRecovery";
 
 type ShowOperatorViewOptions = {
   json: boolean;
@@ -130,11 +163,13 @@ type ShowOperatorViewOptions = {
   nextGameTaskPath?: string;
   executeNextGameTaskPath?: string;
   executeNextActionPath?: string;
+  executeBoundedActionChainPath?: string;
   recordOutcomePath?: string;
   autoRecordOutcomePath?: string;
   suggestRetryPath?: string;
   autoRetryPath?: string;
   runAutonomousLoopPath?: string;
+  maxAutonomousSteps?: number;
   allowExecution?: boolean;
   autoEvaluatePath?: string;
   discoverRuntimeLogsPath?: string;
@@ -167,6 +202,9 @@ type ShowOperatorViewOptions = {
   applyBasicEnemyPath?: string;
   enemyStatusPath?: string;
   rollbackBasicEnemyPath?: string;
+  applyGameLoopWiringPath?: string;
+  gameLoopStatusPath?: string;
+  rollbackGameLoopWiringPath?: string;
   applyPlayerAttackPath?: string;
   attackStatusPath?: string;
   rollbackPlayerAttackPath?: string;
@@ -174,11 +212,14 @@ type ShowOperatorViewOptions = {
   attackFeedbackStatusPath?: string;
   rollbackAttackFeedbackPath?: string;
   unityRecoveryPath?: string;
+  legacyCompileRecoveryPath?: string;
   gamePatchPath?: string;
   gamePatchPreviewPath?: string;
   applyGamePatchPath?: string;
   gamePatchStatusPath?: string;
   rollbackGamePatchPath?: string;
+  rollbackAutonomousCheckpointPath?: string;
+  checkpointId?: string;
   diagnoseJumpPath?: string;
   diagnoseJumpPreviewPath?: string;
   applyDiagnoseJumpPath?: string;
@@ -195,7 +236,13 @@ function buildRecoveryGuidance(snapshot: Awaited<ReturnType<typeof inspectUnityP
       ? "Delete accidental generated file"
       : action.action === "restore-file"
         ? "Restore tracked movement script"
-        : "Inspect movement script";
+        : action.action === "move-folder-outside-assets"
+          ? "Move legacy folder outside Assets"
+          : action.action === "add-asmdef-exclusion"
+            ? "Add asmdef exclusion strategy"
+            : action.action === "add-compatibility-stubs"
+              ? "Add compatibility stubs only if intentionally active"
+              : "Inspect movement script";
     return `${verb}: ${action.path} (${action.reason})`;
   });
 
@@ -206,7 +253,9 @@ function buildRecoveryGuidance(snapshot: Awaited<ReturnType<typeof inspectUnityP
 
 function buildPatchStatusRecoverySignal(snapshot: Awaited<ReturnType<typeof inspectUnityPlaytestRecovery>>): boolean {
   return snapshot.detectedIssues.accidentalGeneratedFiles.length === 0
-    && snapshot.detectedIssues.duplicateClassRisks.length === 0;
+    && snapshot.detectedIssues.duplicateClassRisks.length === 0
+    && snapshot.detectedIssues.legacyCompileRiskFiles.length === 0
+    && snapshot.detectedIssues.legacyCompileCompatibilityIssues.length === 0;
 }
 
 function parseBooleanFlagValue(value: string, flagName: string): boolean {
@@ -220,6 +269,15 @@ function parseBooleanFlagValue(value: string, flagName: string): boolean {
   }
 
   throw new Error(`${flagName} expects true or false.`);
+}
+
+function parsePositiveIntegerFlagValue(value: string, flagName: string): number {
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    throw new Error(`${flagName} expects an integer greater than 0.`);
+  }
+
+  return parsed;
 }
 
 function buildFollowupPatchRecoverySignal(snapshot: Awaited<ReturnType<typeof inspectUnityPlaytestRecovery>>): boolean {
@@ -321,7 +379,7 @@ async function executeCameraFollowFeature(projectPath: string): Promise<CameraFe
   const scriptBackupExists = await pathExists(`${cameraArtifact.absoluteTargetPath}.aie-backup`);
   const wiringStatusBefore = await inspectUnityCameraWiringStatus(projectPath, recoverySafe);
 
-  if (scriptExists && metaExists && wiringStatusBefore.cameraFollowAttached && wiringStatusBefore.targetAssigned) {
+  if (scriptExists && metaExists && wiringStatusBefore.cameraFollowAttached && wiringStatusBefore.playerTargetAssigned) {
     return {
       outcome: "already-applied",
       feature: "Camera Follow",
@@ -362,7 +420,7 @@ async function executeCameraFollowFeature(projectPath: string): Promise<CameraFe
   }
 
   const wiringStatusAfterScript = await inspectUnityCameraWiringStatus(projectPath, recoverySafe);
-  if (!(wiringStatusAfterScript.cameraFollowAttached && wiringStatusAfterScript.targetAssigned)) {
+  if (!(wiringStatusAfterScript.cameraFollowAttached && wiringStatusAfterScript.playerTargetAssigned)) {
     const wiringApplyResult = await applyUnityCameraWiring(projectPath, recoverySafe);
     if (!wiringApplyResult.applied) {
       blockedReasons.push(...wiringApplyResult.blockedReasons);
@@ -378,7 +436,7 @@ async function executeCameraFollowFeature(projectPath: string): Promise<CameraFe
     && finalScriptExists
     && finalMetaExists
     && finalWiringStatus.cameraFollowAttached
-    && finalWiringStatus.targetAssigned;
+    && finalWiringStatus.playerTargetAssigned;
 
   return {
     outcome: complete ? "complete" : "blocked",
@@ -389,7 +447,7 @@ async function executeCameraFollowFeature(projectPath: string): Promise<CameraFe
     ],
     wired: [
       finalWiringStatus.cameraFollowAttached ? "CameraFollow attached to Main Camera" : "CameraFollow not attached to Main Camera",
-      finalWiringStatus.targetAssigned ? "Target assigned to Player" : "Target not assigned to Player",
+      finalWiringStatus.playerTargetAssigned ? "Target assigned to Player" : "Target not assigned to Player",
     ],
     backups: [
       finalScriptBackupExists ? "CameraFollow rollback marker" : "CameraFollow rollback marker missing",
@@ -467,6 +525,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--execute-bounded-action-chain=")) {
+      options.executeBoundedActionChainPath = arg.slice("--execute-bounded-action-chain=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--record-outcome=")) {
       options.recordOutcomePath = arg.slice("--record-outcome=".length).trim() || undefined;
       continue;
@@ -530,6 +593,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--max-autonomous-steps=")) {
+      options.maxAutonomousSteps = parsePositiveIntegerFlagValue(arg.slice("--max-autonomous-steps=".length), "--max-autonomous-steps");
+      continue;
+    }
+
+    if (arg.startsWith("--checkpoint-id=")) {
+      options.checkpointId = arg.slice("--checkpoint-id=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg === "--auto") {
       options.autoRecord = true;
       continue;
@@ -543,6 +616,26 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       } else {
         options.allowExecution = true;
       }
+      continue;
+    }
+
+    if (arg === "--max-autonomous-steps") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --max-autonomous-steps");
+      }
+      options.maxAutonomousSteps = parsePositiveIntegerFlagValue(value, "--max-autonomous-steps");
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--checkpoint-id") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --checkpoint-id");
+      }
+      options.checkpointId = value.trim();
+      index += 1;
       continue;
     }
 
@@ -578,6 +671,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --execute-next-action");
       }
       options.executeNextActionPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--execute-bounded-action-chain") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --execute-bounded-action-chain");
+      }
+      options.executeBoundedActionChainPath = value.trim();
       index += 1;
       continue;
     }
@@ -745,6 +848,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--legacy-compile-recovery=")) {
+      options.legacyCompileRecoveryPath = arg.slice("--legacy-compile-recovery=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--camera-tuning-preview=")) {
       options.cameraTuningPreviewPath = arg.slice("--camera-tuning-preview=".length).trim() || undefined;
       continue;
@@ -835,6 +943,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--apply-game-loop-wiring=")) {
+      options.applyGameLoopWiringPath = arg.slice("--apply-game-loop-wiring=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--apply-player-attack=")) {
       options.applyPlayerAttackPath = arg.slice("--apply-player-attack=".length).trim() || undefined;
       continue;
@@ -871,6 +984,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --apply-basic-enemy");
       }
       options.applyBasicEnemyPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--apply-game-loop-wiring") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --apply-game-loop-wiring");
+      }
+      options.applyGameLoopWiringPath = value.trim();
       index += 1;
       continue;
     }
@@ -925,6 +1048,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--game-loop-status=")) {
+      options.gameLoopStatusPath = arg.slice("--game-loop-status=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--attack-status=")) {
       options.attackStatusPath = arg.slice("--attack-status=".length).trim() || undefined;
       continue;
@@ -961,6 +1089,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --enemy-status");
       }
       options.enemyStatusPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--game-loop-status") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --game-loop-status");
+      }
+      options.gameLoopStatusPath = value.trim();
       index += 1;
       continue;
     }
@@ -1015,6 +1153,11 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--rollback-game-loop-wiring=")) {
+      options.rollbackGameLoopWiringPath = arg.slice("--rollback-game-loop-wiring=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg.startsWith("--rollback-player-attack=")) {
       options.rollbackPlayerAttackPath = arg.slice("--rollback-player-attack=".length).trim() || undefined;
       continue;
@@ -1051,6 +1194,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
         throw new Error("Missing value for --rollback-basic-enemy");
       }
       options.rollbackBasicEnemyPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--rollback-game-loop-wiring") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --rollback-game-loop-wiring");
+      }
+      options.rollbackGameLoopWiringPath = value.trim();
       index += 1;
       continue;
     }
@@ -1160,6 +1313,16 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg === "--legacy-compile-recovery") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --legacy-compile-recovery");
+      }
+      options.legacyCompileRecoveryPath = value.trim();
+      index += 1;
+      continue;
+    }
+
     if (arg.startsWith("--game-patch=")) {
       options.gamePatchPath = arg.slice("--game-patch=".length).trim() || undefined;
       continue;
@@ -1225,12 +1388,27 @@ function parseArgs(argv: string[]): ShowOperatorViewOptions {
       continue;
     }
 
+    if (arg.startsWith("--rollback-autonomous-checkpoint=")) {
+      options.rollbackAutonomousCheckpointPath = arg.slice("--rollback-autonomous-checkpoint=".length).trim() || undefined;
+      continue;
+    }
+
     if (arg === "--rollback-game-patch") {
       const value = argv[index + 1];
       if (!value) {
         throw new Error("Missing value for --rollback-game-patch");
       }
       options.rollbackGamePatchPath = value.trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--rollback-autonomous-checkpoint") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("Missing value for --rollback-autonomous-checkpoint");
+      }
+      options.rollbackAutonomousCheckpointPath = value.trim();
       index += 1;
       continue;
     }
@@ -1470,6 +1648,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.gameTaskPath ? "--game-task" : null,
       options.nextGameTaskPath ? "--next-game-task" : null,
       options.executeNextActionPath ? "--execute-next-action" : null,
+      options.executeBoundedActionChainPath ? "--execute-bounded-action-chain" : null,
       options.recordOutcomePath ? "--record-outcome" : null,
       options.autoRecordOutcomePath ? "--auto-record-outcome" : null,
       options.suggestRetryPath ? "--suggest-retry" : null,
@@ -1496,6 +1675,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.applyBasicEnemyPath ? "--apply-basic-enemy" : null,
       options.enemyStatusPath ? "--enemy-status" : null,
       options.rollbackBasicEnemyPath ? "--rollback-basic-enemy" : null,
+      options.applyGameLoopWiringPath ? "--apply-game-loop-wiring" : null,
+      options.gameLoopStatusPath ? "--game-loop-status" : null,
+      options.rollbackGameLoopWiringPath ? "--rollback-game-loop-wiring" : null,
       options.applyPlayerAttackPath ? "--apply-player-attack" : null,
       options.attackStatusPath ? "--attack-status" : null,
       options.rollbackPlayerAttackPath ? "--rollback-player-attack" : null,
@@ -1508,11 +1690,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       options.repairCameraWiringPath ? "--repair-camera-wiring" : null,
       options.rollbackCameraWiringPath ? "--rollback-camera-wiring" : null,
       options.unityRecoveryPath ? "--unity-recovery" : null,
+      options.legacyCompileRecoveryPath ? "--legacy-compile-recovery" : null,
       options.gamePatchPath ? "--game-patch" : null,
       options.gamePatchPreviewPath ? "--game-patch-preview" : null,
       options.applyGamePatchPath ? "--apply-game-patch" : null,
       options.gamePatchStatusPath ? "--game-patch-status" : null,
       options.rollbackGamePatchPath ? "--rollback-game-patch" : null,
+      options.rollbackAutonomousCheckpointPath ? "--rollback-autonomous-checkpoint" : null,
       options.diagnoseJumpPath ? "--diagnose-jump" : null,
       options.diagnoseJumpPreviewPath ? "--diagnose-jump-preview" : null,
       options.applyDiagnoseJumpPath ? "--apply-diagnose-jump" : null,
@@ -1542,6 +1726,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
     if (options.diagnoseJumpPath || options.diagnoseJumpPreviewPath) {
       const targetPath = options.diagnoseJumpPreviewPath ?? options.diagnoseJumpPath;
+      if (!targetPath) {
+        throw new Error("A diagnose jump project path is required.");
+      }
       const snapshot = await inspectGameProject(targetPath);
       const preview = await generateJumpDiagnosticPreview(snapshot);
 
@@ -1703,6 +1890,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.applied ? 0 : 1;
     }
 
+    if (options.applyGameLoopWiringPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.applyGameLoopWiringPath);
+      const result = await applyUnityGameLoopWiring(options.applyGameLoopWiringPath, buildFollowupPatchRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.applied ? 0 : 1;
+      }
+
+      console.log(renderUnityGameLoopApplyResult(result));
+      return result.applied ? 0 : 1;
+    }
+
     if (options.applyPlayerAttackPath) {
       const recovery = await inspectUnityPlaytestRecovery(options.applyPlayerAttackPath);
       const result = await applyUnityPlayerAttack(options.applyPlayerAttackPath, buildFollowupPatchRecoverySignal(recovery));
@@ -1857,6 +2057,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return 0;
     }
 
+    if (options.gameLoopStatusPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.gameLoopStatusPath);
+      const status = await inspectUnityGameLoopStatus(options.gameLoopStatusPath, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(status, null, 2));
+        return 0;
+      }
+
+      console.log(renderUnityGameLoopStatus(status));
+      return 0;
+    }
+
     if (options.attackFeedbackStatusPath) {
       const recovery = await inspectUnityPlaytestRecovery(options.attackFeedbackStatusPath);
       const status = await inspectUnityAttackFeedbackStatus(options.attackFeedbackStatusPath, buildPatchStatusRecoverySignal(recovery));
@@ -1886,6 +2099,22 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
       console.log(renderUnityPatchRollbackResult(result));
       return result.restored ? 0 : 1;
+    }
+
+    if (options.rollbackAutonomousCheckpointPath) {
+      if (!options.checkpointId) {
+        throw new Error("--rollback-autonomous-checkpoint requires --checkpoint-id");
+      }
+
+      const result = await rollbackAutonomousCheckpoint(options.rollbackAutonomousCheckpointPath, options.checkpointId);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.status === "rolled-back" ? 0 : 1;
+      }
+
+      console.log(renderAutonomousCheckpointRollbackResult(result));
+      return result.status === "rolled-back" ? 0 : 1;
     }
 
     if (options.rollbackCameraTuningPath) {
@@ -1978,6 +2207,19 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.restored ? 0 : 1;
     }
 
+    if (options.rollbackGameLoopWiringPath) {
+      const recovery = await inspectUnityPlaytestRecovery(options.rollbackGameLoopWiringPath);
+      const result = await rollbackUnityGameLoopWiring(options.rollbackGameLoopWiringPath, buildPatchStatusRecoverySignal(recovery));
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.restored ? 0 : 1;
+      }
+
+      console.log(renderUnityGameLoopRollbackResult(result));
+      return result.restored ? 0 : 1;
+    }
+
     if (options.rollbackAttackFeedbackPath) {
       const recovery = await inspectUnityPlaytestRecovery(options.rollbackAttackFeedbackPath);
       const result = await rollbackUnityAttackFeedback(options.rollbackAttackFeedbackPath, buildPatchStatusRecoverySignal(recovery));
@@ -2013,6 +2255,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
 
       console.log(renderUnityPlaytestRecovery(snapshot, resolve(fileURLToPath(import.meta.url), "..", "..", "..")));
+      return 0;
+    }
+
+    if (options.legacyCompileRecoveryPath) {
+      const snapshot = await inspectLegacyCompileRecovery(options.legacyCompileRecoveryPath);
+
+      if (options.json) {
+        console.log(JSON.stringify(snapshot, null, 2));
+        return 0;
+      }
+
+      console.log(renderLegacyCompileRecovery(snapshot, resolve(fileURLToPath(import.meta.url), "..", "..", "..")));
       return 0;
     }
 
@@ -2101,6 +2355,23 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.status === "completed" ? 0 : 1;
     }
 
+    if (options.executeBoundedActionChainPath) {
+      const result = await executeBoundedAutonomousActionChain(
+        options.executeBoundedActionChainPath,
+        options.maxAutonomousSteps ?? 4,
+        options.allowExecution === true,
+        options.runtimeLogPath,
+      );
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return result.status === "completed" ? 0 : 1;
+      }
+
+      console.log(renderBoundedAutonomousExecutionChain(result));
+      return result.status === "completed" ? 0 : 1;
+    }
+
     if (options.recordOutcomePath) {
       if (!options.outcomeFeature) {
         throw new Error("--record-outcome requires --feature");
@@ -2145,10 +2416,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         return 0;
       }
 
+      if (!options.outcomeResult) {
+        throw new Error("An outcome result is required to record a manual outcome.");
+      }
+      const outcomeObservation = options.outcomeObservation;
+      if (!outcomeObservation) {
+        throw new Error("An outcome observation is required to record a manual outcome.");
+      }
+
       const recorded = await recordOutcome(options.recordOutcomePath, {
         feature: options.outcomeFeature,
         result: options.outcomeResult,
-        observation: options.outcomeObservation,
+        observation: outcomeObservation,
       });
 
       if (options.json) {

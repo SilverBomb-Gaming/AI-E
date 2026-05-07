@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -246,6 +246,98 @@ test("operator view prints ranked feature candidates", async () => {
     assert.match(rendered, /feature-fail \| score=300 \| state=failing/i);
     assert.match(rendered, /feature-unseen \| score=100 \| state=unseen/i);
     assert.match(rendered, /feature-pass \| score=10 \| state=passing/i);
+  } finally {
+    console.log = originalLog;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("operator view requires checkpoint id for rollback-autonomous-checkpoint", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-rollback-checkpoint-cli-"));
+  const captured: string[] = [];
+  const originalError = console.error;
+
+  try {
+    console.error = (...args: unknown[]) => {
+      captured.push(args.join(" "));
+    };
+
+    const exitCode = await main([
+      "--rollback-autonomous-checkpoint",
+      tempRoot,
+    ]);
+
+    assert.equal(exitCode, 1);
+    assert.match(captured.join("\n"), /requires --checkpoint-id/i);
+  } finally {
+    console.error = originalError;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("operator view rejects nonpositive max-autonomous-steps", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-bounded-chain-cli-invalid-"));
+  const captured: string[] = [];
+  const originalError = console.error;
+
+  try {
+    console.error = (...args: unknown[]) => {
+      captured.push(args.join(" "));
+    };
+
+    const exitCode = await main([
+      "--execute-bounded-action-chain",
+      tempRoot,
+      "--max-autonomous-steps",
+      "0",
+    ]);
+
+    assert.equal(exitCode, 1);
+    assert.match(captured.join("\n"), /--max-autonomous-steps expects an integer greater than 0/i);
+  } finally {
+    console.error = originalError;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("operator view prints legacy compile recovery report", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-legacy-compile-recovery-cli-"));
+  const captured: string[] = [];
+  const originalLog = console.log;
+
+  try {
+    await mkdir(path.join(tempRoot, "Assets", "_LEGACY_DO_NOT_TOUCH", "Scripts"), { recursive: true });
+    await mkdir(path.join(tempRoot, "Assets", "Scenes"), { recursive: true });
+    await mkdir(path.join(tempRoot, "ProjectSettings"), { recursive: true });
+    await mkdir(path.join(tempRoot, "Packages"), { recursive: true });
+    await writeFile(path.join(tempRoot, "Assets", "_LEGACY_DO_NOT_TOUCH", "Scripts", "PlayerController.cs"), [
+      "using UnityEngine;",
+      "using UnityEngine.InputSystem;",
+      "public class PlayerController : MonoBehaviour",
+      "{",
+      "    public void OnMove(InputAction.CallbackContext context) { }",
+      "}",
+      "",
+    ].join("\n"), "utf-8");
+    await writeFile(path.join(tempRoot, "Assets", "Scenes", "EnemyAIDemo.unity"), "%YAML 1.1\n", "utf-8");
+    await writeFile(path.join(tempRoot, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 6000.0.0f1\n", "utf-8");
+    await writeFile(path.join(tempRoot, "Packages", "manifest.json"), "{}\n", "utf-8");
+
+    console.log = (...args: unknown[]) => {
+      captured.push(args.join(" "));
+    };
+
+    const exitCode = await main([
+      "--legacy-compile-recovery",
+      tempRoot,
+    ]);
+
+    assert.equal(exitCode, 0);
+    const rendered = captured.join("\n");
+    assert.match(rendered, /LEGACY COMPILE RECOVERY/i);
+    assert.match(rendered, /Playtest Blocked: YES/i);
+    assert.match(rendered, /Assets\/_LEGACY_DO_NOT_TOUCH\/Scripts\/PlayerController\.cs/i);
+    assert.match(rendered, /move legacy scripts outside Unity's Assets compilation path/i);
   } finally {
     console.log = originalLog;
     await rm(tempRoot, { recursive: true, force: true });

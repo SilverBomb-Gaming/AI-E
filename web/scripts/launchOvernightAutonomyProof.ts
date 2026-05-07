@@ -47,7 +47,7 @@ async function findAvailablePort(startPort = 3013, maxAttempts = 25): Promise<nu
     try {
       return await tryPort(candidatePort);
     } catch (error) {
-      if ((error).code !== "EADDRINUSE") {
+      if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") {
         throw error;
       }
     }
@@ -88,7 +88,12 @@ function createServerProcess(port: number): ChildProcess {
   );
 }
 
-async function waitForServerReady(serverProcess, port, getLogs, timeoutMs = 60000) {
+async function waitForServerReady(
+  serverProcess: ReturnType<typeof createServerProcess>,
+  port: number,
+  getLogs: () => { stdout: string; stderr: string },
+  timeoutMs = 60000,
+) {
   const startedAt = Date.now();
 
   while ((Date.now() - startedAt) < timeoutMs) {
@@ -200,12 +205,16 @@ async function main() {
   let stdout = "";
   let stderr = "";
 
-  serverProcess.stdout.on("data", (chunk) => {
-    stdout += chunk.toString();
-  });
-  serverProcess.stderr.on("data", (chunk) => {
-    stderr += chunk.toString();
-  });
+  if (serverProcess.stdout) {
+    serverProcess.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+  }
+  if (serverProcess.stderr) {
+    serverProcess.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+  }
 
   try {
     await waitForServerReady(serverProcess, port, () => ({ stdout, stderr }));

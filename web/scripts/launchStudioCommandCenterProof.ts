@@ -242,12 +242,16 @@ async function main() {
   let stdout = "";
   let stderr = "";
 
-  serverProcess.stdout.on("data", (chunk) => {
-    stdout += chunk.toString();
-  });
-  serverProcess.stderr.on("data", (chunk) => {
-    stderr += chunk.toString();
-  });
+  if (serverProcess.stdout) {
+    serverProcess.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+  }
+  if (serverProcess.stderr) {
+    serverProcess.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+  }
 
   try {
     await waitForServerReady(serverProcess, port, () => ({ stdout, stderr }));
