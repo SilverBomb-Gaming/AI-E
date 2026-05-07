@@ -576,7 +576,11 @@ function buildCinematicProductionMemoryNote(input: {
         toLink("Continuity Rules"),
         toLink("Scene Sequences"),
         toLink("Gameplay Cutscene Triggers"),
+        toLink("Generation Job Queue"),
+        toLink("Provider Routing Rules"),
+        toLink("Cinematic Execution Lifecycle"),
         toLink("Cost-Aware Iteration Notes"),
+        toLink("Cost-Aware Generation Strategy"),
       ]),
     ].join("\n"),
   };
@@ -617,6 +621,7 @@ function buildBabylonCutsceneLayerNote(input: {
         toLink("Shot Planning Rules"),
         toLink("Scene Sequences"),
         toLink("Gameplay Cutscene Triggers"),
+        toLink("Generation Job Queue"),
         toLink("Successful Generations"),
       ]),
     ].join("\n"),
@@ -695,6 +700,7 @@ function buildCinematicContinuityRulesNote(input: {
         toLink("Cinematic Production Memory"),
         toLink("BABYLON Cutscene Layer"),
         toLink("Continuity Validation Rules"),
+        toLink("Retry Planning Rules"),
         toLink("Failed Generations"),
       ]),
     ].join("\n"),
@@ -731,6 +737,7 @@ function buildAssetReuseLogNote(input: {
         toLink("Successful Generations"),
         toLink("Cost-Aware Iteration Notes"),
         toLink("Asset Reuse Decisions"),
+        toLink("Sandbox Simulation Results"),
         toLink("Shot Planning Rules"),
       ]),
     ].join("\n"),
@@ -1000,6 +1007,231 @@ function buildCostAwareIterationNotes(input: {
         toLink("Failed Generations"),
         toLink("Successful Generations"),
         toLink("Asset Reuse Log"),
+        toLink("Generation Job Queue"),
+        toLink("Cost-Aware Generation Strategy"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildGenerationJobQueueNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const jobs = production.generation_jobs;
+  const sequenceCoverage = [...new Set(jobs.map((entry) => entry.sequence_id))].map((sequenceId) => {
+    const sequenceJobs = jobs.filter((entry) => entry.sequence_id === sequenceId);
+    return `${sequenceId}: jobs=${sequenceJobs.length} | providers=${[...new Set(sequenceJobs.map((entry) => entry.provider))].join(", ") || "none"}`;
+  });
+
+  return {
+    title: "Generation Job Queue",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_generation_job_queue",
+      tags: ["second-brain", "generation-jobs", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Planned Jobs",
+      asBulletList(jobs.length > 0
+        ? jobs.map((entry) => `${entry.job_id}: ${entry.sequence_id} / ${entry.shot_id} | provider=${entry.provider} | status=${entry.generation_status} | validation=${entry.validation_state}`)
+        : ["No generation jobs planned yet."]),
+      "",
+      "## Sequence Coverage",
+      asBulletList(sequenceCoverage.length > 0 ? sequenceCoverage : ["No sequence coverage recorded yet."]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Provider Routing Rules"),
+        toLink("Cinematic Execution Lifecycle"),
+        toLink("Sandbox Simulation Results"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildProviderRoutingRulesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const observedProviders = [...new Set([...production.generation_jobs.map((entry) => entry.provider), "LocalFutureProvider"])];
+  return {
+    title: "Provider Routing Rules",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_provider_routing_rules",
+      tags: ["second-brain", "provider-routing", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Routing Rules",
+      asBulletList(production.provider_routing_rules),
+      "",
+      "## Observed Providers",
+      asBulletList(observedProviders.map((entry) => entry)),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Generation Job Queue"),
+        toLink("Cinematic Execution Lifecycle"),
+        toLink("Cost-Aware Generation Strategy"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildCinematicExecutionLifecycleNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const recentHistory = production.generation_job_history.slice(-12);
+  return {
+    title: "Cinematic Execution Lifecycle",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_execution_lifecycle",
+      tags: ["second-brain", "execution-lifecycle", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Lifecycle Rules",
+      asBulletList(production.execution_lifecycle_rules),
+      "",
+      "## Lifecycle Summary",
+      asBulletList([
+        `Tracked jobs: ${production.generation_jobs.length}`,
+        `Lifecycle events: ${production.generation_job_history.length}`,
+        `Sandbox simulations: ${production.sandbox_simulations.length}`,
+      ]),
+      "",
+      "## Recent Transitions",
+      asBulletList(recentHistory.length > 0
+        ? recentHistory.map((entry) => `${entry.job_id}: ${entry.generation_status} | ${entry.detail}`)
+        : ["No lifecycle transitions recorded yet."]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Generation Job Queue"),
+        toLink("Retry Planning Rules"),
+        toLink("Sandbox Simulation Results"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildRetryPlanningRulesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const retryJobs = production.generation_jobs.filter((entry) => entry.retry_count > 0);
+  return {
+    title: "Retry Planning Rules",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_retry_planning_rules",
+      tags: ["second-brain", "retry-planning", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Retry Rules",
+      asBulletList(production.retry_planning_rules),
+      "",
+      "## Retry Jobs",
+      asBulletList(retryJobs.length > 0
+        ? retryJobs.map((entry) => `${entry.job_id}: retry=${entry.retry_count} | preserved outputs=${entry.continuity_context.preserved_output_refs.length}`)
+        : ["No retry jobs recorded yet."]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Cinematic Execution Lifecycle"),
+        toLink("Failed Generations"),
+        toLink("Sandbox Simulation Results"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildCostAwareGenerationStrategyNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const providerCosts = [...new Set(production.generation_jobs.map((entry) => entry.provider))].map((provider) => {
+    const providerJobs = production.generation_jobs.filter((entry) => entry.provider === provider);
+    const totalCost = providerJobs.reduce((sum, entry) => sum + entry.estimated_cost, 0);
+    return `${provider}: planned cost=${totalCost}`;
+  });
+  return {
+    title: "Cost-Aware Generation Strategy",
+    directory: "Resources",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_cost_aware_generation_strategy",
+      tags: ["second-brain", "cost-strategy", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Strategy Rules",
+      asBulletList(production.cost_aware_generation_strategy),
+      "",
+      "## Provider Cost Signals",
+      asBulletList(providerCosts.length > 0 ? providerCosts : ["No provider costs recorded yet."]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Provider Routing Rules"),
+        toLink("Generation Job Queue"),
+        toLink("Cost-Aware Iteration Notes"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildSandboxSimulationResultsNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Sandbox Simulation Results",
+    directory: "Outcomes",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_sandbox_simulation_results",
+      tags: ["second-brain", "sandbox-simulation", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Simulations",
+      asBulletList(production.sandbox_simulations.length > 0
+        ? production.sandbox_simulations.map((entry) => `${entry.simulation_id}: provider=${entry.provider} | approved=${entry.approved_job_ids.length} | failed=${entry.failed_job_ids.length} | retries=${entry.retry_job_ids.length}`)
+        : ["No sandbox simulations recorded yet."]),
+      "",
+      "## Asset Reuse During Simulation",
+      asBulletList(production.sandbox_simulations.flatMap((entry) => entry.asset_reuse_decisions).length > 0
+        ? production.sandbox_simulations.flatMap((entry) => entry.asset_reuse_decisions)
+        : ["No sandbox asset reuse decisions recorded yet."]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Generation Job Queue"),
+        toLink("Cinematic Execution Lifecycle"),
+        toLink("Retry Planning Rules"),
       ]),
     ].join("\n"),
   };
@@ -1235,6 +1467,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildFailedGenerationsNote({ productionMemory, latestSessionId }),
     buildSuccessfulGenerationsNote({ productionMemory, latestSessionId }),
     buildCostAwareIterationNotes({ productionMemory, latestSessionId }),
+    buildGenerationJobQueueNote({ productionMemory, latestSessionId }),
+    buildProviderRoutingRulesNote({ productionMemory, latestSessionId }),
+    buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
+    buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),
+    buildCostAwareGenerationStrategyNote({ productionMemory, latestSessionId }),
+    buildSandboxSimulationResultsNote({ productionMemory, latestSessionId }),
     buildSessionContinuitySummaryNote({ record, repoProjectContext, latestSessionId }),
     buildHomeNote({
       record,

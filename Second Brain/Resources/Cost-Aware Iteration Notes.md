@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T15:35:26.984Z
+updated_at: 2026-05-07T15:53:54.920Z
 session_id: phase7c-skip-task-session
 status: generated_cost_aware_iteration_notes
 tags:
@@ -27,3 +27,5 @@ tags:
 - [[Failed Generations]]
 - [[Successful Generations]]
 - [[Asset Reuse Log]]
+- [[Generation Job Queue]]
+- [[Cost-Aware Generation Strategy]]

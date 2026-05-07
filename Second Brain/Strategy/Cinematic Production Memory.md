@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T15:35:26.984Z
+updated_at: 2026-05-07T15:53:54.920Z
 session_id: phase7c-skip-task-session
 status: generated_cinematic_memory_view
 tags:
@@ -40,7 +40,7 @@ tags:
 - Wave Start Pressure Beat: A short gameplay-adjacent cutscene establishes the next wave as pressure rises before control returns.
 
 ## Style Foundations
-- Emotional tone: pressured, readable, confident, kinetic
+- Emotional tone: pressured, readable, confident, kinetic, resolve
 - Visual style: gameplay-first cinematic framing, clean sci-fi action, high legibility silhouettes
 - Camera language: push-ins for wave reveals, shoulder-height tactical framing, brief hero inserts between combat beats
 - Lighting: rim light for subject separation, arena practicals over abstract mood lighting
@@ -51,4 +51,8 @@ tags:
 - [[Continuity Rules]]
 - [[Scene Sequences]]
 - [[Gameplay Cutscene Triggers]]
+- [[Generation Job Queue]]
+- [[Provider Routing Rules]]
+- [[Cinematic Execution Lifecycle]]
 - [[Cost-Aware Iteration Notes]]
+- [[Cost-Aware Generation Strategy]]

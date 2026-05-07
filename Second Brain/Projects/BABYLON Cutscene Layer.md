@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T15:35:26.984Z
+updated_at: 2026-05-07T15:53:54.920Z
 session_id: phase7c-skip-task-session
 status: generated_babylon_cutscene_layer
 tags:
@@ -35,4 +35,5 @@ tags:
 - [[Shot Planning Rules]]
 - [[Scene Sequences]]
 - [[Gameplay Cutscene Triggers]]
+- [[Generation Job Queue]]
 - [[Successful Generations]]

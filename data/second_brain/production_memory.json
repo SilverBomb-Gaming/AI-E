@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "created_at": "2026-05-07T00:00:00.000Z",
-  "updated_at": "2026-05-07T15:35:26.984Z",
+  "updated_at": "2026-05-07T15:53:54.920Z",
   "project_key": "babylon-2026",
   "mission_layer": "Persistent Production Memory + Cinematic Video Intelligence",
   "roadmap_systems": [
@@ -403,6 +403,31 @@
     "Preserve the approved wave reveal prompt when only the escalation insert fails.",
     "Reuse environment-establishing shots before generating new geography coverage."
   ],
+  "generation_jobs": [],
+  "generation_job_history": [],
+  "provider_routing_rules": [
+    "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
+    "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
+    "Offline planning and future local inference modes must remain provider-agnostic and avoid real API calls.",
+    "Balanced comparison mode can use Veo or Runway stubs to compare provider-ready payloads without execution lock-in."
+  ],
+  "execution_lifecycle_rules": [
+    "Execution lifecycle remains append-only in generation job history.",
+    "Continuity validation must pass before any job can advance beyond planned.",
+    "Sandbox simulation may transition jobs through queueing, generation, validation, approval, failure, and retry-required states deterministically."
+  ],
+  "retry_planning_rules": [
+    "Retry planning must preserve successful shot outputs and only isolate failed shots when possible.",
+    "Retry loops must block once the bounded retry threshold is reached.",
+    "Regeneration-only batches should carry preserved output references from successful neighboring shots."
+  ],
+  "cost_aware_generation_strategy": [
+    "Use cheap draft routing for first-pass framing validation.",
+    "Use premium cinematic routing for higher-fidelity provider-ready payloads.",
+    "Use offline planning mode when only orchestration validation is required.",
+    "Reserve future local inference mode for later generator-agnostic local execution bridges."
+  ],
+  "sandbox_simulations": [],
   "failed_generations": [
     {
       "generation_id": "failed-wave-overstyle-001",

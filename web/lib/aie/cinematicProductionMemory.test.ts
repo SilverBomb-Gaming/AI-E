@@ -5,13 +5,19 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  compareCinematicProviderOutputs,
   compileCinematicShotPrompt,
   ensureCinematicProductionMemoryInitialized,
+  listCinematicProviderAdapters,
+  planCinematicGenerationJobs,
   planCinematicSequence,
   planFailedShotRegeneration,
   readCinematicProductionMemory,
   recordCinematicGenerationOutcome,
   recordCinematicShotHistory,
+  selectCinematicGenerationProviderRoute,
+  simulateCinematicExecutionSandbox,
+  validateCinematicExecutionPlan,
   validateCinematicSequenceContinuity,
   writeCinematicProductionMemory,
 } from "./cinematicProductionMemory";
@@ -155,6 +161,118 @@ test("cinematic production memory evolves into continuity-aware shot planning in
     assert.match(compiled.prior_shot_context ?? "", /reveal-subject/);
     assert.ok(compiled.gameplay_transition_context.length > 0);
     assert.match(compiled.estimated_cost_tier, /low|medium|high/);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("cinematic execution sandbox plans provider-agnostic jobs and simulates lifecycle deterministically", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-cinematic-execution-sandbox-"));
+
+  try {
+    await ensureCinematicProductionMemoryInitialized(tempRoot);
+    const executionSequence = await planCinematicSequence({
+      root: tempRoot,
+      sequenceId: "sequence-execution-sandbox-001",
+      title: "Execution Sandbox Sequence",
+    });
+
+    const adapters = listCinematicProviderAdapters();
+    const cheapRoute = selectCinematicGenerationProviderRoute({ routingMode: "cheap-draft-provider" });
+    const localRoute = selectCinematicGenerationProviderRoute({ routingMode: "future-local-inference-mode" });
+
+    assert.deepEqual(adapters.map((entry) => entry.provider), ["Sora", "Seedance", "Runway", "Veo", "LocalFutureProvider"]);
+    assert.equal(cheapRoute.provider, "Seedance");
+    assert.equal(localRoute.provider, "LocalFutureProvider");
+
+    const planned = await planCinematicGenerationJobs({
+      root: tempRoot,
+      sequenceId: executionSequence.sequence.sequence_id,
+      routingMode: "cheap-draft-provider",
+    });
+
+    assert.equal(planned.blocked, false);
+    assert.equal(planned.persisted, true);
+    assert.equal(planned.jobs.length, 7);
+    assert.equal(planned.batches.length, 1);
+    assert.deepEqual(planned.batches[0]?.shot_ids, planned.jobs.map((entry) => entry.shot_id));
+    assert.ok(planned.jobs.every((entry) => entry.generation_status === "planned"));
+    assert.ok(planned.jobs.every((entry) => entry.validation_state === "validated"));
+    assert.ok(planned.jobs.some((entry) => entry.continuity_context.dependency_shot_ids.length > 0));
+
+    const simulation = await simulateCinematicExecutionSandbox({
+      root: tempRoot,
+      sequenceId: executionSequence.sequence.sequence_id,
+      routingMode: "cheap-draft-provider",
+    });
+
+    assert.equal(simulation.simulation.provider, "Seedance");
+    assert.ok(simulation.simulation.queued_job_ids.length > 0);
+    assert.ok(simulation.simulation.failed_job_ids.length > 0);
+    assert.ok(simulation.simulation.retry_job_ids.length > 0);
+    assert.ok(simulation.jobs.some((entry) => entry.generation_status === "retry-required"));
+    assert.ok(simulation.retry_jobs.every((entry) => entry.generation_status === "approved"));
+    assert.ok(simulation.retry_jobs.every((entry) => entry.continuity_context.preserved_output_refs.length > 0));
+    assert.ok(simulation.history_entries.some((entry) => entry.generation_status === "queued"));
+    assert.ok(simulation.history_entries.some((entry) => entry.generation_status === "generating"));
+    assert.ok(simulation.history_entries.some((entry) => entry.generation_status === "approved"));
+    assert.ok(simulation.history_entries.some((entry) => entry.generation_status === "retry-required"));
+
+    await simulateCinematicExecutionSandbox({
+      root: tempRoot,
+      sequenceId: executionSequence.sequence.sequence_id,
+      routingMode: "premium-cinematic-provider",
+    });
+
+    const comparison = await compareCinematicProviderOutputs({
+      root: tempRoot,
+      sequenceId: executionSequence.sequence.sequence_id,
+    });
+    const record = await readCinematicProductionMemory({ root: tempRoot });
+
+    assert.ok(comparison.some((entry) => entry.provider === "Seedance"));
+    assert.ok(comparison.some((entry) => entry.provider === "Sora"));
+    assert.ok(record.generation_jobs.some((entry) => entry.provider === "Seedance" && entry.output_refs.length > 0));
+    assert.ok(record.generation_jobs.some((entry) => entry.provider === "Sora" && entry.output_refs.length > 0));
+    assert.ok(record.generation_job_history.length >= simulation.history_entries.length);
+    assert.ok(record.sandbox_simulations.length >= 2);
+
+    await writeCinematicProductionMemory({
+      root: tempRoot,
+      value: {
+        scene_sequences: [
+          {
+            ...executionSequence.sequence,
+            sequence_id: "sequence-invalid-execution-001",
+            title: "Invalid Execution Sequence",
+            shots: executionSequence.sequence.shots.map((entry) => {
+              if (entry.shot_purpose === "transition-shot") {
+                return {
+                  ...entry,
+                  prop_ids: [...entry.prop_ids, "missing-prop"],
+                };
+              }
+              return entry;
+            }),
+          },
+        ],
+      },
+    });
+
+    const blockedValidation = await validateCinematicExecutionPlan({
+      root: tempRoot,
+      sequenceId: "sequence-invalid-execution-001",
+    });
+    const blockedPlan = await planCinematicGenerationJobs({
+      root: tempRoot,
+      sequenceId: "sequence-invalid-execution-001",
+      routingMode: "balanced-comparison-mode",
+    });
+
+    assert.equal(blockedValidation.valid, false);
+    assert.ok(blockedValidation.issues.some((entry) => entry.category === "continuity-compatibility"));
+    assert.equal(blockedPlan.blocked, true);
+    assert.equal(blockedPlan.jobs.length, 0);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

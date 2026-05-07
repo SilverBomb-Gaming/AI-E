@@ -21,6 +21,10 @@ export type ProductionMemoryManagerSystem = {
     | "gameplay-cutscene-trigger-system"
     | "cinematic-prompt-compiler"
     | "cost-aware-iteration-system"
+    | "cinematic-execution-sandbox"
+    | "provider-routing-layer"
+    | "shot-batch-orchestrator"
+    | "generation-lifecycle-tracker"
     | "second-brain-obsidian-integration";
   title: string;
   status: "planned" | "foundation" | "active";
@@ -149,6 +153,159 @@ export type CinematicGameplayContext = {
   downstream_payoffs: string[];
 };
 
+export type CinematicGenerationProvider = "Sora" | "Seedance" | "Runway" | "Veo" | "LocalFutureProvider";
+
+export type CinematicGenerationStatus =
+  | "planned"
+  | "queued"
+  | "generating"
+  | "validating"
+  | "approved"
+  | "failed"
+  | "retry-required"
+  | "archived";
+
+export type CinematicGenerationValidationState =
+  | "pending"
+  | "validated"
+  | "continuity-blocked"
+  | "missing-dependencies"
+  | "invalid-shot-ordering"
+  | "stale-asset-references"
+  | "retry-loop-blocked";
+
+export type CinematicGenerationPromptPayload = {
+  compiled_prompt: string;
+  provider_payload_version: string;
+  camera_intent: string;
+  asset_reuse_candidates: string[];
+  execution_notes: string[];
+};
+
+export type CinematicGenerationContinuityContext = {
+  dependency_shot_ids: string[];
+  continuity_constraints: string[];
+  preserved_output_refs: string[];
+  sequence_order_index: number;
+};
+
+export type CinematicGenerationJob = {
+  job_id: string;
+  project_key: string;
+  provider: CinematicGenerationProvider;
+  sequence_id: string;
+  shot_id: string;
+  prompt_payload: CinematicGenerationPromptPayload;
+  continuity_context: CinematicGenerationContinuityContext;
+  generation_status: CinematicGenerationStatus;
+  retry_count: number;
+  estimated_cost: number;
+  output_refs: string[];
+  validation_state: CinematicGenerationValidationState;
+  created_at: string;
+};
+
+export type CinematicProviderRoutingMode =
+  | "cheap-draft-provider"
+  | "premium-cinematic-provider"
+  | "offline-planning-mode"
+  | "future-local-inference-mode"
+  | "balanced-comparison-mode";
+
+export type CinematicProviderRoutingDecision = {
+  provider: CinematicGenerationProvider;
+  routing_mode: CinematicProviderRoutingMode;
+  rationale: string;
+  estimated_cost_tier: CostTier;
+};
+
+export type CinematicProviderAdapterStub = {
+  provider: CinematicGenerationProvider;
+  summary: string;
+  supported_modes: CinematicProviderRoutingMode[];
+  stub_capabilities: string[];
+};
+
+export type CinematicExecutionValidationIssueCategory =
+  | "continuity-compatibility"
+  | "missing-dependencies"
+  | "invalid-shot-ordering"
+  | "stale-asset-references"
+  | "retry-loop";
+
+export type CinematicExecutionValidationIssue = {
+  category: CinematicExecutionValidationIssueCategory;
+  shot_id?: string;
+  detail: string;
+};
+
+export type CinematicExecutionValidationResult = {
+  sequence_id: string;
+  valid: boolean;
+  issues: CinematicExecutionValidationIssue[];
+};
+
+export type CinematicShotBatchPlan = {
+  batch_id: string;
+  provider: CinematicGenerationProvider;
+  sequence_id: string;
+  shot_ids: string[];
+  job_ids: string[];
+  reusable_environment_ids: string[];
+  reusable_character_ids: string[];
+  continuity_dependency_shot_ids: string[];
+  regeneration_only: boolean;
+};
+
+export type CinematicGenerationJobHistoryEntry = {
+  event_id: string;
+  job_id: string;
+  provider: CinematicGenerationProvider;
+  shot_id: string;
+  generation_status: CinematicGenerationStatus;
+  validation_state: CinematicGenerationValidationState;
+  detail: string;
+  recorded_at: string;
+};
+
+export type CinematicSandboxSimulationRecord = {
+  simulation_id: string;
+  sequence_id: string;
+  routing_mode: CinematicProviderRoutingMode;
+  provider: CinematicGenerationProvider;
+  queued_job_ids: string[];
+  approved_job_ids: string[];
+  failed_job_ids: string[];
+  retry_job_ids: string[];
+  continuity_issue_count: number;
+  asset_reuse_decisions: string[];
+  recorded_at: string;
+};
+
+export type PlannedCinematicExecutionResult = {
+  routing: CinematicProviderRoutingDecision;
+  validation: CinematicExecutionValidationResult;
+  jobs: CinematicGenerationJob[];
+  batches: CinematicShotBatchPlan[];
+  blocked: boolean;
+  persisted: boolean;
+};
+
+export type CinematicProviderOutputComparison = {
+  provider: CinematicGenerationProvider;
+  approved_jobs: number;
+  failed_jobs: number;
+  total_outputs: number;
+  total_estimated_cost: number;
+};
+
+export type CinematicSandboxSimulationResult = {
+  simulation: CinematicSandboxSimulationRecord;
+  jobs: CinematicGenerationJob[];
+  history_entries: CinematicGenerationJobHistoryEntry[];
+  retry_jobs: CinematicGenerationJob[];
+};
+
 export type CinematicProductionMemoryRecord = {
   schema_version: 1;
   created_at: string;
@@ -172,6 +329,13 @@ export type CinematicProductionMemoryRecord = {
   failed_generations: CinematicGenerationOutcome[];
   successful_generations: CinematicGenerationOutcome[];
   asset_reuse_decisions: string[];
+  generation_jobs: CinematicGenerationJob[];
+  generation_job_history: CinematicGenerationJobHistoryEntry[];
+  provider_routing_rules: string[];
+  execution_lifecycle_rules: string[];
+  retry_planning_rules: string[];
+  cost_aware_generation_strategy: string[];
+  sandbox_simulations: CinematicSandboxSimulationRecord[];
   edit_decisions: string[];
   pacing_notes: string[];
   gameplay_context: CinematicGameplayContext;
@@ -229,6 +393,8 @@ export type FailedShotRegenerationPlan = {
   preserved_successful_shot_ids: string[];
   continuity_state: string[];
 };
+
+const MAX_GENERATION_RETRY_COUNT = 2;
 
 const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
   schema_version: 1,
@@ -292,6 +458,30 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
       summary: "Record failed/successful attempts with cost tiers and prioritize bounded iteration loops.",
     },
     {
+      id: "cinematic-execution-sandbox",
+      title: "Cinematic Execution Sandbox",
+      status: "foundation",
+      summary: "Prepare provider-agnostic cinematic generation jobs and sandbox execution lifecycle transitions without real API calls.",
+    },
+    {
+      id: "provider-routing-layer",
+      title: "Provider Routing Layer",
+      status: "planned",
+      summary: "Choose draft, premium, offline, and future-local generation routes without locking to one provider.",
+    },
+    {
+      id: "shot-batch-orchestrator",
+      title: "Shot Batch Orchestrator",
+      status: "planned",
+      summary: "Group execution jobs into continuity-safe shot batches with reusable environment and character context.",
+    },
+    {
+      id: "generation-lifecycle-tracker",
+      title: "Generation Lifecycle Tracker",
+      status: "planned",
+      summary: "Track append-only execution lifecycle state transitions for cinematic jobs and retry flows.",
+    },
+    {
       id: "second-brain-obsidian-integration",
       title: "Second Brain + Obsidian integration",
       status: "foundation",
@@ -330,7 +520,13 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
   ],
   emotional_tone: ["pressured", "readable", "confident", "kinetic", "resolve"],
   visual_style: ["gameplay-first cinematic framing", "clean sci-fi action", "high legibility silhouettes"],
-  camera_language: ["push-ins for wave reveals", "shoulder-height tactical framing", "brief hero inserts between combat beats"],
+  camera_language: [
+    "push-ins for wave reveals",
+    "shoulder-height tactical framing",
+    "brief hero inserts between combat beats",
+    "wide layout-establishing frames for readable arena geography",
+    "glide-back gameplay continuity handoffs",
+  ],
   lighting: ["rim light for subject separation", "arena practicals over abstract mood lighting"],
   props: ["arena barriers", "weapon silhouettes", "enemy spawn markers"],
   continuity_rules: [
@@ -515,6 +711,31 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
     "Preserve the approved wave reveal prompt when only the escalation insert fails.",
     "Reuse environment-establishing shots before generating new geography coverage.",
   ],
+  generation_jobs: [],
+  generation_job_history: [],
+  provider_routing_rules: [
+    "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
+    "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
+    "Offline planning and future local inference modes must remain provider-agnostic and avoid real API calls.",
+    "Balanced comparison mode can use Veo or Runway stubs to compare provider-ready payloads without execution lock-in.",
+  ],
+  execution_lifecycle_rules: [
+    "Execution lifecycle remains append-only in generation job history.",
+    "Continuity validation must pass before any job can advance beyond planned.",
+    "Sandbox simulation may transition jobs through queueing, generation, validation, approval, failure, and retry-required states deterministically.",
+  ],
+  retry_planning_rules: [
+    "Retry planning must preserve successful shot outputs and only isolate failed shots when possible.",
+    "Retry loops must block once the bounded retry threshold is reached.",
+    "Regeneration-only batches should carry preserved output references from successful neighboring shots.",
+  ],
+  cost_aware_generation_strategy: [
+    "Use cheap draft routing for first-pass framing validation.",
+    "Use premium cinematic routing for higher-fidelity provider-ready payloads.",
+    "Use offline planning mode when only orchestration validation is required.",
+    "Reserve future local inference mode for later generator-agnostic local execution bridges.",
+  ],
+  sandbox_simulations: [],
   failed_generations: [
     {
       generation_id: "failed-wave-overstyle-001",
@@ -588,6 +809,13 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     failed_generations: nextRecord.failed_generations ?? defaults.failed_generations,
     successful_generations: nextRecord.successful_generations ?? defaults.successful_generations,
     asset_reuse_decisions: nextRecord.asset_reuse_decisions ?? defaults.asset_reuse_decisions,
+    generation_jobs: nextRecord.generation_jobs ?? defaults.generation_jobs,
+    generation_job_history: nextRecord.generation_job_history ?? defaults.generation_job_history,
+    provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
+    execution_lifecycle_rules: nextRecord.execution_lifecycle_rules ?? defaults.execution_lifecycle_rules,
+    retry_planning_rules: nextRecord.retry_planning_rules ?? defaults.retry_planning_rules,
+    cost_aware_generation_strategy: nextRecord.cost_aware_generation_strategy ?? defaults.cost_aware_generation_strategy,
+    sandbox_simulations: nextRecord.sandbox_simulations ?? defaults.sandbox_simulations,
     edit_decisions: nextRecord.edit_decisions ?? defaults.edit_decisions,
     pacing_notes: nextRecord.pacing_notes ?? defaults.pacing_notes,
     gameplay_context: {
@@ -908,7 +1136,7 @@ export async function validateCinematicSequenceContinuity(input: {
   const characterIds = new Set(record.characters.map((entry) => entry.character_id));
   const environmentIds = new Set(record.environments.map((entry) => entry.environment_id));
   const availableLighting = new Set(record.lighting);
-  const availableProps = new Set(record.props);
+  const availableProps = new Set([...record.props, ...record.environments.flatMap((entry) => entry.props)]);
   const availableTone = new Set(record.emotional_tone);
   const knownCameraLanguage = record.camera_language.join(" ").toLowerCase();
   const mismatches: ContinuityValidationMismatch[] = [];
@@ -950,6 +1178,532 @@ function latestGenerationStatus(entries: CinematicGenerationOutcome[], shotId: s
   return entries
     .filter((entry) => entry.shot_id === shotId)
     .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0];
+}
+
+function createGenerationJobHistoryEntry(input: {
+  job: CinematicGenerationJob;
+  detail: string;
+}): CinematicGenerationJobHistoryEntry {
+  return {
+    event_id: `${input.job.job_id}-${input.job.generation_status}-${input.job.retry_count}-${Date.now()}`,
+    job_id: input.job.job_id,
+    provider: input.job.provider,
+    shot_id: input.job.shot_id,
+    generation_status: input.job.generation_status,
+    validation_state: input.job.validation_state,
+    detail: input.detail,
+    recorded_at: new Date().toISOString(),
+  };
+}
+
+function upsertGenerationJobs(currentJobs: CinematicGenerationJob[], nextJobs: CinematicGenerationJob[]): CinematicGenerationJob[] {
+  const byId = new Map(currentJobs.map((entry) => [entry.job_id, entry]));
+  for (const job of nextJobs) {
+    byId.set(job.job_id, job);
+  }
+  return [...byId.values()].sort((left, right) => left.created_at.localeCompare(right.created_at));
+}
+
+function buildExecutionPromptPayload(input: {
+  record: CinematicProductionMemoryRecord;
+  sequence: CinematicSceneSequence;
+  shot: CinematicSceneSequenceShot;
+  beat: CinematicStoryBeat;
+  route: CinematicProviderRoutingDecision;
+}): CinematicGenerationPromptPayload {
+  const reusableAssets = input.record.generated_assets.filter((entry) => entry.reusable).map((entry) => entry.asset_id);
+  return {
+    compiled_prompt: [
+      `Project: ${input.record.project_key}`,
+      `Sequence: ${input.sequence.title}`,
+      `Shot: ${input.shot.shot_purpose}`,
+      `Intent: ${input.shot.emotional_intent}`,
+      `Gameplay trigger: ${input.shot.gameplay_trigger}`,
+      `Camera: ${input.shot.camera_behavior}`,
+      `Transition: ${input.shot.transition_notes}`,
+      `Continuity: ${[...input.record.continuity_rules, ...input.shot.continuity_dependencies].join(" | ")}`,
+    ].join("\n"),
+    provider_payload_version: "sandbox-v1",
+    camera_intent: input.shot.camera_behavior,
+    asset_reuse_candidates: reusableAssets,
+    execution_notes: [
+      `Routing mode: ${input.route.routing_mode}`,
+      `Provider rationale: ${input.route.rationale}`,
+      `Beat goal: ${input.beat.emotional_goal}`,
+    ],
+  };
+}
+
+function resolveExecutionDependencyShotIds(sequence: CinematicSceneSequence, shot: CinematicSceneSequenceShot): string[] {
+  return sequence.shots
+    .filter((entry) => entry.shot_order < shot.shot_order)
+    .map((entry) => entry.shot_id);
+}
+
+function batchKeyForShot(shot: CinematicSceneSequenceShot): string {
+  return `${shot.environment_id}::${[...shot.character_ids].sort().join("+")}`;
+}
+
+function buildShotBatches(input: {
+  sequence: CinematicSceneSequence;
+  provider: CinematicGenerationProvider;
+  jobs: CinematicGenerationJob[];
+  regenerationOnly: boolean;
+}): CinematicShotBatchPlan[] {
+  const sortedShots = [...input.sequence.shots].sort((left, right) => left.shot_order - right.shot_order);
+  const batches: CinematicShotBatchPlan[] = [];
+  let currentShots: CinematicSceneSequenceShot[] = [];
+  let currentKey: string | null = null;
+
+  const flush = (): void => {
+    if (currentShots.length === 0) {
+      return;
+    }
+    const shotIds = currentShots.map((entry) => entry.shot_id);
+    const relatedJobs = input.jobs.filter((entry) => shotIds.includes(entry.shot_id));
+    batches.push({
+      batch_id: `batch-${input.sequence.sequence_id}-${batches.length + 1}`,
+      provider: input.provider,
+      sequence_id: input.sequence.sequence_id,
+      shot_ids: shotIds,
+      job_ids: relatedJobs.map((entry) => entry.job_id),
+      reusable_environment_ids: [...new Set(currentShots.map((entry) => entry.environment_id))],
+      reusable_character_ids: [...new Set(currentShots.flatMap((entry) => entry.character_ids))],
+      continuity_dependency_shot_ids: [...new Set(currentShots.flatMap((entry) => resolveExecutionDependencyShotIds(input.sequence, entry)))],
+      regeneration_only: input.regenerationOnly,
+    });
+    currentShots = [];
+    currentKey = null;
+  };
+
+  for (const shot of sortedShots) {
+    const nextKey = batchKeyForShot(shot);
+    if (currentKey !== null && currentKey !== nextKey) {
+      flush();
+    }
+    currentKey = nextKey;
+    currentShots.push(shot);
+  }
+
+  flush();
+  return batches;
+}
+
+export function listCinematicProviderAdapters(): CinematicProviderAdapterStub[] {
+  return [
+    {
+      provider: "Sora",
+      summary: "Premium cinematic stub adapter for high-fidelity provider-ready payloads.",
+      supported_modes: ["premium-cinematic-provider", "balanced-comparison-mode"],
+      stub_capabilities: ["cinematic-fidelity", "provider-ready-payload-prep"],
+    },
+    {
+      provider: "Seedance",
+      summary: "Cheap draft stub adapter for low-cost storyboard-grade passes.",
+      supported_modes: ["cheap-draft-provider"],
+      stub_capabilities: ["fast-draft-pass", "sandbox-failure-probe"],
+    },
+    {
+      provider: "Runway",
+      summary: "Balanced comparison stub adapter for alternate provider-ready payload comparisons.",
+      supported_modes: ["balanced-comparison-mode"],
+      stub_capabilities: ["provider-agnostic-comparison", "alternate-payload-shape"],
+    },
+    {
+      provider: "Veo",
+      summary: "Balanced premium stub adapter for side-by-side payload comparison planning.",
+      supported_modes: ["balanced-comparison-mode", "premium-cinematic-provider"],
+      stub_capabilities: ["comparison-pass", "cinematic-coverage"],
+    },
+    {
+      provider: "LocalFutureProvider",
+      summary: "Future local inference and offline planning stub adapter with no real execution dependency.",
+      supported_modes: ["offline-planning-mode", "future-local-inference-mode"],
+      stub_capabilities: ["offline-routing", "future-local-execution-bridge"],
+    },
+  ];
+}
+
+export function selectCinematicGenerationProviderRoute(input: {
+  routingMode: CinematicProviderRoutingMode;
+}): CinematicProviderRoutingDecision {
+  switch (input.routingMode) {
+    case "cheap-draft-provider":
+      return {
+        provider: "Seedance",
+        routing_mode: input.routingMode,
+        rationale: "Cheap draft provider selected for bounded sandbox framing passes.",
+        estimated_cost_tier: "low",
+      };
+    case "premium-cinematic-provider":
+      return {
+        provider: "Sora",
+        routing_mode: input.routingMode,
+        rationale: "Premium cinematic provider selected for higher-fidelity provider-ready planning.",
+        estimated_cost_tier: "high",
+      };
+    case "offline-planning-mode":
+      return {
+        provider: "LocalFutureProvider",
+        routing_mode: input.routingMode,
+        rationale: "Offline planning mode selected to keep orchestration validation provider-agnostic and non-executing.",
+        estimated_cost_tier: "low",
+      };
+    case "future-local-inference-mode":
+      return {
+        provider: "LocalFutureProvider",
+        routing_mode: input.routingMode,
+        rationale: "Future local inference mode selected to preserve a generator-agnostic local routing path.",
+        estimated_cost_tier: "medium",
+      };
+    case "balanced-comparison-mode":
+      return {
+        provider: "Veo",
+        routing_mode: input.routingMode,
+        rationale: "Balanced comparison mode selected for provider output comparison without hard-locking execution.",
+        estimated_cost_tier: "medium",
+      };
+  }
+}
+
+export async function validateCinematicExecutionPlan(input: {
+  root?: string;
+  sequenceId: string;
+  shotIds?: string[];
+  isolateRegenerationOnly?: boolean;
+}): Promise<CinematicExecutionValidationResult> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const sequence = record.scene_sequences.find((entry) => entry.sequence_id === input.sequenceId);
+  if (!sequence) {
+    throw new Error(`Unknown cinematic sequence id: ${input.sequenceId}`);
+  }
+
+  const continuity = await validateCinematicSequenceContinuity({ root: input.root, sequenceId: input.sequenceId });
+  const issues: CinematicExecutionValidationIssue[] = continuity.mismatches.map((entry) => ({
+    category: "continuity-compatibility",
+    shot_id: entry.shot_id,
+    detail: entry.detail,
+  }));
+  const sortedShots = [...sequence.shots].sort((left, right) => left.shot_order - right.shot_order);
+  const successfulShotIds = new Set(record.successful_generations.map((entry) => entry.shot_id));
+  const requestedShotIds = input.shotIds ?? sortedShots.map((entry) => entry.shot_id);
+  const requestedShots = sortedShots.filter((entry) => requestedShotIds.includes(entry.shot_id));
+  const requestOrder = requestedShotIds
+    .map((shotId) => sequence.shots.find((entry) => entry.shot_id === shotId)?.shot_order ?? Number.NaN)
+    .filter((value) => Number.isFinite(value));
+  if (requestOrder.some((value, index) => index > 0 && value < requestOrder[index - 1]!)) {
+    issues.push({
+      category: "invalid-shot-ordering",
+      detail: "Requested shot ordering is not monotonic with the stored sequence order.",
+    });
+  }
+
+  for (const shot of requestedShots) {
+    const dependencyShotIds = resolveExecutionDependencyShotIds(sequence, shot);
+    for (const dependencyShotId of dependencyShotIds) {
+      if (!requestedShotIds.includes(dependencyShotId) && !successfulShotIds.has(dependencyShotId)) {
+        issues.push({
+          category: "missing-dependencies",
+          shot_id: shot.shot_id,
+          detail: `Shot depends on ${dependencyShotId} but that dependency is neither selected nor already successful.`,
+        });
+      }
+    }
+    for (const assetId of shot.required_assets) {
+      if (!record.generated_assets.some((entry) => entry.asset_id === assetId)) {
+        issues.push({
+          category: "stale-asset-references",
+          shot_id: shot.shot_id,
+          detail: `Shot references stale asset ${assetId}.`,
+        });
+      }
+    }
+    const highestRetryCount = record.generation_jobs
+      .filter((entry) => entry.sequence_id === sequence.sequence_id && entry.shot_id === shot.shot_id)
+      .reduce((maxRetryCount, entry) => Math.max(maxRetryCount, entry.retry_count), 0);
+    if (highestRetryCount >= MAX_GENERATION_RETRY_COUNT) {
+      issues.push({
+        category: "retry-loop",
+        shot_id: shot.shot_id,
+        detail: `Shot exceeded the bounded retry threshold of ${MAX_GENERATION_RETRY_COUNT}.`,
+      });
+    }
+  }
+
+  return {
+    sequence_id: sequence.sequence_id,
+    valid: issues.length === 0,
+    issues,
+  };
+}
+
+export async function planCinematicGenerationJobs(input: {
+  root?: string;
+  sequenceId: string;
+  routingMode: CinematicProviderRoutingMode;
+  shotIds?: string[];
+  isolateRegenerationOnly?: boolean;
+  persist?: boolean;
+}): Promise<PlannedCinematicExecutionResult> {
+  const initialization = await loadProductionMemory(input.root);
+  const sequence = initialization.record.scene_sequences.find((entry) => entry.sequence_id === input.sequenceId);
+  if (!sequence) {
+    throw new Error(`Unknown cinematic sequence id: ${input.sequenceId}`);
+  }
+  const beat = initialization.record.story_beats.find((entry) => entry.beat_id === sequence.beat_id);
+  if (!beat) {
+    throw new Error(`Unknown cinematic beat id: ${sequence.beat_id}`);
+  }
+
+  const validation = await validateCinematicExecutionPlan({
+    root: input.root,
+    sequenceId: input.sequenceId,
+    shotIds: input.shotIds,
+    isolateRegenerationOnly: input.isolateRegenerationOnly,
+  });
+  const routing = selectCinematicGenerationProviderRoute({ routingMode: input.routingMode });
+  if (!validation.valid) {
+    return {
+      routing,
+      validation,
+      jobs: [],
+      batches: [],
+      blocked: true,
+      persisted: false,
+    };
+  }
+
+  const regenerationPlan = input.isolateRegenerationOnly
+    ? await planFailedShotRegeneration({ root: input.root, sequenceId: input.sequenceId })
+    : null;
+  const selectedShotIds = input.isolateRegenerationOnly
+    ? regenerationPlan?.failed_shot_ids ?? []
+    : input.shotIds ?? sequence.shots.map((entry) => entry.shot_id);
+  const selectedShots = [...sequence.shots]
+    .filter((entry) => selectedShotIds.includes(entry.shot_id))
+    .sort((left, right) => left.shot_order - right.shot_order);
+  const preservedOutputRefs = initialization.record.generation_jobs
+    .filter((entry) => regenerationPlan?.preserved_successful_shot_ids.includes(entry.shot_id) && entry.output_refs.length > 0)
+    .flatMap((entry) => entry.output_refs);
+
+  const createdAt = new Date().toISOString();
+  const jobs = selectedShots.map((shot) => ({
+    job_id: `job-${initialization.record.project_key}-${routing.provider.toLowerCase()}-${sequence.sequence_id}-${shot.shot_id}`,
+    project_key: initialization.record.project_key,
+    provider: routing.provider,
+    sequence_id: sequence.sequence_id,
+    shot_id: shot.shot_id,
+    prompt_payload: buildExecutionPromptPayload({
+      record: initialization.record,
+      sequence,
+      shot,
+      beat,
+      route: routing,
+    }),
+    continuity_context: {
+      dependency_shot_ids: resolveExecutionDependencyShotIds(sequence, shot),
+      continuity_constraints: [...initialization.record.continuity_rules, ...shot.continuity_dependencies],
+      preserved_output_refs: preservedOutputRefs,
+      sequence_order_index: shot.shot_order,
+    },
+    generation_status: "planned",
+    retry_count: 0,
+    estimated_cost: routing.estimated_cost_tier === "high" ? 9 : routing.estimated_cost_tier === "medium" ? 5 : 2,
+    output_refs: [],
+    validation_state: "validated",
+    created_at: createdAt,
+  } satisfies CinematicGenerationJob));
+  const batches = buildShotBatches({
+    sequence: {
+      ...sequence,
+      shots: selectedShots,
+    },
+    provider: routing.provider,
+    jobs,
+    regenerationOnly: Boolean(input.isolateRegenerationOnly),
+  });
+
+  if (input.persist === false) {
+    return {
+      routing,
+      validation,
+      jobs,
+      batches,
+      blocked: false,
+      persisted: false,
+    };
+  }
+
+  const nextRecord: CinematicProductionMemoryRecord = {
+    ...initialization.record,
+    generation_jobs: upsertGenerationJobs(initialization.record.generation_jobs, jobs),
+    generation_job_history: [
+      ...initialization.record.generation_job_history,
+      ...jobs.map((job) => createGenerationJobHistoryEntry({ job, detail: "Job planned in cinematic execution sandbox." })),
+    ].slice(-200),
+  };
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, nextRecord);
+  return {
+    routing,
+    validation,
+    jobs,
+    batches,
+    blocked: false,
+    persisted: true,
+  };
+}
+
+function deterministicSandboxFailure(job: CinematicGenerationJob): boolean {
+  return (
+    (job.provider === "Seedance" && /escalation/i.test(job.shot_id) && job.retry_count === 0)
+    || (job.provider === "Runway" && /transition/i.test(job.shot_id) && job.retry_count === 0)
+  );
+}
+
+function updateGenerationJob(job: CinematicGenerationJob, input: {
+  generation_status: CinematicGenerationStatus;
+  validation_state?: CinematicGenerationValidationState;
+  output_refs?: string[];
+}): CinematicGenerationJob {
+  return {
+    ...job,
+    generation_status: input.generation_status,
+    validation_state: input.validation_state ?? job.validation_state,
+    output_refs: input.output_refs ?? job.output_refs,
+  };
+}
+
+export async function simulateCinematicExecutionSandbox(input: {
+  root?: string;
+  sequenceId: string;
+  routingMode: CinematicProviderRoutingMode;
+  isolateRegenerationOnly?: boolean;
+}): Promise<CinematicSandboxSimulationResult> {
+  const initialization = await loadProductionMemory(input.root);
+  const planned = await planCinematicGenerationJobs({
+    root: input.root,
+    sequenceId: input.sequenceId,
+    routingMode: input.routingMode,
+    isolateRegenerationOnly: input.isolateRegenerationOnly,
+  });
+  if (planned.blocked) {
+    throw new Error(`Cinematic execution sandbox blocked: ${planned.validation.issues.map((entry) => entry.detail).join(" | ")}`);
+  }
+
+  const jobs: CinematicGenerationJob[] = [];
+  const historyEntries: CinematicGenerationJobHistoryEntry[] = [];
+  const retryJobs: CinematicGenerationJob[] = [];
+  const approvedJobIds: string[] = [];
+  const failedJobIds: string[] = [];
+  const retryJobIds: string[] = [];
+  const assetReuseDecisions: string[] = [];
+  let approvedOutputRefs: string[] = [];
+
+  const transition = (job: CinematicGenerationJob, generationStatus: CinematicGenerationStatus, detail: string, validationState?: CinematicGenerationValidationState, outputRefs?: string[]): CinematicGenerationJob => {
+    const nextJob = updateGenerationJob(job, {
+      generation_status: generationStatus,
+      validation_state: validationState,
+      output_refs: outputRefs,
+    });
+    historyEntries.push(createGenerationJobHistoryEntry({ job: nextJob, detail }));
+    return nextJob;
+  };
+
+  for (const plannedJob of planned.jobs) {
+    let job = transition(plannedJob, "queued", "Job queued in deterministic sandbox simulation.");
+    job = transition(job, "generating", "Job entered provider-ready generation stub.");
+    job = transition(job, "validating", "Job entered continuity-preserving validation step.");
+
+    if (deterministicSandboxFailure(job)) {
+      job = transition(job, "failed", "Deterministic sandbox failure triggered for retry planning.");
+      job = transition(job, "retry-required", "Retry required while preserving successful neighboring outputs.", "validated");
+      failedJobIds.push(job.job_id);
+      const retryJob: CinematicGenerationJob = {
+        ...job,
+        job_id: `${job.job_id}-retry-${job.retry_count + 1}`,
+        retry_count: job.retry_count + 1,
+        continuity_context: {
+          ...job.continuity_context,
+          preserved_output_refs: approvedOutputRefs,
+        },
+        generation_status: "planned",
+        output_refs: [],
+      };
+      let resolvedRetryJob = transition(retryJob, "queued", "Retry job queued in regeneration-only sandbox batch.");
+      resolvedRetryJob = transition(resolvedRetryJob, "generating", "Retry job entered provider-ready generation stub.");
+      resolvedRetryJob = transition(resolvedRetryJob, "validating", "Retry job re-entered validation.");
+      const retryOutputRefs = [`sandbox://${resolvedRetryJob.provider}/${resolvedRetryJob.job_id}/approved-1`];
+      resolvedRetryJob = transition(resolvedRetryJob, "approved", "Retry job approved after deterministic sandbox recovery.", "validated", retryOutputRefs);
+      retryJobs.push(resolvedRetryJob);
+      retryJobIds.push(resolvedRetryJob.job_id);
+      approvedJobIds.push(resolvedRetryJob.job_id);
+      approvedOutputRefs = [...approvedOutputRefs, ...retryOutputRefs];
+      assetReuseDecisions.push(`Preserve successful outputs ${approvedOutputRefs.join(", ")} while retrying ${job.shot_id}.`);
+    } else {
+      const outputRefs = [`sandbox://${job.provider}/${job.job_id}/approved-1`];
+      job = transition(job, "approved", "Job approved by deterministic sandbox validation.", "validated", outputRefs);
+      approvedJobIds.push(job.job_id);
+      approvedOutputRefs = [...approvedOutputRefs, ...outputRefs];
+      assetReuseDecisions.push(`Reuse environment and character context for ${job.shot_id} after approved sandbox output.`);
+    }
+
+    jobs.push(job);
+  }
+
+  const simulation: CinematicSandboxSimulationRecord = {
+    simulation_id: `simulation-${planned.routing.provider.toLowerCase()}-${planned.validation.sequence_id}-${Date.now()}`,
+    sequence_id: planned.validation.sequence_id,
+    routing_mode: input.routingMode,
+    provider: planned.routing.provider,
+    queued_job_ids: planned.jobs.map((entry) => entry.job_id),
+    approved_job_ids: approvedJobIds,
+    failed_job_ids: failedJobIds,
+    retry_job_ids: retryJobIds,
+    continuity_issue_count: planned.validation.issues.length,
+    asset_reuse_decisions: assetReuseDecisions,
+    recorded_at: new Date().toISOString(),
+  };
+
+  const nextRecord: CinematicProductionMemoryRecord = {
+    ...initialization.record,
+    generation_jobs: upsertGenerationJobs(initialization.record.generation_jobs, [...jobs, ...retryJobs]),
+    generation_job_history: [...initialization.record.generation_job_history, ...historyEntries].slice(-300),
+    sandbox_simulations: [...initialization.record.sandbox_simulations, simulation].slice(-40),
+    asset_reuse_decisions: [...initialization.record.asset_reuse_decisions, ...assetReuseDecisions].slice(-40),
+  };
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, nextRecord);
+
+  return {
+    simulation,
+    jobs,
+    history_entries: historyEntries,
+    retry_jobs: retryJobs,
+  };
+}
+
+export async function compareCinematicProviderOutputs(input: {
+  root?: string;
+  sequenceId: string;
+}): Promise<CinematicProviderOutputComparison[]> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const byProvider = new Map<CinematicGenerationProvider, CinematicProviderOutputComparison>();
+
+  for (const job of record.generation_jobs.filter((entry) => entry.sequence_id === input.sequenceId)) {
+    const current = byProvider.get(job.provider) ?? {
+      provider: job.provider,
+      approved_jobs: 0,
+      failed_jobs: 0,
+      total_outputs: 0,
+      total_estimated_cost: 0,
+    };
+    current.approved_jobs += job.generation_status === "approved" ? 1 : 0;
+    current.failed_jobs += job.generation_status === "failed" || job.generation_status === "retry-required" ? 1 : 0;
+    current.total_outputs += job.output_refs.length;
+    current.total_estimated_cost += job.estimated_cost;
+    byProvider.set(job.provider, current);
+  }
+
+  return [...byProvider.values()].sort((left, right) => left.provider.localeCompare(right.provider));
 }
 
 export async function planFailedShotRegeneration(input: {

@@ -70,18 +70,24 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Architecture/Continuity Rules.md"));
     assert.ok(files.includes("Outcomes/Outcome History.md"));
     assert.ok(files.includes("Outcomes/Failed Generations.md"));
+    assert.ok(files.includes("Outcomes/Sandbox Simulation Results.md"));
     assert.ok(files.includes("Outcomes/Successful Generations.md"));
     assert.ok(files.includes("Recovery/Recovery Procedures.md"));
     assert.ok(files.includes("Resources/Asset Reuse Log.md"));
     assert.ok(files.includes("Resources/Asset Reuse Decisions.md"));
     assert.ok(files.includes("Resources/Cost-Aware Iteration Notes.md"));
+    assert.ok(files.includes("Resources/Cost-Aware Generation Strategy.md"));
     assert.ok(files.includes("Strategy/Strategic Roadmap.md"));
     assert.ok(files.includes("Strategy/Cinematic Production Memory.md"));
+    assert.ok(files.includes("Strategy/Generation Job Queue.md"));
     assert.ok(files.includes("Strategy/Scene Sequences.md"));
     assert.ok(files.includes("Strategy/Gameplay Cutscene Triggers.md"));
     assert.ok(files.includes("Strategy/Shot Planning Rules.md"));
     assert.ok(files.includes("Strategy/Shot Progression Examples.md"));
     assert.ok(files.includes("Architecture/Continuity Validation Rules.md"));
+    assert.ok(files.includes("Architecture/Provider Routing Rules.md"));
+    assert.ok(files.includes("Architecture/Cinematic Execution Lifecycle.md"));
+    assert.ok(files.includes("Architecture/Retry Planning Rules.md"));
     assert.ok(files.includes("Resources/Resource Fallback State.md"));
     assert.ok(files.includes("Sessions/Session Continuity Summary.md"));
     assert.ok(files.includes("Projects/BABYLON Cutscene Layer.md"));
@@ -107,6 +113,12 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const continuityValidationText = await readFile(path.join(vaultRoot, "Architecture", "Continuity Validation Rules.md"), "utf8");
     const progressionText = await readFile(path.join(vaultRoot, "Strategy", "Shot Progression Examples.md"), "utf8");
     const assetReuseDecisionText = await readFile(path.join(vaultRoot, "Resources", "Asset Reuse Decisions.md"), "utf8");
+    const jobQueueText = await readFile(path.join(vaultRoot, "Strategy", "Generation Job Queue.md"), "utf8");
+    const routingRulesText = await readFile(path.join(vaultRoot, "Architecture", "Provider Routing Rules.md"), "utf8");
+    const lifecycleText = await readFile(path.join(vaultRoot, "Architecture", "Cinematic Execution Lifecycle.md"), "utf8");
+    const retryRulesText = await readFile(path.join(vaultRoot, "Architecture", "Retry Planning Rules.md"), "utf8");
+    const generationStrategyText = await readFile(path.join(vaultRoot, "Resources", "Cost-Aware Generation Strategy.md"), "utf8");
+    const sandboxResultsText = await readFile(path.join(vaultRoot, "Outcomes", "Sandbox Simulation Results.md"), "utf8");
 
     assert.match(cinematicMemoryText, /Production Memory Manager/);
     assert.match(cinematicMemoryText, /\[\[BABYLON Cutscene Layer\]\]/);
@@ -121,6 +133,12 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(continuityValidationText, /sequence-wave-transition-001-intro/);
     assert.match(progressionText, /intro-shot -> establish-environment -> reveal-subject/);
     assert.match(assetReuseDecisionText, /Preserve the approved wave reveal prompt/);
+    assert.match(jobQueueText, /No generation jobs planned yet\./);
+    assert.match(routingRulesText, /Cheap draft routing should prefer Seedance/i);
+    assert.match(lifecycleText, /Execution lifecycle remains append-only/i);
+    assert.match(retryRulesText, /Retry planning must preserve successful shot outputs/i);
+    assert.match(generationStrategyText, /Use cheap draft routing for first-pass framing validation/i);
+    assert.match(sandboxResultsText, /No sandbox simulations recorded yet\./);
 
     const existingTitles = new Set(files.map((file) => path.basename(file, ".md")));
     for (const file of files.filter((entry) => entry.endsWith(".md"))) {
