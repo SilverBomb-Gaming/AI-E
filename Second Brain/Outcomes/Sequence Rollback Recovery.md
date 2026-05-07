@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:38:37.338Z
+updated_at: 2026-05-07T20:53:04.268Z
 session_id: phase7c-skip-task-session
 status: generated_sequence_rollback_recovery
 tags:
@@ -24,8 +24,8 @@ tags:
 - containment-violation-recovery: triggered=yes | targets=none
 
 ## Recovery Summary
-- Recovery id: sequence-rollback-recovery-1778186317305
-- Recorded at: 2026-05-07T20:38:37.305Z
+- Recovery id: sequence-rollback-recovery-1778187184237
+- Recorded at: 2026-05-07T20:53:04.237Z
 
 ## Related
 - [[Continuity Sequence Containment]]

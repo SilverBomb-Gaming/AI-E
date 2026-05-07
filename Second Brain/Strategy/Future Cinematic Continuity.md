@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:38:37.338Z
+updated_at: 2026-05-07T20:53:04.268Z
 session_id: phase7c-skip-task-session
 status: generated_future_cinematic_continuity
 tags:
@@ -20,7 +20,7 @@ tags:
 - Entry count: 6
 
 ## Continuity Scaffolds
-- governed-teaser-preview-mode: unlocked=no | prerequisites=teaser-preview governance approval, continuity-state-integrity, runtime-integrity-sufficiency, No configured runtime path is visible for dry bootstrap review., FFmpeg visibility is still missing for dry bootstrap review., No model directory is visible for dry initialization checks.
+- governed-teaser-preview-mode: unlocked=no | prerequisites=teaser-preview governance approval, runtime-integrity-sufficiency, No configured runtime path is visible for dry bootstrap review., FFmpeg visibility is still missing for dry bootstrap review., No model directory is visible for dry initialization checks.
 - continuity-safe-trailer-sequencing: unlocked=no | prerequisites=trailer continuity review, extended rollback coverage
 - governed-dialogue-scene-previews: unlocked=no | prerequisites=dialogue-scene preview governance approval, anchor-consistency proof
 - continuity-preserving-cinematic-mode: unlocked=no | prerequisites=cinematic continuity approval, multi-shot containment review

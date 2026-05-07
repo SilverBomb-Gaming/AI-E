@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:38:37.338Z
+updated_at: 2026-05-07T20:53:04.268Z
 session_id: phase7c-skip-task-session
 status: generated_frame_to_frame_continuity_validation
 tags:
@@ -23,7 +23,7 @@ tags:
 ## Validation Checks
 - continuity-anchor-integrity: passed=yes | blockers=none
 - sequence-length-restrictions: passed=yes | blockers=none
-- output-containment-restrictions: passed=no | blockers=continuity-state-integrity, runtime-integrity-sufficiency
+- output-containment-restrictions: passed=no | blockers=runtime-integrity-sufficiency
 - rollback-availability: passed=yes | blockers=none
 - runtime-integrity-sufficiency: passed=no | blockers=No configured runtime path is visible for dry bootstrap review., FFmpeg visibility is still missing for dry bootstrap review., No model directory is visible for dry initialization checks.
 - forbidden-state-enforcement: passed=yes | blockers=none

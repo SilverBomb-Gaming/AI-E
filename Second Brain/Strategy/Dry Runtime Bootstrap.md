@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:38:37.338Z
+updated_at: 2026-05-07T20:53:04.268Z
 session_id: phase7c-skip-task-session
 status: generated_dry_runtime_bootstrap
 tags:
@@ -22,13 +22,13 @@ tags:
 
 ## Bootstrap Checks
 - runtime-path-validity: passed=no | detected=none
-- runtime-binary-presence: passed=yes | detected=E:\AI projects 2025\AI-E\.venv\Scripts\python.exe, E:\Users\Fred C\AppData\Local\Programs\Python\Python311\python.exe
-- python-environment-visibility: passed=yes | detected=E:\AI projects 2025\AI-E\.venv\Scripts\python.exe, E:\Users\Fred C\AppData\Local\Programs\Python\Python311\python.exe
+- runtime-binary-presence: passed=yes | detected=e:\AI projects 2025\AI-E\.venv\Scripts\python.exe, E:\Users\Fred C\AppData\Local\Programs\Python\Python311\python.exe
+- python-environment-visibility: passed=yes | detected=e:\AI projects 2025\AI-E\.venv\Scripts\python.exe, E:\Users\Fred C\AppData\Local\Programs\Python\Python311\python.exe
 - ffmpeg-visibility: passed=no | detected=none
 - model-directory-visibility: passed=no | detected=none
-- dependency-file-visibility: passed=yes | detected=E:\AI projects 2025\AI-E\requirements.txt, E:\AI projects 2025\AI-E\web\package.json
+- dependency-file-visibility: passed=yes | detected=e:\AI projects 2025\AI-E\requirements.txt, e:\AI projects 2025\AI-E\web\package.json
 - storage-readiness: passed=yes | detected=stored-hardware-estimate
-- writable-cache-locations: passed=yes | detected=E:\AI projects 2025\AI-E\.aie, E:\AI projects 2025\AI-E\runner_artifacts
+- writable-cache-locations: passed=yes | detected=e:\AI projects 2025\AI-E\.aie, e:\AI projects 2025\AI-E\runner_artifacts
 
 ## Related
 - [[Execution Boundary Status]]

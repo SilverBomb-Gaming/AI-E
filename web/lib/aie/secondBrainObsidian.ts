@@ -2574,7 +2574,7 @@ function buildUpdatedReadinessProgressNote(input: {
 
 function latestControlledBootstrapSimulation(production: CinematicProductionMemoryRecord): CinematicProductionMemoryRecord["sandbox_simulations"][number] | null {
   return [...production.sandbox_simulations]
-    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor" || entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor" || entry.sandbox_kind === "gated-single-frame-dry-execution-path" || entry.sandbox_kind === "governed-single-frame-synthesis-preparation" || entry.sandbox_kind === "governed-low-resolution-frame-synthesis-sandbox" || entry.sandbox_kind === "governed-micro-sequence-continuity-preview")
+    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor" || entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor" || entry.sandbox_kind === "gated-single-frame-dry-execution-path" || entry.sandbox_kind === "governed-single-frame-synthesis-preparation" || entry.sandbox_kind === "governed-low-resolution-frame-synthesis-sandbox" || entry.sandbox_kind === "governed-micro-sequence-continuity-preview" || entry.sandbox_kind === "governed-low-duration-preview-clip-sandbox")
     .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
 }
 
@@ -4281,6 +4281,261 @@ function buildFutureCinematicContinuityNote(input: {
   };
 }
 
+function buildMotionPreviewContainmentNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const registry = latestBootstrap?.motion_preview_containment ?? production.motion_preview_containment_history[0] ?? [];
+  return {
+    title: "Motion Preview Containment",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_motion_preview_containment",
+      tags: ["second-brain", "motion-preview-containment", "preview-clip", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Containment Summary",
+      registry.length > 0
+        ? asBulletList([
+          `Containment count: ${registry.length}`,
+          `Maximum frame count: ${Math.max(...registry.map((entry) => entry.maximum_frame_count))}`,
+          `Maximum duration seconds: ${Math.max(...registry.map((entry) => entry.maximum_duration_seconds))}`,
+        ])
+        : "- No motion preview containment recorded yet.",
+      "",
+      "## Containment Entries",
+      registry.length > 0
+        ? asBulletList(registry.map((entry) => `${entry.clip_id}: frames=${entry.maximum_frame_count} | duration=${entry.maximum_duration_seconds}s | fps=${entry.allowed_frame_rate} | scope=${entry.allowed_temporal_scope}`))
+        : "- No motion preview containment entries recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Governed Motion Preview Sandbox"),
+        toLink("Temporal Transition Validation"),
+        toLink("Motion Preview Rollback"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildGovernedMotionPreviewSandboxNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const sandbox = latestBootstrap?.governed_motion_preview_sandbox ?? production.governed_motion_preview_sandbox_history[0] ?? null;
+  return {
+    title: "Governed Motion Preview Sandbox",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_governed_motion_preview_sandbox",
+      tags: ["second-brain", "motion-preview-sandbox", "preview-clip", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Sandbox Summary",
+      sandbox
+        ? asBulletList([
+          `Clip id: ${sandbox.clip_id ?? "none"}`,
+          `Preview clip written: ${sandbox.preview_clip_written ? "yes" : "no"}`,
+          `Frame count: ${sandbox.clip_frame_count}`,
+          `Manifest: ${sandbox.manifest_file_path ?? "none"}`,
+        ])
+        : "- No governed motion preview sandbox recorded yet.",
+      "",
+      "## Sandbox Controls",
+      sandbox
+        ? asBulletList([
+          `Retention: ${sandbox.output_retention_policy}`,
+          `Frame rate: ${sandbox.preview_frame_rate}`,
+          `Duration seconds: ${sandbox.preview_duration_seconds}`,
+        ])
+        : "- No governed motion preview sandbox controls recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Motion Preview Containment"),
+        toLink("Motion Preview Sequencing"),
+        toLink("Motion Preview Rollback"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildMotionPreviewSequencingNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const pathState = latestBootstrap?.motion_preview_sequencing ?? production.motion_preview_sequencing_history[0] ?? null;
+  return {
+    title: "Motion Preview Sequencing",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_motion_preview_sequencing",
+      tags: ["second-brain", "motion-preview-sequencing", "preview-clip", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Sequencing Summary",
+      pathState
+        ? asBulletList([
+          `Clip id: ${pathState.clip_id ?? "none"}`,
+          `Next stage: ${pathState.next_stage ?? "none"}`,
+          `Output count: ${pathState.output_file_paths.length}`,
+        ])
+        : "- No motion preview sequencing recorded yet.",
+      "",
+      "## Sequencing Stages",
+      pathState?.stages?.length
+        ? asBulletList(pathState.stages.map((entry) => `${entry.order}. ${entry.stage}: status=${entry.status} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No motion preview sequencing stages recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Governed Motion Preview Sandbox"),
+        toLink("Temporal Transition Validation"),
+        toLink("Future Teaser Trailer Scaffolding"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildTemporalTransitionValidationNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const validation = latestBootstrap?.temporal_transition_validation ?? production.temporal_transition_validation_history[0] ?? null;
+  return {
+    title: "Temporal Transition Validation",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_temporal_transition_validation",
+      tags: ["second-brain", "temporal-transition-validation", "preview-clip", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Validation Summary",
+      validation
+        ? asBulletList([
+          `Valid: ${validation.valid ? "yes" : "no"}`,
+          `Next unlock condition: ${validation.next_unlock_condition}`,
+          `Blocked transitions: ${validation.blocked_transitions.join(", ") || "none"}`,
+        ])
+        : "- No temporal transition validation recorded yet.",
+      "",
+      "## Validation Checks",
+      validation?.checks?.length
+        ? asBulletList(validation.checks.map((entry) => `${entry.check}: passed=${entry.passed ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No temporal transition checks recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Motion Preview Containment"),
+        toLink("Governed Motion Preview Sandbox"),
+        toLink("Future Teaser Trailer Scaffolding"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildMotionPreviewRollbackNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const rollback = latestBootstrap?.motion_preview_rollback ?? production.motion_preview_rollback_history[0] ?? null;
+  return {
+    title: "Motion Preview Rollback",
+    directory: "Outcomes",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_motion_preview_rollback",
+      tags: ["second-brain", "motion-preview-rollback", "preview-clip", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Recovery Actions",
+      rollback?.actions?.length
+        ? asBulletList(rollback.actions.map((entry) => `${entry.action}: triggered=${entry.triggered ? "yes" : "no"} | targets=${entry.affected_output_targets.join(", ") || "none"}`))
+        : "- No motion preview rollback actions recorded yet.",
+      "",
+      "## Recovery Summary",
+      rollback
+        ? asBulletList([
+          `Rollback id: ${rollback.rollback_id}`,
+          `Recorded at: ${rollback.recorded_at}`,
+        ])
+        : "- No motion preview rollback summary recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Motion Preview Containment"),
+        toLink("Governed Motion Preview Sandbox"),
+        toLink("Future Teaser Trailer Scaffolding"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFutureTeaserTrailerScaffoldingNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const future = latestBootstrap?.future_teaser_trailer_scaffolding ?? production.future_teaser_trailer_scaffolding_history[0] ?? null;
+  return {
+    title: "Future Teaser Trailer Scaffolding",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_future_teaser_trailer_scaffolding",
+      tags: ["second-brain", "future-teaser-trailer", "preview-clip", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Teaser Summary",
+      future
+        ? asBulletList([
+          `Milestone unlocking teaser trailer: ${future.milestone_unlocks_teaser_trailer}`,
+          `Entry count: ${future.entries.length}`,
+        ])
+        : "- No future teaser trailer scaffolding recorded yet.",
+      "",
+      "## Teaser Scaffolds",
+      future?.entries?.length
+        ? asBulletList(future.entries.map((entry) => `${entry.teaser_id}: unlocked=no | prerequisites=${entry.prerequisites.join(", ")}`))
+        : "- No future teaser trailer scaffolds recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Motion Preview Sequencing"),
+        toLink("Temporal Transition Validation"),
+        toLink("Motion Preview Rollback"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildCinematicExecutionLifecycleNote(input: {
   productionMemory: CinematicProductionMemoryRecord;
   latestSessionId: string;
@@ -4809,6 +5064,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildFrameToFrameContinuityValidationNote({ productionMemory, latestSessionId }),
     buildSequenceRollbackRecoveryNote({ productionMemory, latestSessionId }),
     buildFutureCinematicContinuityNote({ productionMemory, latestSessionId }),
+    buildMotionPreviewContainmentNote({ productionMemory, latestSessionId }),
+    buildGovernedMotionPreviewSandboxNote({ productionMemory, latestSessionId }),
+    buildMotionPreviewSequencingNote({ productionMemory, latestSessionId }),
+    buildTemporalTransitionValidationNote({ productionMemory, latestSessionId }),
+    buildMotionPreviewRollbackNote({ productionMemory, latestSessionId }),
+    buildFutureTeaserTrailerScaffoldingNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),

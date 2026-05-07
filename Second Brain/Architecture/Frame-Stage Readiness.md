@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:38:37.338Z
+updated_at: 2026-05-07T20:53:04.268Z
 session_id: phase7c-skip-task-session
 status: generated_frame_stage_readiness
 tags:
@@ -17,12 +17,12 @@ tags:
 
 ## Readiness Summary
 - Valid: no
-- Next unlock condition: Continuity readiness must reach the governed threshold before any frame-stage transition is modeled as ready.
+- Next unlock condition: Runtime integrity sufficiency remains required even for dry warmup and frame-stage planning.
 
 ## Readiness Checks
 - scheduler-readiness: passed=yes | blockers=none
 - pipeline-binding-readiness: passed=yes | blockers=none
-- continuity-readiness: passed=no | blockers=Continuity readiness remains below the frame-stage threshold.
+- continuity-readiness: passed=yes | blockers=none
 - execution-boundary-integrity: passed=yes | blockers=No configured runtime path is visible for dry bootstrap review., FFmpeg visibility is still missing for dry bootstrap review., No model directory is visible for dry initialization checks., No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.
 - authority-approval-state: passed=yes | blockers=none
 - forbidden-state-enforcement: passed=yes | blockers=none

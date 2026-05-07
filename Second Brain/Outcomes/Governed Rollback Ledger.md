@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:38:37.338Z
+updated_at: 2026-05-07T20:53:04.268Z
 session_id: phase7c-skip-task-session
 status: generated_governed_rollback_ledger
 tags:
@@ -17,10 +17,10 @@ tags:
 
 ## Rollback Summary
 - Entry count: 1
-- Recorded at: 2026-05-07T20:38:37.300Z
+- Recorded at: 2026-05-07T20:53:04.231Z
 
 ## Rollback Entries
-- containment-governed-single-frame-prepare: violations=continuity-state-readiness, governance-approval-state, runtime-integrity-sufficiency | blocked_output=Synthesis output remains blocked to preserve strict non-rendering boundaries.
+- containment-governed-single-frame-prepare: violations=governance-approval-state, runtime-integrity-sufficiency | blocked_output=Synthesis output remains blocked to preserve strict non-rendering boundaries.
 
 ## Related
 - [[Synthesis Containment Registry]]

@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:38:37.338Z
+updated_at: 2026-05-07T20:53:04.268Z
 session_id: phase7c-skip-task-session
 status: generated_future_frame_synthesis_unlocks
 tags:
@@ -20,7 +20,7 @@ tags:
 - Unlock count: 6
 
 ## Unlocks
-- governed-single-frame-synthesis: unlocked=no | prerequisites=validated dry traversal, Continuity state readiness remains below threshold., No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.
+- governed-single-frame-synthesis: unlocked=no | prerequisites=validated dry traversal, No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.
 - low-resolution-synthesis: unlocked=no | prerequisites=low-resolution governance approval, runtime integrity approval
 - governed-preview-generation: unlocked=no | prerequisites=preview governance approval, dry packaging review
 - bounded-renderer-output: unlocked=no | prerequisites=bounded renderer review, non-rendering guard relaxation review

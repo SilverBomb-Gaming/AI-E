@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:38:37.338Z
+updated_at: 2026-05-07T20:53:04.268Z
 session_id: phase7c-skip-task-session
 status: generated_dry_execution_recovery
 tags:
@@ -17,11 +17,11 @@ tags:
 
 ## Recovery Scenarios
 - token-expiration-recovery: triggered=yes | blockers=token-single-frame-dry-governed: expires_after_single_reviewed_dry_traversal, token-preview-dry-governed: expires_when_packaging_review_finishes_without_output_unlock
-- blocked-stage-recovery: triggered=yes | blockers=continuity-state-readiness, runtime-integrity-sufficiency
-- continuity-recovery: triggered=yes | blockers=Continuity state readiness remains below threshold.
+- blocked-stage-recovery: triggered=yes | blockers=runtime-integrity-sufficiency
+- continuity-recovery: triggered=no | blockers=none
 - low-vram-recovery: triggered=yes | blockers=loader-hunyuan-video-13b-planned requires 16GB VRAM.
-- governance-escalation-recovery: triggered=yes | blockers=runtime-risk-escalation, high-vram-escalation, offline-mode-escalation, continuity-risk-escalation, self-sustaining-mode-escalation
-- dry-rollback-sequencing: triggered=yes | blockers=continuity-state-readiness, runtime-integrity-sufficiency
+- governance-escalation-recovery: triggered=yes | blockers=runtime-risk-escalation, high-vram-escalation, offline-mode-escalation, self-sustaining-mode-escalation
+- dry-rollback-sequencing: triggered=yes | blockers=runtime-integrity-sufficiency
 
 ## Related
 - [[Frame Traversal Validation]]

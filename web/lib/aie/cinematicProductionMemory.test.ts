@@ -775,7 +775,7 @@ test("controlled local inference bootstrap persists execution boundaries while k
     const afterRecord = await readCinematicProductionMemory({ root: tempRoot });
 
     assert.equal(validation.execution_enabled, false);
-    assert.equal(validation.readiness_delta.source, "governed-micro-sequence-continuity-preview");
+    assert.equal(validation.readiness_delta.source, "governed-low-duration-preview-clip-sandbox");
     assert.equal(validation.dry_runtime_bootstrap.valid, true);
     assert.ok(validation.dry_runtime_bootstrap.checks.some((entry) => entry.check === "runtime-binary-presence" && entry.passed));
     assert.ok(validation.execution_boundary_state.tracked_statuses.includes("simulated"));
@@ -828,6 +828,13 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(validation.frame_to_frame_continuity_validation.checks.some((entry) => entry.check === "continuity-drift-thresholds" && entry.passed));
     assert.ok(validation.sequence_rollback_recovery.actions.some((entry) => entry.action === "sequence-rollback-cleanup" && entry.triggered));
     assert.equal(validation.future_cinematic_continuity.milestone_unlocks_cinematic_continuity, "reviewed-governed-cinematic-continuity-bridge");
+    assert.ok(validation.motion_preview_containment.some((entry) => entry.clip_id === "clip-governed-motion-preview-001"));
+    assert.equal(validation.governed_motion_preview_sandbox.preview_clip_written, true);
+    assert.equal(validation.governed_motion_preview_sandbox.clip_frame_count, 4);
+    assert.ok(validation.motion_preview_sequencing.stages.some((entry) => entry.stage === "low_fps_clip_write" && entry.status === "completed"));
+    assert.ok(validation.temporal_transition_validation.checks.some((entry) => entry.check === "transition-drift-thresholds" && entry.passed));
+    assert.ok(validation.motion_preview_rollback.actions.some((entry) => entry.action === "preview-rollback-cleanup" && entry.triggered));
+    assert.equal(validation.future_teaser_trailer_scaffolding.milestone_unlocks_teaser_trailer, "reviewed-governed-teaser-trailer-bridge");
     const outputFilePath = path.join(tempRoot, validation.governed_low_resolution_sandbox.output_file_path ?? "");
     assert.ok(existsSync(outputFilePath));
     assert.match(await readFile(outputFilePath, "utf8"), /^P3/m);
@@ -837,9 +844,14 @@ test("controlled local inference bootstrap persists execution boundaries while k
     const microSequenceFiles = await readdir(microSequenceDir);
     assert.equal(microSequenceFiles.filter((entry) => entry.endsWith(".ppm")).length, 3);
     assert.match(await readFile(path.join(microSequenceDir, "governed_preview_sequence_frame_001.ppm"), "utf8"), /^P3/m);
+    const motionPreviewDir = path.join(tempRoot, ".aie", "governed_motion_preview_sandbox", "clip-governed-motion-preview-001");
+    const motionPreviewFiles = await readdir(motionPreviewDir);
+    assert.equal(motionPreviewFiles.filter((entry) => entry.endsWith(".ppm")).length, 4);
+    assert.ok(motionPreviewFiles.includes("governed_motion_preview_manifest.json"));
+    assert.match(await readFile(path.join(motionPreviewDir, "governed_motion_preview_frame_001.ppm"), "utf8"), /^P3/m);
 
     assert.equal(simulation.validation.execution_enabled, false);
-    assert.equal(simulation.simulation.sandbox_kind, "governed-micro-sequence-continuity-preview");
+    assert.equal(simulation.simulation.sandbox_kind, "governed-low-duration-preview-clip-sandbox");
     assert.equal(simulation.simulation.execution_enabled, false);
     assert.ok(simulation.simulation.dry_runtime_bootstrap);
     assert.ok(simulation.simulation.execution_boundary_status);
@@ -883,6 +895,12 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(simulation.simulation.frame_to_frame_continuity_validation);
     assert.ok(simulation.simulation.sequence_rollback_recovery);
     assert.ok(simulation.simulation.future_cinematic_continuity);
+    assert.ok(simulation.simulation.motion_preview_containment);
+    assert.ok(simulation.simulation.governed_motion_preview_sandbox);
+    assert.ok(simulation.simulation.motion_preview_sequencing);
+    assert.ok(simulation.simulation.temporal_transition_validation);
+    assert.ok(simulation.simulation.motion_preview_rollback);
+    assert.ok(simulation.simulation.future_teaser_trailer_scaffolding);
     assert.equal(simulation.simulation.readiness_tracking_id, afterRecord.readiness_delta_tracking_history[0]?.tracking_id ?? null);
     assert.ok(afterRecord.execution_boundary_status_history.length >= 2);
     assert.ok(afterRecord.activation_authority_registry.length > 0);
@@ -921,7 +939,13 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(afterRecord.frame_to_frame_continuity_validation_history.length >= 1);
     assert.ok(afterRecord.sequence_rollback_recovery_history.length >= 1);
     assert.ok(afterRecord.future_cinematic_continuity_history.length >= 1);
-    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "governed-micro-sequence-continuity-preview"));
+    assert.ok(afterRecord.motion_preview_containment_history.length >= 1);
+    assert.ok(afterRecord.governed_motion_preview_sandbox_history.length >= 1);
+    assert.ok(afterRecord.motion_preview_sequencing_history.length >= 1);
+    assert.ok(afterRecord.temporal_transition_validation_history.length >= 1);
+    assert.ok(afterRecord.motion_preview_rollback_history.length >= 1);
+    assert.ok(afterRecord.future_teaser_trailer_scaffolding_history.length >= 1);
+    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "governed-low-duration-preview-clip-sandbox"));
     assert.deepEqual(afterRecord.approval_audit_trail, beforeRecord.approval_audit_trail);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

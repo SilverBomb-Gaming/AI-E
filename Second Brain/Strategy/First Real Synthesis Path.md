@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:38:37.338Z
+updated_at: 2026-05-07T20:53:04.268Z
 session_id: phase7c-skip-task-session
 status: generated_first_real_synthesis_path
 tags:
@@ -21,13 +21,13 @@ tags:
 - Output path: none
 
 ## Synthesis Stages
-- 1. governed_output_request: status=ready | blockers=continuity-state-integrity, runtime-integrity-sufficiency
-- 2. scheduler_bind: status=blocked | blockers=continuity-state-integrity, runtime-integrity-sufficiency
-- 3. pipeline_bind: status=blocked | blockers=continuity-state-integrity, runtime-integrity-sufficiency
-- 4. single_frame_synthesis: status=blocked | blockers=continuity-state-integrity, runtime-integrity-sufficiency
-- 5. bounded_output_write: status=blocked | blockers=continuity-state-integrity, runtime-integrity-sufficiency
-- 6. rollback_ready: status=rollback_ready | blockers=continuity-state-integrity, runtime-integrity-sufficiency
-- 7. synthesis_archived: status=archived | blockers=continuity-state-integrity, runtime-integrity-sufficiency
+- 1. governed_output_request: status=ready | blockers=runtime-integrity-sufficiency
+- 2. scheduler_bind: status=blocked | blockers=runtime-integrity-sufficiency
+- 3. pipeline_bind: status=blocked | blockers=runtime-integrity-sufficiency
+- 4. single_frame_synthesis: status=blocked | blockers=runtime-integrity-sufficiency
+- 5. bounded_output_write: status=blocked | blockers=runtime-integrity-sufficiency
+- 6. rollback_ready: status=rollback_ready | blockers=runtime-integrity-sufficiency
+- 7. synthesis_archived: status=archived | blockers=runtime-integrity-sufficiency
 
 ## Related
 - [[Governed Low Resolution Sandbox]]
