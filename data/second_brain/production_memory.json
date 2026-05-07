@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "created_at": "2026-05-07T00:00:00.000Z",
-  "updated_at": "2026-05-07T15:53:54.920Z",
+  "updated_at": "2026-05-07T16:56:36.707Z",
   "project_key": "babylon-2026",
   "mission_layer": "Persistent Production Memory + Cinematic Video Intelligence",
   "roadmap_systems": [
@@ -405,11 +405,162 @@
   ],
   "generation_jobs": [],
   "generation_job_history": [],
+  "provider_capability_registry": [
+    {
+      "provider": "Sora",
+      "max_duration_seconds": 20,
+      "max_prompt_characters": 4000,
+      "supported_resolutions": [
+        "720p",
+        "1080p",
+        "1440p"
+      ],
+      "supported_frame_rates": [
+        24,
+        30
+      ],
+      "continuity_support": "full",
+      "image_reference_support": true,
+      "max_image_references": 4,
+      "estimated_cost_profile": {
+        "draft": 6,
+        "standard": 10,
+        "premium": 16
+      },
+      "queue_behavior": "Premium queue with slower turnaround but higher fidelity.",
+      "retry_recommendation": "Prefer one targeted retry after continuity simplification."
+    },
+    {
+      "provider": "Seedance",
+      "max_duration_seconds": 8,
+      "max_prompt_characters": 1800,
+      "supported_resolutions": [
+        "720p",
+        "1080p"
+      ],
+      "supported_frame_rates": [
+        24,
+        30
+      ],
+      "continuity_support": "partial",
+      "image_reference_support": true,
+      "max_image_references": 2,
+      "estimated_cost_profile": {
+        "draft": 2,
+        "standard": 4,
+        "premium": 7
+      },
+      "queue_behavior": "Fast draft queue optimized for storyboard-grade passes.",
+      "retry_recommendation": "Use one cheap retry before escalating to a premium provider."
+    },
+    {
+      "provider": "Runway",
+      "max_duration_seconds": 10,
+      "max_prompt_characters": 2200,
+      "supported_resolutions": [
+        "720p",
+        "1080p"
+      ],
+      "supported_frame_rates": [
+        24,
+        30
+      ],
+      "continuity_support": "partial",
+      "image_reference_support": true,
+      "max_image_references": 3,
+      "estimated_cost_profile": {
+        "draft": 3,
+        "standard": 6,
+        "premium": 11
+      },
+      "queue_behavior": "Shared queue with balanced latency and comparison-friendly payloads.",
+      "retry_recommendation": "Retry once with fewer references if validation pressure is high."
+    },
+    {
+      "provider": "Veo",
+      "max_duration_seconds": 12,
+      "max_prompt_characters": 3200,
+      "supported_resolutions": [
+        "720p",
+        "1080p",
+        "4k"
+      ],
+      "supported_frame_rates": [
+        24,
+        30
+      ],
+      "continuity_support": "full",
+      "image_reference_support": true,
+      "max_image_references": 5,
+      "estimated_cost_profile": {
+        "draft": 5,
+        "standard": 9,
+        "premium": 15
+      },
+      "queue_behavior": "Balanced premium queue for comparison-grade cinematic passes.",
+      "retry_recommendation": "Allow up to two targeted retries when continuity context remains stable."
+    },
+    {
+      "provider": "LocalFutureProvider",
+      "max_duration_seconds": 16,
+      "max_prompt_characters": 5000,
+      "supported_resolutions": [
+        "720p",
+        "1080p",
+        "1440p"
+      ],
+      "supported_frame_rates": [
+        24,
+        30,
+        60
+      ],
+      "continuity_support": "limited",
+      "image_reference_support": true,
+      "max_image_references": 4,
+      "estimated_cost_profile": {
+        "draft": 1,
+        "standard": 3,
+        "premium": 5
+      },
+      "queue_behavior": "Offline local queue reserved for future generator-agnostic bridge validation.",
+      "retry_recommendation": "Use only after provider payloads are validated and manual approval is explicit."
+    }
+  ],
   "provider_routing_rules": [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
     "Offline planning and future local inference modes must remain provider-agnostic and avoid real API calls.",
     "Balanced comparison mode can use Veo or Runway stubs to compare provider-ready payloads without execution lock-in."
+  ],
+  "prompt_normalization_rules": [
+    "Normalize prompts into provider-ready payloads without changing continuity intent.",
+    "Trim provider prompts deterministically when prompt limits are exceeded.",
+    "Preserve camera, continuity, style, and retry metadata across all provider variants."
+  ],
+  "provider_validation_rules": [
+    "Reject prompts that exceed provider-specific prompt limits.",
+    "Reject durations, resolutions, or frame rates outside provider support.",
+    "Reject reference counts beyond provider limits or providers without image-reference support.",
+    "Reject payloads that demand continuity behavior beyond provider support."
+  ],
+  "generation_budget_policy": {
+    "max_shots_per_batch": 8,
+    "max_retries_per_job": 2,
+    "max_estimated_sequence_cost": 220,
+    "provider_cooldown_minutes": 10,
+    "sandbox_only_mode": true,
+    "manual_approval_required": true
+  },
+  "generation_budget_rules": [
+    "Max shots per batch remains a hard gate before provider handoff.",
+    "Retry counts stay bounded to avoid hidden spend loops.",
+    "Estimated sequence cost caps block overspend before approval is considered.",
+    "Provider cooldowns apply only to explicit provider execution handoff attempts."
+  ],
+  "manual_approval_workflow": [
+    "AI-E may prepare, validate, queue, and estimate generation jobs without provider execution.",
+    "A human approval step is required before any provider execution or credit spend is considered valid.",
+    "Sandbox-only mode must remain enabled by default for provider bridge preparation."
   ],
   "execution_lifecycle_rules": [
     "Execution lifecycle remains append-only in generation job history.",
@@ -426,6 +577,15 @@
     "Use premium cinematic routing for higher-fidelity provider-ready payloads.",
     "Use offline planning mode when only orchestration validation is required.",
     "Reserve future local inference mode for later generator-agnostic local execution bridges."
+  ],
+  "cost_forecast_examples": [
+    "A 7-shot Seedance draft pass should remain cheap enough for validation-first planning.",
+    "A premium Sora pass should forecast higher cost but lower payload-compression pressure."
+  ],
+  "provider_payload_examples": [
+    "Sora-ready payloads should keep cinematic prose plus continuity annotations.",
+    "Seedance-ready payloads should stay compressed and storyboard-focused.",
+    "Veo and Runway payloads should preserve references, camera instructions, and duration targets."
   ],
   "sandbox_simulations": [],
   "failed_generations": [

@@ -6,17 +6,25 @@ import test from "node:test";
 
 import {
   compareCinematicProviderOutputs,
+  compileCinematicProviderPayload,
+  compileCinematicProviderPayloadVariants,
   compileCinematicShotPrompt,
+  enforceCinematicGenerationBudget,
   ensureCinematicProductionMemoryInitialized,
+  forecastCinematicSequenceCost,
+  getCinematicProviderCapability,
+  getCinematicProviderCapabilityRegistry,
   listCinematicProviderAdapters,
   planCinematicGenerationJobs,
   planCinematicSequence,
   planFailedShotRegeneration,
+  prepareCinematicManualTriggerBridge,
   readCinematicProductionMemory,
   recordCinematicGenerationOutcome,
   recordCinematicShotHistory,
   selectCinematicGenerationProviderRoute,
   simulateCinematicExecutionSandbox,
+  validateCinematicProviderPayload,
   validateCinematicExecutionPlan,
   validateCinematicSequenceContinuity,
   writeCinematicProductionMemory,
@@ -273,6 +281,124 @@ test("cinematic execution sandbox plans provider-agnostic jobs and simulates lif
     assert.ok(blockedValidation.issues.some((entry) => entry.category === "continuity-compatibility"));
     assert.equal(blockedPlan.blocked, true);
     assert.equal(blockedPlan.jobs.length, 0);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("safe provider bridge compiles payloads, validates providers, enforces budgets, and preserves manual approval gating", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-safe-provider-bridge-"));
+
+  try {
+    await ensureCinematicProductionMemoryInitialized(tempRoot);
+    const sequence = await planCinematicSequence({
+      root: tempRoot,
+      sequenceId: "sequence-provider-bridge-001",
+      title: "Provider Bridge Sequence",
+    });
+    const planned = await planCinematicGenerationJobs({
+      root: tempRoot,
+      sequenceId: sequence.sequence.sequence_id,
+      routingMode: "premium-cinematic-provider",
+    });
+    const firstJob = planned.jobs[0]!;
+
+    const capabilityRegistry = getCinematicProviderCapabilityRegistry();
+    const soraCapability = await getCinematicProviderCapability({ root: tempRoot, provider: "Sora" });
+    const payload = await compileCinematicProviderPayload({
+      root: tempRoot,
+      jobId: firstJob.job_id,
+      provider: "Sora",
+      targetDurationSeconds: 10,
+      targetResolution: "1080p",
+      targetFrameRate: 24,
+    });
+    const payloadVariants = await compileCinematicProviderPayloadVariants({
+      root: tempRoot,
+      jobId: firstJob.job_id,
+      targetDurationSeconds: 8,
+      targetResolution: "1080p",
+      targetFrameRate: 24,
+    });
+    const payloadValidation = await validateCinematicProviderPayload({
+      root: tempRoot,
+      payload,
+    });
+    const invalidPayloadValidation = await validateCinematicProviderPayload({
+      root: tempRoot,
+      payload: {
+        ...payload,
+        duration_seconds: 25,
+        resolution: "4k",
+        asset_references: ["a", "b", "c", "d", "e", "f"],
+      },
+    });
+    const safeBudget = await enforceCinematicGenerationBudget({
+      root: tempRoot,
+      jobs: planned.jobs,
+      actualProviderExecutionRequested: false,
+      manualApprovalGranted: false,
+    });
+    const blockedBudget = await enforceCinematicGenerationBudget({
+      root: tempRoot,
+      jobs: planned.jobs,
+      budgetPolicy: {
+        max_shots_per_batch: 2,
+        max_estimated_sequence_cost: 12,
+      },
+      actualProviderExecutionRequested: false,
+      manualApprovalGranted: false,
+    });
+    const historyBeforeGate = (await readCinematicProductionMemory({ root: tempRoot })).generation_job_history.length;
+    const blockedGate = await prepareCinematicManualTriggerBridge({
+      root: tempRoot,
+      jobIds: planned.jobs.map((entry) => entry.job_id),
+      actualProviderExecutionRequested: true,
+      manualApprovalGranted: false,
+      sandboxOnlyMode: false,
+    });
+    const approvedGate = await prepareCinematicManualTriggerBridge({
+      root: tempRoot,
+      jobIds: planned.jobs.map((entry) => entry.job_id),
+      actualProviderExecutionRequested: true,
+      manualApprovalGranted: true,
+      sandboxOnlyMode: false,
+    });
+    const costForecast = await forecastCinematicSequenceCost({
+      root: tempRoot,
+      sequenceId: sequence.sequence.sequence_id,
+      routingMode: "premium-cinematic-provider",
+    });
+    const recordAfterGate = await readCinematicProductionMemory({ root: tempRoot });
+
+    assert.ok(capabilityRegistry.some((entry) => entry.provider === "Sora"));
+    assert.equal(soraCapability.max_duration_seconds, 20);
+    assert.equal(payload.provider, "Sora");
+    assert.match(payload.normalized_prompt, /Sora-ready cinematic prompt/i);
+    assert.ok(payloadVariants.some((entry) => entry.provider === "Seedance"));
+    assert.ok(payloadVariants.some((entry) => entry.provider === "Runway"));
+    assert.ok(payloadVariants.some((entry) => entry.provider === "Veo"));
+    assert.ok(payloadVariants.every((entry) => entry.normalized_prompt.length > 0));
+    assert.equal(payloadValidation.valid, true);
+    assert.equal(invalidPayloadValidation.valid, false);
+    assert.ok(invalidPayloadValidation.issues.some((entry) => entry.category === "unsupported-duration"));
+    assert.ok(invalidPayloadValidation.issues.some((entry) => entry.category === "unsupported-resolution"));
+    assert.ok(invalidPayloadValidation.issues.some((entry) => entry.category === "invalid-reference-count"));
+    assert.equal(safeBudget.allowed, true);
+    assert.equal(blockedBudget.allowed, false);
+    assert.ok(blockedBudget.issues.some((entry) => /max_shots_per_batch/i.test(entry)));
+    assert.ok(blockedBudget.issues.some((entry) => /Estimated sequence cost/i.test(entry)));
+    assert.equal(blockedGate.queue_preparation_allowed, true);
+    assert.equal(blockedGate.provider_execution_allowed, false);
+    assert.match(blockedGate.blocked_reason ?? "", /Manual approval is required/i);
+    assert.equal(approvedGate.provider_execution_allowed, true);
+    assert.equal(costForecast.provider, "Sora");
+    assert.ok(costForecast.estimated_sequence_cost > 0);
+    assert.ok(costForecast.estimated_retry_cost > 0);
+    assert.ok(costForecast.provider_variance > 0);
+    assert.match(costForecast.draft_vs_premium_tradeoff, /draft-to-premium delta/i);
+    assert.ok(costForecast.provider_forecasts.some((entry) => entry.provider === "Seedance"));
+    assert.ok(recordAfterGate.generation_job_history.length > historyBeforeGate);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

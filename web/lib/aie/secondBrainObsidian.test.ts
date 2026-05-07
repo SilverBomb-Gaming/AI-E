@@ -73,13 +73,19 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Outcomes/Sandbox Simulation Results.md"));
     assert.ok(files.includes("Outcomes/Successful Generations.md"));
     assert.ok(files.includes("Recovery/Recovery Procedures.md"));
+    assert.ok(files.includes("Architecture/Provider Capability Registry.md"));
+    assert.ok(files.includes("Architecture/Prompt Normalization Rules.md"));
+    assert.ok(files.includes("Architecture/Generation Budget Rules.md"));
+    assert.ok(files.includes("Architecture/Manual Approval Workflow.md"));
     assert.ok(files.includes("Resources/Asset Reuse Log.md"));
     assert.ok(files.includes("Resources/Asset Reuse Decisions.md"));
     assert.ok(files.includes("Resources/Cost-Aware Iteration Notes.md"));
     assert.ok(files.includes("Resources/Cost-Aware Generation Strategy.md"));
+    assert.ok(files.includes("Resources/Cost Forecast Examples.md"));
     assert.ok(files.includes("Strategy/Strategic Roadmap.md"));
     assert.ok(files.includes("Strategy/Cinematic Production Memory.md"));
     assert.ok(files.includes("Strategy/Generation Job Queue.md"));
+    assert.ok(files.includes("Strategy/Provider Payload Examples.md"));
     assert.ok(files.includes("Strategy/Scene Sequences.md"));
     assert.ok(files.includes("Strategy/Gameplay Cutscene Triggers.md"));
     assert.ok(files.includes("Strategy/Shot Planning Rules.md"));
@@ -115,9 +121,15 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const assetReuseDecisionText = await readFile(path.join(vaultRoot, "Resources", "Asset Reuse Decisions.md"), "utf8");
     const jobQueueText = await readFile(path.join(vaultRoot, "Strategy", "Generation Job Queue.md"), "utf8");
     const routingRulesText = await readFile(path.join(vaultRoot, "Architecture", "Provider Routing Rules.md"), "utf8");
+    const capabilityRegistryText = await readFile(path.join(vaultRoot, "Architecture", "Provider Capability Registry.md"), "utf8");
+    const normalizationRulesText = await readFile(path.join(vaultRoot, "Architecture", "Prompt Normalization Rules.md"), "utf8");
+    const budgetRulesText = await readFile(path.join(vaultRoot, "Architecture", "Generation Budget Rules.md"), "utf8");
+    const approvalWorkflowText = await readFile(path.join(vaultRoot, "Architecture", "Manual Approval Workflow.md"), "utf8");
     const lifecycleText = await readFile(path.join(vaultRoot, "Architecture", "Cinematic Execution Lifecycle.md"), "utf8");
     const retryRulesText = await readFile(path.join(vaultRoot, "Architecture", "Retry Planning Rules.md"), "utf8");
     const generationStrategyText = await readFile(path.join(vaultRoot, "Resources", "Cost-Aware Generation Strategy.md"), "utf8");
+    const costForecastText = await readFile(path.join(vaultRoot, "Resources", "Cost Forecast Examples.md"), "utf8");
+    const payloadExamplesText = await readFile(path.join(vaultRoot, "Strategy", "Provider Payload Examples.md"), "utf8");
     const sandboxResultsText = await readFile(path.join(vaultRoot, "Outcomes", "Sandbox Simulation Results.md"), "utf8");
 
     assert.match(cinematicMemoryText, /Production Memory Manager/);
@@ -135,9 +147,15 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(assetReuseDecisionText, /Preserve the approved wave reveal prompt/);
     assert.match(jobQueueText, /No generation jobs planned yet\./);
     assert.match(routingRulesText, /Cheap draft routing should prefer Seedance/i);
+    assert.match(capabilityRegistryText, /Sora: duration<=20s/i);
+    assert.match(normalizationRulesText, /Normalize prompts into provider-ready payloads without changing continuity intent/i);
+    assert.match(budgetRulesText, /Sandbox-only mode: enabled/i);
+    assert.match(approvalWorkflowText, /A human approval step is required before any provider execution or credit spend is considered valid/i);
     assert.match(lifecycleText, /Execution lifecycle remains append-only/i);
     assert.match(retryRulesText, /Retry planning must preserve successful shot outputs/i);
     assert.match(generationStrategyText, /Use cheap draft routing for first-pass framing validation/i);
+    assert.match(costForecastText, /Seedance draft pass/i);
+    assert.match(payloadExamplesText, /Sora-ready payloads should keep cinematic prose/i);
     assert.match(sandboxResultsText, /No sandbox simulations recorded yet\./);
 
     const existingTitles = new Set(files.map((file) => path.basename(file, ".md")));

@@ -1080,8 +1080,151 @@ function buildProviderRoutingRulesNote(input: {
       "## Related",
       asBulletList([
         toLink("Generation Job Queue"),
+        toLink("Provider Capability Registry"),
+        toLink("Prompt Normalization Rules"),
         toLink("Cinematic Execution Lifecycle"),
         toLink("Cost-Aware Generation Strategy"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildProviderCapabilityRegistryNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Provider Capability Registry",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_provider_capability_registry",
+      tags: ["second-brain", "provider-capabilities", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Provider Capabilities",
+      asBulletList(production.provider_capability_registry.map((entry) => `${entry.provider}: duration<=${entry.max_duration_seconds}s | prompt<=${entry.max_prompt_characters} chars | refs<=${entry.max_image_references} | continuity=${entry.continuity_support} | queue=${entry.queue_behavior}`)),
+      "",
+      "## Retry Guidance",
+      asBulletList(production.provider_capability_registry.map((entry) => `${entry.provider}: ${entry.retry_recommendation}`)),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Provider Routing Rules"),
+        toLink("Prompt Normalization Rules"),
+        toLink("Provider Payload Examples"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildPromptNormalizationRulesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const providerHeaders = production.provider_capability_registry.map((entry) => `${entry.provider}: ${entry.provider === "Sora" ? "Sora cinematic brief" : entry.provider === "Seedance" ? "Seedance storyboard draft" : entry.provider === "Runway" ? "Runway director prompt" : entry.provider === "Veo" ? "Veo scene payload" : "Generator-agnostic local bridge payload"}`);
+  return {
+    title: "Prompt Normalization Rules",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_prompt_normalization_rules",
+      tags: ["second-brain", "prompt-normalization", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Normalization Rules",
+      asBulletList(production.prompt_normalization_rules),
+      "",
+      "## Provider Variants",
+      asBulletList(providerHeaders),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Provider Capability Registry"),
+        toLink("Provider Payload Examples"),
+        toLink("Generation Budget Rules"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildGenerationBudgetRulesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const policy = production.generation_budget_policy;
+  return {
+    title: "Generation Budget Rules",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_generation_budget_rules",
+      tags: ["second-brain", "generation-budget", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Budget Rules",
+      asBulletList(production.generation_budget_rules),
+      "",
+      "## Active Policy",
+      asBulletList([
+        `Max shots per batch: ${policy.max_shots_per_batch}`,
+        `Max retries per job: ${policy.max_retries_per_job}`,
+        `Estimated budget cap: ${policy.max_estimated_sequence_cost}`,
+        `Provider cooldown minutes: ${policy.provider_cooldown_minutes}`,
+        `Sandbox-only mode: ${policy.sandbox_only_mode ? "enabled" : "disabled"}`,
+        `Manual approval required: ${policy.manual_approval_required ? "yes" : "no"}`,
+      ]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Manual Approval Workflow"),
+        toLink("Cost Forecast Examples"),
+        toLink("Provider Payload Examples"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildManualApprovalWorkflowNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const approvalPendingCount = production.generation_jobs.filter((entry) => entry.manual_approval_status === "required").length;
+  return {
+    title: "Manual Approval Workflow",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_manual_approval_workflow",
+      tags: ["second-brain", "manual-approval", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Workflow",
+      asBulletList(production.manual_approval_workflow),
+      "",
+      "## Approval Queue",
+      asBulletList([
+        `Jobs awaiting approval: ${approvalPendingCount}`,
+        `Sandbox-only mode: ${production.generation_budget_policy.sandbox_only_mode ? "still blocking real execution" : "lifted"}`,
+      ]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Generation Budget Rules"),
+        toLink("Generation Job Queue"),
+        toLink("Cinematic Execution Lifecycle"),
       ]),
     ].join("\n"),
   };
@@ -1194,8 +1337,75 @@ function buildCostAwareGenerationStrategyNote(input: {
       "## Related",
       asBulletList([
         toLink("Provider Routing Rules"),
+        toLink("Cost Forecast Examples"),
         toLink("Generation Job Queue"),
         toLink("Cost-Aware Iteration Notes"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildCostForecastExamplesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const providerExamples = production.provider_capability_registry.map((entry) => `${entry.provider}: draft=${entry.estimated_cost_profile.draft} | standard=${entry.estimated_cost_profile.standard} | premium=${entry.estimated_cost_profile.premium}`);
+  return {
+    title: "Cost Forecast Examples",
+    directory: "Resources",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_cost_forecast_examples",
+      tags: ["second-brain", "cost-forecast", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Forecast Examples",
+      asBulletList(production.cost_forecast_examples),
+      "",
+      "## Provider Cost Profiles",
+      asBulletList(providerExamples),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Generation Budget Rules"),
+        toLink("Cost-Aware Generation Strategy"),
+        toLink("Provider Capability Registry"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildProviderPayloadExamplesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const preparedPayloads = production.generation_jobs
+    .filter((entry) => entry.prompt_payload.normalized_prompt.length > 0)
+    .slice(0, 6)
+    .map((entry) => `${entry.provider}: ${entry.shot_id} | duration=${entry.prompt_payload.duration_target_seconds}s | resolution=${entry.prompt_payload.resolution} | prompt=${entry.prompt_payload.normalized_prompt.slice(0, 96)}...`);
+  return {
+    title: "Provider Payload Examples",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_provider_payload_examples",
+      tags: ["second-brain", "provider-payloads", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Payload Examples",
+      asBulletList(preparedPayloads.length > 0 ? preparedPayloads : production.provider_payload_examples),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Provider Capability Registry"),
+        toLink("Prompt Normalization Rules"),
+        toLink("Generation Budget Rules"),
       ]),
     ].join("\n"),
   };
@@ -1469,9 +1679,15 @@ export async function exportSecondBrainToObsidian(input?: {
     buildCostAwareIterationNotes({ productionMemory, latestSessionId }),
     buildGenerationJobQueueNote({ productionMemory, latestSessionId }),
     buildProviderRoutingRulesNote({ productionMemory, latestSessionId }),
+    buildProviderCapabilityRegistryNote({ productionMemory, latestSessionId }),
+    buildPromptNormalizationRulesNote({ productionMemory, latestSessionId }),
+    buildGenerationBudgetRulesNote({ productionMemory, latestSessionId }),
+    buildManualApprovalWorkflowNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),
     buildCostAwareGenerationStrategyNote({ productionMemory, latestSessionId }),
+    buildCostForecastExamplesNote({ productionMemory, latestSessionId }),
+    buildProviderPayloadExamplesNote({ productionMemory, latestSessionId }),
     buildSandboxSimulationResultsNote({ productionMemory, latestSessionId }),
     buildSessionContinuitySummaryNote({ record, repoProjectContext, latestSessionId }),
     buildHomeNote({

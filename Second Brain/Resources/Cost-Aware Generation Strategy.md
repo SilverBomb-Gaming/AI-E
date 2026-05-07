@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T15:53:54.920Z
+updated_at: 2026-05-07T16:56:36.707Z
 session_id: phase7c-skip-task-session
 status: generated_cost_aware_generation_strategy
 tags:
@@ -25,5 +25,6 @@ tags:
 
 ## Related
 - [[Provider Routing Rules]]
+- [[Cost Forecast Examples]]
 - [[Generation Job Queue]]
 - [[Cost-Aware Iteration Notes]]

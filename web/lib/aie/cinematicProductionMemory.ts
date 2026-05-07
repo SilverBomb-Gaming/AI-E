@@ -226,12 +226,123 @@ export type CinematicProviderAdapterStub = {
   stub_capabilities: string[];
 };
 
+export type CinematicVideoResolution = "720p" | "1080p" | "1440p" | "4k";
+
+export type CinematicProviderEstimatedCostProfile = {
+  draft: number;
+  standard: number;
+  premium: number;
+};
+
+export type CinematicProviderCapability = {
+  provider: CinematicGenerationProvider;
+  max_duration_seconds: number;
+  max_prompt_characters: number;
+  supported_resolutions: CinematicVideoResolution[];
+  supported_frame_rates: number[];
+  continuity_support: "full" | "partial" | "limited";
+  image_reference_support: boolean;
+  max_image_references: number;
+  estimated_cost_profile: CinematicProviderEstimatedCostProfile;
+  queue_behavior: string;
+  retry_recommendation: string;
+};
+
+export type CinematicPromptNormalizationResult = {
+  provider: CinematicGenerationProvider;
+  normalized_prompt: string;
+  trimmed: boolean;
+  token_budget_hint: number;
+};
+
+export type CinematicProviderPayload = {
+  job_id: string;
+  provider: CinematicGenerationProvider;
+  normalized_prompt: string;
+  continuity_context: string[];
+  shot_references: string[];
+  asset_references: string[];
+  camera_instructions: string[];
+  duration_seconds: number;
+  resolution: CinematicVideoResolution;
+  frame_rate: number;
+  style_guidance: string[];
+  retry_metadata: string[];
+  provider_payload: Record<string, unknown>;
+};
+
+export type CinematicProviderPayloadValidationIssueCategory =
+  | "overlong-prompt"
+  | "unsupported-duration"
+  | "invalid-reference-count"
+  | "continuity-incompatibility"
+  | "unsupported-resolution"
+  | "unsupported-frame-rate"
+  | "provider-specific-restriction";
+
+export type CinematicProviderPayloadValidationIssue = {
+  category: CinematicProviderPayloadValidationIssueCategory;
+  detail: string;
+};
+
+export type CinematicProviderPayloadValidationResult = {
+  provider: CinematicGenerationProvider;
+  valid: boolean;
+  issues: CinematicProviderPayloadValidationIssue[];
+};
+
+export type CinematicGenerationBudgetPolicy = {
+  max_shots_per_batch: number;
+  max_retries_per_job: number;
+  max_estimated_sequence_cost: number;
+  provider_cooldown_minutes: number;
+  sandbox_only_mode: boolean;
+  manual_approval_required: boolean;
+};
+
+export type CinematicGenerationBudgetEnforcementResult = {
+  allowed: boolean;
+  total_estimated_sequence_cost: number;
+  estimated_retry_cost: number;
+  issues: string[];
+  applied_policy: CinematicGenerationBudgetPolicy;
+};
+
+export type CinematicManualApprovalGateResult = {
+  manual_approval_required: boolean;
+  manual_approval_granted: boolean;
+  queue_preparation_allowed: boolean;
+  provider_execution_allowed: boolean;
+  blocked_reason: string | null;
+  persisted: boolean;
+};
+
+export type CinematicProviderCostForecast = {
+  provider: CinematicGenerationProvider;
+  draft_cost: number;
+  standard_cost: number;
+  premium_cost: number;
+};
+
+export type CinematicCostForecast = {
+  sequence_id: string;
+  provider: CinematicGenerationProvider;
+  estimated_sequence_cost: number;
+  estimated_retry_cost: number;
+  provider_variance: number;
+  draft_vs_premium_tradeoff: string;
+  provider_forecasts: CinematicProviderCostForecast[];
+};
+
 export type CinematicExecutionValidationIssueCategory =
   | "continuity-compatibility"
   | "missing-dependencies"
   | "invalid-shot-ordering"
   | "stale-asset-references"
-  | "retry-loop";
+  | "retry-loop"
+  | "provider-validation"
+  | "budget-enforcement"
+  | "manual-approval-gate";
 
 export type CinematicExecutionValidationIssue = {
   category: CinematicExecutionValidationIssueCategory;
@@ -331,10 +442,18 @@ export type CinematicProductionMemoryRecord = {
   asset_reuse_decisions: string[];
   generation_jobs: CinematicGenerationJob[];
   generation_job_history: CinematicGenerationJobHistoryEntry[];
+  provider_capability_registry: CinematicProviderCapability[];
   provider_routing_rules: string[];
+  prompt_normalization_rules: string[];
+  provider_validation_rules: string[];
+  generation_budget_policy: CinematicGenerationBudgetPolicy;
+  generation_budget_rules: string[];
+  manual_approval_workflow: string[];
   execution_lifecycle_rules: string[];
   retry_planning_rules: string[];
   cost_aware_generation_strategy: string[];
+  cost_forecast_examples: string[];
+  provider_payload_examples: string[];
   sandbox_simulations: CinematicSandboxSimulationRecord[];
   edit_decisions: string[];
   pacing_notes: string[];
@@ -395,6 +514,9 @@ export type FailedShotRegenerationPlan = {
 };
 
 const MAX_GENERATION_RETRY_COUNT = 2;
+const DEFAULT_TARGET_DURATION_SECONDS = 8;
+const DEFAULT_TARGET_RESOLUTION: CinematicVideoResolution = "1080p";
+const DEFAULT_TARGET_FRAME_RATE = 24;
 
 const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
   schema_version: 1,
@@ -480,6 +602,12 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
       title: "Generation Lifecycle Tracker",
       status: "planned",
       summary: "Track append-only execution lifecycle state transitions for cinematic jobs and retry flows.",
+    },
+    {
+      id: "cinematic-prompt-compiler",
+      title: "Cinematic Prompt Compiler",
+      status: "foundation",
+      summary: "Compile production memory into structured shot prompts without invoking generation yet.",
     },
     {
       id: "second-brain-obsidian-integration",
@@ -713,11 +841,108 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
   ],
   generation_jobs: [],
   generation_job_history: [],
+  provider_capability_registry: [
+    {
+      provider: "Sora",
+      max_duration_seconds: 20,
+      max_prompt_characters: 4000,
+      supported_resolutions: ["720p", "1080p", "1440p"],
+      supported_frame_rates: [24, 30],
+      continuity_support: "full",
+      image_reference_support: true,
+      max_image_references: 4,
+      estimated_cost_profile: { draft: 6, standard: 10, premium: 16 },
+      queue_behavior: "Premium queue with slower turnaround but higher fidelity.",
+      retry_recommendation: "Prefer one targeted retry after continuity simplification.",
+    },
+    {
+      provider: "Seedance",
+      max_duration_seconds: 8,
+      max_prompt_characters: 1800,
+      supported_resolutions: ["720p", "1080p"],
+      supported_frame_rates: [24, 30],
+      continuity_support: "partial",
+      image_reference_support: true,
+      max_image_references: 2,
+      estimated_cost_profile: { draft: 2, standard: 4, premium: 7 },
+      queue_behavior: "Fast draft queue optimized for storyboard-grade passes.",
+      retry_recommendation: "Use one cheap retry before escalating to a premium provider.",
+    },
+    {
+      provider: "Runway",
+      max_duration_seconds: 10,
+      max_prompt_characters: 2200,
+      supported_resolutions: ["720p", "1080p"],
+      supported_frame_rates: [24, 30],
+      continuity_support: "partial",
+      image_reference_support: true,
+      max_image_references: 3,
+      estimated_cost_profile: { draft: 3, standard: 6, premium: 11 },
+      queue_behavior: "Shared queue with balanced latency and comparison-friendly payloads.",
+      retry_recommendation: "Retry once with fewer references if validation pressure is high.",
+    },
+    {
+      provider: "Veo",
+      max_duration_seconds: 12,
+      max_prompt_characters: 3200,
+      supported_resolutions: ["720p", "1080p", "4k"],
+      supported_frame_rates: [24, 30],
+      continuity_support: "full",
+      image_reference_support: true,
+      max_image_references: 5,
+      estimated_cost_profile: { draft: 5, standard: 9, premium: 15 },
+      queue_behavior: "Balanced premium queue for comparison-grade cinematic passes.",
+      retry_recommendation: "Allow up to two targeted retries when continuity context remains stable.",
+    },
+    {
+      provider: "LocalFutureProvider",
+      max_duration_seconds: 16,
+      max_prompt_characters: 5000,
+      supported_resolutions: ["720p", "1080p", "1440p"],
+      supported_frame_rates: [24, 30, 60],
+      continuity_support: "limited",
+      image_reference_support: true,
+      max_image_references: 4,
+      estimated_cost_profile: { draft: 1, standard: 3, premium: 5 },
+      queue_behavior: "Offline local queue reserved for future generator-agnostic bridge validation.",
+      retry_recommendation: "Use only after provider payloads are validated and manual approval is explicit.",
+    },
+  ],
   provider_routing_rules: [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
     "Offline planning and future local inference modes must remain provider-agnostic and avoid real API calls.",
     "Balanced comparison mode can use Veo or Runway stubs to compare provider-ready payloads without execution lock-in.",
+  ],
+  prompt_normalization_rules: [
+    "Normalize prompts into provider-ready payloads without changing continuity intent.",
+    "Trim provider prompts deterministically when prompt limits are exceeded.",
+    "Preserve camera, continuity, style, and retry metadata across all provider variants.",
+  ],
+  provider_validation_rules: [
+    "Reject prompts that exceed provider-specific prompt limits.",
+    "Reject durations, resolutions, or frame rates outside provider support.",
+    "Reject reference counts beyond provider limits or providers without image-reference support.",
+    "Reject payloads that demand continuity behavior beyond provider support.",
+  ],
+  generation_budget_policy: {
+    max_shots_per_batch: 8,
+    max_retries_per_job: MAX_GENERATION_RETRY_COUNT,
+    max_estimated_sequence_cost: 220,
+    provider_cooldown_minutes: 10,
+    sandbox_only_mode: true,
+    manual_approval_required: true,
+  },
+  generation_budget_rules: [
+    "Max shots per batch remains a hard gate before provider handoff.",
+    "Retry counts stay bounded to avoid hidden spend loops.",
+    "Estimated sequence cost caps block overspend before approval is considered.",
+    "Provider cooldowns apply only to explicit provider execution handoff attempts.",
+  ],
+  manual_approval_workflow: [
+    "AI-E may prepare, validate, queue, and estimate generation jobs without provider execution.",
+    "A human approval step is required before any provider execution or credit spend is considered valid.",
+    "Sandbox-only mode must remain enabled by default for provider bridge preparation.",
   ],
   execution_lifecycle_rules: [
     "Execution lifecycle remains append-only in generation job history.",
@@ -734,6 +959,15 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
     "Use premium cinematic routing for higher-fidelity provider-ready payloads.",
     "Use offline planning mode when only orchestration validation is required.",
     "Reserve future local inference mode for later generator-agnostic local execution bridges.",
+  ],
+  cost_forecast_examples: [
+    "A 7-shot Seedance draft pass should remain cheap enough for validation-first planning.",
+    "A premium Sora pass should forecast higher cost but lower payload-compression pressure.",
+  ],
+  provider_payload_examples: [
+    "Sora-ready payloads should keep cinematic prose plus continuity annotations.",
+    "Seedance-ready payloads should stay compressed and storyboard-focused.",
+    "Veo and Runway payloads should preserve references, camera instructions, and duration targets.",
   ],
   sandbox_simulations: [],
   failed_generations: [
@@ -811,10 +1045,21 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     asset_reuse_decisions: nextRecord.asset_reuse_decisions ?? defaults.asset_reuse_decisions,
     generation_jobs: nextRecord.generation_jobs ?? defaults.generation_jobs,
     generation_job_history: nextRecord.generation_job_history ?? defaults.generation_job_history,
+    provider_capability_registry: nextRecord.provider_capability_registry ?? defaults.provider_capability_registry,
     provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
+    prompt_normalization_rules: nextRecord.prompt_normalization_rules ?? defaults.prompt_normalization_rules,
+    provider_validation_rules: nextRecord.provider_validation_rules ?? defaults.provider_validation_rules,
+    generation_budget_policy: {
+      ...defaults.generation_budget_policy,
+      ...(nextRecord.generation_budget_policy ?? {}),
+    },
+    generation_budget_rules: nextRecord.generation_budget_rules ?? defaults.generation_budget_rules,
+    manual_approval_workflow: nextRecord.manual_approval_workflow ?? defaults.manual_approval_workflow,
     execution_lifecycle_rules: nextRecord.execution_lifecycle_rules ?? defaults.execution_lifecycle_rules,
     retry_planning_rules: nextRecord.retry_planning_rules ?? defaults.retry_planning_rules,
     cost_aware_generation_strategy: nextRecord.cost_aware_generation_strategy ?? defaults.cost_aware_generation_strategy,
+    cost_forecast_examples: nextRecord.cost_forecast_examples ?? defaults.cost_forecast_examples,
+    provider_payload_examples: nextRecord.provider_payload_examples ?? defaults.provider_payload_examples,
     sandbox_simulations: nextRecord.sandbox_simulations ?? defaults.sandbox_simulations,
     edit_decisions: nextRecord.edit_decisions ?? defaults.edit_decisions,
     pacing_notes: nextRecord.pacing_notes ?? defaults.pacing_notes,
@@ -1204,6 +1449,176 @@ function upsertGenerationJobs(currentJobs: CinematicGenerationJob[], nextJobs: C
   return [...byId.values()].sort((left, right) => left.created_at.localeCompare(right.created_at));
 }
 
+function trimPromptToMaxCharacters(prompt: string, maxCharacters: number): CinematicPromptNormalizationResult {
+  const normalizedPrompt = normalizeText(prompt).replace(/\s*\|\s*/g, " | ");
+  if (normalizedPrompt.length <= maxCharacters) {
+    return {
+      provider: "LocalFutureProvider",
+      normalized_prompt: normalizedPrompt,
+      trimmed: false,
+      token_budget_hint: Math.ceil(normalizedPrompt.length / 4),
+    };
+  }
+
+  const trimmedPrompt = `${normalizedPrompt.slice(0, Math.max(0, maxCharacters - 3)).trim()}...`;
+  return {
+    provider: "LocalFutureProvider",
+    normalized_prompt: trimmedPrompt,
+    trimmed: true,
+    token_budget_hint: Math.ceil(trimmedPrompt.length / 4),
+  };
+}
+
+function getEstimatedProviderCost(capability: CinematicProviderCapability, costTier: CostTier): number {
+  switch (costTier) {
+    case "high":
+      return capability.estimated_cost_profile.premium;
+    case "medium":
+      return capability.estimated_cost_profile.standard;
+    case "low":
+      return capability.estimated_cost_profile.draft;
+  }
+}
+
+function getRoutingModeCostTier(routingMode: CinematicProviderRoutingMode): CostTier {
+  switch (routingMode) {
+    case "premium-cinematic-provider":
+      return "high";
+    case "balanced-comparison-mode":
+    case "future-local-inference-mode":
+      return "medium";
+    case "cheap-draft-provider":
+    case "offline-planning-mode":
+      return "low";
+  }
+}
+
+function resolveProviderCapability(record: CinematicProductionMemoryRecord, provider: CinematicGenerationProvider): CinematicProviderCapability {
+  const capability = record.provider_capability_registry.find((entry) => entry.provider === provider);
+  if (!capability) {
+    throw new Error(`Unknown provider capability: ${provider}`);
+  }
+  return capability;
+}
+
+function providerNormalizationPrefix(provider: CinematicGenerationProvider): string {
+  switch (provider) {
+    case "Sora":
+      return "Sora-ready cinematic prompt";
+    case "Seedance":
+      return "Seedance-ready storyboard prompt";
+    case "Veo":
+      return "Veo-ready cinematic payload";
+    case "Runway":
+      return "Runway-ready motion prompt";
+    case "LocalFutureProvider":
+      return "Local future provider planning payload";
+  }
+}
+
+function normalizePromptForProvider(input: {
+  provider: CinematicGenerationProvider;
+  capability: CinematicProviderCapability;
+  prompt: string;
+  continuityContext: string[];
+  cameraInstructions: string[];
+  styleGuidance: string[];
+}): CinematicPromptNormalizationResult {
+  const providerPrompt = [
+    providerNormalizationPrefix(input.provider),
+    input.prompt,
+    `Continuity: ${input.continuityContext.join(" | ")}`,
+    `Camera: ${input.cameraInstructions.join(" | ")}`,
+    `Style: ${input.styleGuidance.join(" | ")}`,
+  ].join("\n");
+  const trimmed = trimPromptToMaxCharacters(providerPrompt, input.capability.max_prompt_characters);
+  return {
+    ...trimmed,
+    provider: input.provider,
+  };
+}
+
+function getProviderPayloadShape(input: {
+  provider: CinematicGenerationProvider;
+  normalizedPrompt: string;
+  durationSeconds: number;
+  resolution: CinematicVideoResolution;
+  frameRate: number;
+  references: string[];
+  cameraInstructions: string[];
+}): Record<string, unknown> {
+  switch (input.provider) {
+    case "Sora":
+      return {
+        prompt: input.normalizedPrompt,
+        duration_seconds: input.durationSeconds,
+        output_resolution: input.resolution,
+        fps: input.frameRate,
+        image_references: input.references,
+        camera_guidance: input.cameraInstructions,
+      };
+    case "Seedance":
+      return {
+        concise_prompt: input.normalizedPrompt,
+        shot_duration_seconds: input.durationSeconds,
+        delivery_resolution: input.resolution,
+        storyboard_fps: input.frameRate,
+        refs: input.references,
+      };
+    case "Veo":
+      return {
+        sequence_prompt: input.normalizedPrompt,
+        duration_target_seconds: input.durationSeconds,
+        resolution: input.resolution,
+        frame_rate: input.frameRate,
+        reference_assets: input.references,
+        motion_notes: input.cameraInstructions,
+      };
+    case "Runway":
+      return {
+        motion_prompt: input.normalizedPrompt,
+        target_duration_seconds: input.durationSeconds,
+        export_resolution: input.resolution,
+        fps: input.frameRate,
+        reference_images: input.references,
+      };
+    case "LocalFutureProvider":
+      return {
+        planning_prompt: input.normalizedPrompt,
+        requested_duration_seconds: input.durationSeconds,
+        preferred_resolution: input.resolution,
+        preferred_frame_rate: input.frameRate,
+        references: input.references,
+        deterministic_camera_notes: input.cameraInstructions,
+      };
+  }
+}
+
+function resolveJobContext(record: CinematicProductionMemoryRecord, jobId: string): {
+  job: CinematicGenerationJob;
+  sequence: CinematicSceneSequence;
+  shot: CinematicSceneSequenceShot;
+  beat: CinematicStoryBeat;
+} {
+  const job = record.generation_jobs.find((entry) => entry.job_id === jobId);
+  if (!job) {
+    throw new Error(`Unknown cinematic generation job id: ${jobId}`);
+  }
+  const sequence = record.scene_sequences.find((entry) => entry.sequence_id === job.sequence_id);
+  if (!sequence) {
+    throw new Error(`Unknown cinematic sequence id: ${job.sequence_id}`);
+  }
+  const shot = sequence.shots.find((entry) => entry.shot_id === job.shot_id);
+  if (!shot) {
+    throw new Error(`Unknown cinematic shot id: ${job.shot_id}`);
+  }
+  const beat = record.story_beats.find((entry) => entry.beat_id === sequence.beat_id);
+  if (!beat) {
+    throw new Error(`Unknown cinematic beat id: ${sequence.beat_id}`);
+  }
+  return { job, sequence, shot, beat };
+}
+
 function buildExecutionPromptPayload(input: {
   record: CinematicProductionMemoryRecord;
   sequence: CinematicSceneSequence;
@@ -1324,6 +1739,20 @@ export function listCinematicProviderAdapters(): CinematicProviderAdapterStub[] 
   ];
 }
 
+export function getCinematicProviderCapabilityRegistry(input?: {
+  record?: CinematicProductionMemoryRecord;
+}): CinematicProviderCapability[] {
+  return (input?.record ?? cloneDefaultRecord()).provider_capability_registry;
+}
+
+export async function getCinematicProviderCapability(input: {
+  root?: string;
+  provider: CinematicGenerationProvider;
+}): Promise<CinematicProviderCapability> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  return resolveProviderCapability(record, input.provider);
+}
+
 export function selectCinematicGenerationProviderRoute(input: {
   routingMode: CinematicProviderRoutingMode;
 }): CinematicProviderRoutingDecision {
@@ -1437,6 +1866,308 @@ export async function validateCinematicExecutionPlan(input: {
   };
 }
 
+export async function compileCinematicProviderPayload(input: {
+  root?: string;
+  jobId: string;
+  provider?: CinematicGenerationProvider;
+  targetDurationSeconds?: number;
+  targetResolution?: CinematicVideoResolution;
+  targetFrameRate?: number;
+  imageReferenceAssetIds?: string[];
+}): Promise<CinematicProviderPayload> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const { job, shot, beat } = resolveJobContext(record, input.jobId);
+  const provider = input.provider ?? job.provider;
+  const capability = resolveProviderCapability(record, provider);
+  const durationSeconds = input.targetDurationSeconds ?? Math.min(DEFAULT_TARGET_DURATION_SECONDS, capability.max_duration_seconds);
+  const resolution = input.targetResolution ?? DEFAULT_TARGET_RESOLUTION;
+  const frameRate = input.targetFrameRate ?? DEFAULT_TARGET_FRAME_RATE;
+  const assetReferences = input.imageReferenceAssetIds ?? job.prompt_payload.asset_reuse_candidates.slice(0, capability.max_image_references);
+  const continuityContext = [
+    ...job.continuity_context.continuity_constraints,
+    `Dependency shots: ${job.continuity_context.dependency_shot_ids.join(", ") || "none"}`,
+    `Beat goal: ${beat.emotional_goal}`,
+  ];
+  const cameraInstructions = [
+    shot.camera_behavior,
+    shot.transition_notes,
+    `Timeline position ${shot.timeline_position}`,
+  ];
+  const styleGuidance = [
+    ...record.visual_style,
+    `Tone: ${shot.tone_reference}`,
+    `Lighting: ${shot.lighting_reference}`,
+  ];
+  const normalized = normalizePromptForProvider({
+    provider,
+    capability,
+    prompt: job.prompt_payload.compiled_prompt,
+    continuityContext,
+    cameraInstructions,
+    styleGuidance,
+  });
+
+  return {
+    job_id: job.job_id,
+    provider,
+    normalized_prompt: normalized.normalized_prompt,
+    continuity_context: continuityContext,
+    shot_references: [shot.shot_id, ...job.continuity_context.dependency_shot_ids],
+    asset_references: assetReferences,
+    camera_instructions: cameraInstructions,
+    duration_seconds: durationSeconds,
+    resolution,
+    frame_rate: frameRate,
+    style_guidance: styleGuidance,
+    retry_metadata: [
+      `retry_count=${job.retry_count}`,
+      `retry_recommendation=${capability.retry_recommendation}`,
+      `queue_behavior=${capability.queue_behavior}`,
+    ],
+    provider_payload: getProviderPayloadShape({
+      provider,
+      normalizedPrompt: normalized.normalized_prompt,
+      durationSeconds,
+      resolution,
+      frameRate,
+      references: assetReferences,
+      cameraInstructions,
+    }),
+  };
+}
+
+export async function compileCinematicProviderPayloadVariants(input: {
+  root?: string;
+  jobId: string;
+  targetDurationSeconds?: number;
+  targetResolution?: CinematicVideoResolution;
+  targetFrameRate?: number;
+  imageReferenceAssetIds?: string[];
+}): Promise<CinematicProviderPayload[]> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  return Promise.all(record.provider_capability_registry.map((entry) => compileCinematicProviderPayload({
+    ...input,
+    provider: entry.provider,
+  })));
+}
+
+export async function validateCinematicProviderPayload(input: {
+  root?: string;
+  payload: CinematicProviderPayload;
+}): Promise<CinematicProviderPayloadValidationResult> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const capability = resolveProviderCapability(record, input.payload.provider);
+  const issues: CinematicProviderPayloadValidationIssue[] = [];
+
+  if (input.payload.normalized_prompt.length > capability.max_prompt_characters) {
+    issues.push({
+      category: "overlong-prompt",
+      detail: `Prompt exceeds ${capability.max_prompt_characters} characters for ${capability.provider}.`,
+    });
+  }
+  if (input.payload.duration_seconds > capability.max_duration_seconds) {
+    issues.push({
+      category: "unsupported-duration",
+      detail: `Duration ${input.payload.duration_seconds}s exceeds ${capability.max_duration_seconds}s for ${capability.provider}.`,
+    });
+  }
+  if (!capability.supported_resolutions.includes(input.payload.resolution)) {
+    issues.push({
+      category: "unsupported-resolution",
+      detail: `Resolution ${input.payload.resolution} is not supported by ${capability.provider}.`,
+    });
+  }
+  if (!capability.supported_frame_rates.includes(input.payload.frame_rate)) {
+    issues.push({
+      category: "unsupported-frame-rate",
+      detail: `Frame rate ${input.payload.frame_rate} is not supported by ${capability.provider}.`,
+    });
+  }
+  if (!capability.image_reference_support && input.payload.asset_references.length > 0) {
+    issues.push({
+      category: "invalid-reference-count",
+      detail: `${capability.provider} does not support image references.`,
+    });
+  }
+  if (input.payload.asset_references.length > capability.max_image_references) {
+    issues.push({
+      category: "invalid-reference-count",
+      detail: `${capability.provider} supports only ${capability.max_image_references} image references.`,
+    });
+  }
+  if (capability.continuity_support === "limited" && input.payload.continuity_context.length > 4) {
+    issues.push({
+      category: "continuity-incompatibility",
+      detail: `${capability.provider} cannot safely carry the current continuity burden without simplification.`,
+    });
+  }
+  if (capability.provider === "Seedance" && input.payload.style_guidance.length > 6) {
+    issues.push({
+      category: "provider-specific-restriction",
+      detail: "Seedance payloads should stay compressed and cannot carry excessive style guidance.",
+    });
+  }
+  if (capability.provider === "Runway" && input.payload.duration_seconds > 10) {
+    issues.push({
+      category: "provider-specific-restriction",
+      detail: "Runway planning payloads in this bridge are capped at 10 seconds.",
+    });
+  }
+
+  return {
+    provider: capability.provider,
+    valid: issues.length === 0,
+    issues,
+  };
+}
+
+export async function forecastCinematicSequenceCost(input: {
+  root?: string;
+  sequenceId: string;
+  routingMode: CinematicProviderRoutingMode;
+}): Promise<CinematicCostForecast> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const sequence = record.scene_sequences.find((entry) => entry.sequence_id === input.sequenceId);
+  if (!sequence) {
+    throw new Error(`Unknown cinematic sequence id: ${input.sequenceId}`);
+  }
+  const routing = selectCinematicGenerationProviderRoute({ routingMode: input.routingMode });
+  const targetCapability = resolveProviderCapability(record, routing.provider);
+  const providerForeasts = record.provider_capability_registry.map((entry) => ({
+    provider: entry.provider,
+    draft_cost: entry.estimated_cost_profile.draft * sequence.shots.length,
+    standard_cost: entry.estimated_cost_profile.standard * sequence.shots.length,
+    premium_cost: entry.estimated_cost_profile.premium * sequence.shots.length,
+  }));
+  const forecastCost = getEstimatedProviderCost(targetCapability, getRoutingModeCostTier(input.routingMode)) * sequence.shots.length;
+  const retryCost = targetCapability.estimated_cost_profile.draft * Math.min(sequence.shots.length, MAX_GENERATION_RETRY_COUNT);
+  const standardCosts = providerForeasts.map((entry) => entry.standard_cost);
+  const providerVariance = Math.max(...standardCosts) - Math.min(...standardCosts);
+
+  return {
+    sequence_id: sequence.sequence_id,
+    provider: targetCapability.provider,
+    estimated_sequence_cost: forecastCost,
+    estimated_retry_cost: retryCost,
+    provider_variance: providerVariance,
+    draft_vs_premium_tradeoff: `${targetCapability.provider} draft-to-premium delta is ${targetCapability.estimated_cost_profile.premium - targetCapability.estimated_cost_profile.draft} cost units per shot.`,
+    provider_forecasts: providerForeasts,
+  };
+}
+
+export async function enforceCinematicGenerationBudget(input: {
+  root?: string;
+  jobs: CinematicGenerationJob[];
+  budgetPolicy?: Partial<CinematicGenerationBudgetPolicy>;
+  actualProviderExecutionRequested?: boolean;
+  manualApprovalGranted?: boolean;
+  now?: string;
+}): Promise<CinematicGenerationBudgetEnforcementResult> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const appliedPolicy: CinematicGenerationBudgetPolicy = {
+    ...record.generation_budget_policy,
+    ...(input.budgetPolicy ?? {}),
+  };
+  const issues: string[] = [];
+  const totalEstimatedSequenceCost = input.jobs.reduce((sum, entry) => sum + entry.estimated_cost, 0);
+  const estimatedRetryCost = input.jobs.reduce((sum, entry) => sum + Math.min(entry.retry_count + 1, appliedPolicy.max_retries_per_job) * Math.max(1, Math.floor(entry.estimated_cost / 2)), 0);
+
+  if (input.jobs.length > appliedPolicy.max_shots_per_batch) {
+    issues.push(`Job batch exceeds max_shots_per_batch=${appliedPolicy.max_shots_per_batch}.`);
+  }
+  if (input.jobs.some((entry) => entry.retry_count > appliedPolicy.max_retries_per_job)) {
+    issues.push(`One or more jobs exceed max_retries_per_job=${appliedPolicy.max_retries_per_job}.`);
+  }
+  if (totalEstimatedSequenceCost + estimatedRetryCost > appliedPolicy.max_estimated_sequence_cost) {
+    issues.push(`Estimated sequence cost ${totalEstimatedSequenceCost + estimatedRetryCost} exceeds cap ${appliedPolicy.max_estimated_sequence_cost}.`);
+  }
+  if (input.actualProviderExecutionRequested && appliedPolicy.sandbox_only_mode) {
+    issues.push("Sandbox-only mode blocks actual provider execution requests.");
+  }
+  if (input.actualProviderExecutionRequested && appliedPolicy.manual_approval_required && !input.manualApprovalGranted) {
+    issues.push("Manual approval is required before actual provider execution.");
+  }
+
+  if (input.actualProviderExecutionRequested) {
+    const now = new Date(input.now ?? new Date().toISOString()).getTime();
+    for (const provider of new Set(input.jobs.map((entry) => entry.provider))) {
+      const latestProviderEvent = record.generation_job_history
+        .filter((entry) => entry.provider === provider)
+        .filter((entry) => /ready for explicit provider execution|provider handoff approved/i.test(entry.detail))
+        .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0];
+      if (!latestProviderEvent) {
+        continue;
+      }
+      const elapsedMinutes = (now - new Date(latestProviderEvent.recorded_at).getTime()) / 60_000;
+      if (elapsedMinutes < appliedPolicy.provider_cooldown_minutes) {
+        issues.push(`${provider} is in cooldown for another ${Math.ceil(appliedPolicy.provider_cooldown_minutes - elapsedMinutes)} minute(s).`);
+      }
+    }
+  }
+
+  return {
+    allowed: issues.length === 0,
+    total_estimated_sequence_cost: totalEstimatedSequenceCost,
+    estimated_retry_cost: estimatedRetryCost,
+    issues,
+    applied_policy: appliedPolicy,
+  };
+}
+
+export async function prepareCinematicManualTriggerBridge(input: {
+  root?: string;
+  jobIds: string[];
+  manualApprovalGranted?: boolean;
+  sandboxOnlyMode?: boolean;
+  actualProviderExecutionRequested?: boolean;
+  persist?: boolean;
+}): Promise<CinematicManualApprovalGateResult> {
+  const initialization = await loadProductionMemory(input.root);
+  const jobs = initialization.record.generation_jobs.filter((entry) => input.jobIds.includes(entry.job_id));
+  if (jobs.length !== input.jobIds.length) {
+    throw new Error("Manual trigger bridge requires known generation jobs.");
+  }
+
+  const budget = await enforceCinematicGenerationBudget({
+    root: input.root,
+    jobs,
+    actualProviderExecutionRequested: input.actualProviderExecutionRequested,
+    manualApprovalGranted: input.manualApprovalGranted,
+    budgetPolicy: {
+      sandbox_only_mode: input.sandboxOnlyMode ?? initialization.record.generation_budget_policy.sandbox_only_mode,
+    },
+  });
+  const providerExecutionAllowed = budget.allowed && Boolean(input.actualProviderExecutionRequested) && Boolean(input.manualApprovalGranted);
+  const result: CinematicManualApprovalGateResult = {
+    manual_approval_required: initialization.record.generation_budget_policy.manual_approval_required,
+    manual_approval_granted: Boolean(input.manualApprovalGranted),
+    queue_preparation_allowed: jobs.length > 0,
+    provider_execution_allowed: providerExecutionAllowed,
+    blocked_reason: budget.allowed ? null : budget.issues.join(" | "),
+    persisted: false,
+  };
+
+  if (input.persist === false) {
+    return result;
+  }
+
+  const historyEntries = jobs.map((job) => createGenerationJobHistoryEntry({
+    job,
+    detail: providerExecutionAllowed
+      ? "Manual approval gate marked this job ready for explicit provider execution."
+      : `Manual approval gate blocked provider execution: ${result.blocked_reason ?? "unknown reason"}`,
+  }));
+  const nextRecord: CinematicProductionMemoryRecord = {
+    ...initialization.record,
+    generation_job_history: [...initialization.record.generation_job_history, ...historyEntries].slice(-300),
+  };
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, nextRecord);
+  return {
+    ...result,
+    persisted: true,
+  };
+}
+
 export async function planCinematicGenerationJobs(input: {
   root?: string;
   sequenceId: string;
@@ -1454,6 +2185,8 @@ export async function planCinematicGenerationJobs(input: {
   if (!beat) {
     throw new Error(`Unknown cinematic beat id: ${sequence.beat_id}`);
   }
+  const routing = selectCinematicGenerationProviderRoute({ routingMode: input.routingMode });
+  const selectedCapability = resolveProviderCapability(initialization.record, routing.provider);
 
   const validation = await validateCinematicExecutionPlan({
     root: input.root,
@@ -1461,7 +2194,6 @@ export async function planCinematicGenerationJobs(input: {
     shotIds: input.shotIds,
     isolateRegenerationOnly: input.isolateRegenerationOnly,
   });
-  const routing = selectCinematicGenerationProviderRoute({ routingMode: input.routingMode });
   if (!validation.valid) {
     return {
       routing,
@@ -1508,7 +2240,7 @@ export async function planCinematicGenerationJobs(input: {
     },
     generation_status: "planned",
     retry_count: 0,
-    estimated_cost: routing.estimated_cost_tier === "high" ? 9 : routing.estimated_cost_tier === "medium" ? 5 : 2,
+    estimated_cost: getEstimatedProviderCost(selectedCapability, routing.estimated_cost_tier),
     output_refs: [],
     validation_state: "validated",
     created_at: createdAt,
