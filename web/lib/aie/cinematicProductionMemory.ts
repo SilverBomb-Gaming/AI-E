@@ -202,6 +202,11 @@ export type CinematicGenerationJob = {
   estimated_cost: number;
   output_refs: string[];
   validation_state: CinematicGenerationValidationState;
+  requires_manual_approval: boolean;
+  manual_approval_status: CinematicOperatorApprovalStatus;
+  approval_token_id: string | null;
+  deferred_until: string | null;
+  last_operator_action_at: string | null;
   created_at: string;
 };
 
@@ -314,6 +319,117 @@ export type CinematicManualApprovalGateResult = {
   queue_preparation_allowed: boolean;
   provider_execution_allowed: boolean;
   blocked_reason: string | null;
+  persisted: boolean;
+};
+
+export type CinematicOperatorApprovalStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "retry-requested"
+  | "archived"
+  | "deferred";
+
+export type CinematicOperatorAction =
+  | "approve-job"
+  | "reject-job"
+  | "request-retry-plan"
+  | "archive-failed-plan"
+  | "sandbox-simulate-only"
+  | "defer-execution"
+  | "budget-override"
+  | "continuity-review-note";
+
+export type CinematicExecutionApprovalToken = {
+  token_id: string;
+  operator_id: string;
+  provider: CinematicGenerationProvider;
+  sequence_id: string;
+  job_ids: string[];
+  issued_at: string;
+  expires_at: string;
+  token_scope: "future-real-execution-bridge";
+  active: boolean;
+};
+
+export type CinematicBudgetGovernanceDecision = {
+  decision_id: string;
+  operator_id: string;
+  provider: CinematicGenerationProvider;
+  sequence_id: string;
+  requested_budget_cap: number;
+  approved_override: boolean;
+  reason: string;
+  recorded_at: string;
+};
+
+export type CinematicApprovalAuditEntry = {
+  audit_id: string;
+  append_only_index: number;
+  action: CinematicOperatorAction;
+  operator_id: string;
+  provider: CinematicGenerationProvider;
+  sequence_id: string;
+  job_ids: string[];
+  detail: string;
+  recorded_at: string;
+  sandbox_only: boolean;
+  approval_token_id: string | null;
+  budget_override_decision_id: string | null;
+};
+
+export type CinematicDeferredExecutionPlan = {
+  defer_id: string;
+  operator_id: string;
+  provider: CinematicGenerationProvider;
+  sequence_id: string;
+  job_ids: string[];
+  reason: string;
+  deferred_until: string;
+  recorded_at: string;
+  status: "deferred" | "released" | "cancelled";
+};
+
+export type CinematicContinuityReviewNote = {
+  note_id: string;
+  operator_id: string;
+  sequence_id: string;
+  shot_id: string | null;
+  detail: string;
+  dependency_snapshot: string[];
+  recorded_at: string;
+};
+
+export type CinematicExecutionReadinessCheckName =
+  | "approval-present"
+  | "budget-available"
+  | "continuity-validated"
+  | "dependencies-resolved"
+  | "provider-compatibility"
+  | "retry-limits"
+  | "cooldown-state";
+
+export type CinematicExecutionReadinessCheck = {
+  check: CinematicExecutionReadinessCheckName;
+  passed: boolean;
+  detail: string;
+};
+
+export type CinematicExecutionReadinessReport = {
+  provider: CinematicGenerationProvider;
+  sequence_id: string;
+  job_ids: string[];
+  ready_for_real_execution: boolean;
+  approval_token_valid: boolean;
+  approval_token: CinematicExecutionApprovalToken | null;
+  checks: CinematicExecutionReadinessCheck[];
+  blocked_reasons: string[];
+};
+
+export type CinematicApprovalActionResult = {
+  jobs: CinematicGenerationJob[];
+  token: CinematicExecutionApprovalToken | null;
+  audit_entries: CinematicApprovalAuditEntry[];
   persisted: boolean;
 };
 
@@ -442,6 +558,11 @@ export type CinematicProductionMemoryRecord = {
   asset_reuse_decisions: string[];
   generation_jobs: CinematicGenerationJob[];
   generation_job_history: CinematicGenerationJobHistoryEntry[];
+  execution_approval_tokens: CinematicExecutionApprovalToken[];
+  approval_audit_trail: CinematicApprovalAuditEntry[];
+  budget_governance_decisions: CinematicBudgetGovernanceDecision[];
+  continuity_review_notes: CinematicContinuityReviewNote[];
+  deferred_execution_plans: CinematicDeferredExecutionPlan[];
   provider_capability_registry: CinematicProviderCapability[];
   provider_routing_rules: string[];
   prompt_normalization_rules: string[];
@@ -841,6 +962,11 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
   ],
   generation_jobs: [],
   generation_job_history: [],
+  execution_approval_tokens: [],
+  approval_audit_trail: [],
+  budget_governance_decisions: [],
+  continuity_review_notes: [],
+  deferred_execution_plans: [],
   provider_capability_registry: [
     {
       provider: "Sora",
@@ -1045,6 +1171,11 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     asset_reuse_decisions: nextRecord.asset_reuse_decisions ?? defaults.asset_reuse_decisions,
     generation_jobs: nextRecord.generation_jobs ?? defaults.generation_jobs,
     generation_job_history: nextRecord.generation_job_history ?? defaults.generation_job_history,
+    execution_approval_tokens: nextRecord.execution_approval_tokens ?? defaults.execution_approval_tokens,
+    approval_audit_trail: nextRecord.approval_audit_trail ?? defaults.approval_audit_trail,
+    budget_governance_decisions: nextRecord.budget_governance_decisions ?? defaults.budget_governance_decisions,
+    continuity_review_notes: nextRecord.continuity_review_notes ?? defaults.continuity_review_notes,
+    deferred_execution_plans: nextRecord.deferred_execution_plans ?? defaults.deferred_execution_plans,
     provider_capability_registry: nextRecord.provider_capability_registry ?? defaults.provider_capability_registry,
     provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
     prompt_normalization_rules: nextRecord.prompt_normalization_rules ?? defaults.prompt_normalization_rules,
@@ -1439,6 +1570,100 @@ function createGenerationJobHistoryEntry(input: {
     detail: input.detail,
     recorded_at: new Date().toISOString(),
   };
+}
+
+function nextApprovalAuditIndex(record: CinematicProductionMemoryRecord): number {
+  return record.approval_audit_trail.length + 1;
+}
+
+function buildApprovalAuditEntry(input: {
+  record: CinematicProductionMemoryRecord;
+  action: CinematicOperatorAction;
+  operatorId: string;
+  provider: CinematicGenerationProvider;
+  sequenceId: string;
+  jobIds: string[];
+  detail: string;
+  approvalTokenId?: string | null;
+  budgetOverrideDecisionId?: string | null;
+}): CinematicApprovalAuditEntry {
+  return {
+    audit_id: `approval-audit-${input.provider.toLowerCase()}-${input.sequenceId}-${nextApprovalAuditIndex(input.record)}`,
+    append_only_index: nextApprovalAuditIndex(input.record),
+    action: input.action,
+    operator_id: input.operatorId,
+    provider: input.provider,
+    sequence_id: input.sequenceId,
+    job_ids: input.jobIds,
+    detail: input.detail,
+    recorded_at: new Date().toISOString(),
+    sandbox_only: input.record.generation_budget_policy.sandbox_only_mode,
+    approval_token_id: input.approvalTokenId ?? null,
+    budget_override_decision_id: input.budgetOverrideDecisionId ?? null,
+  };
+}
+
+function resolveKnownGenerationJobs(record: CinematicProductionMemoryRecord, jobIds: string[]): CinematicGenerationJob[] {
+  const jobs = record.generation_jobs.filter((entry) => jobIds.includes(entry.job_id));
+  if (jobs.length !== jobIds.length) {
+    throw new Error("Operator action requires known generation jobs.");
+  }
+  return jobs;
+}
+
+function resolveSharedJobContext(jobs: CinematicGenerationJob[]): {
+  provider: CinematicGenerationProvider;
+  sequenceId: string;
+} {
+  const provider = jobs[0]?.provider;
+  const sequenceId = jobs[0]?.sequence_id;
+  if (!provider || !sequenceId) {
+    throw new Error("Operator action requires at least one generation job.");
+  }
+  if (jobs.some((entry) => entry.provider !== provider || entry.sequence_id !== sequenceId)) {
+    throw new Error("Operator action requires jobs from one provider and one sequence.");
+  }
+  return { provider, sequenceId };
+}
+
+function withUpdatedJobs(record: CinematicProductionMemoryRecord, jobs: CinematicGenerationJob[]): CinematicProductionMemoryRecord {
+  return {
+    ...record,
+    generation_jobs: upsertGenerationJobs(record.generation_jobs, jobs),
+  };
+}
+
+function updateJobsForOperatorAction(input: {
+  jobs: CinematicGenerationJob[];
+  status: CinematicOperatorApprovalStatus;
+  approvalTokenId?: string | null;
+  deferredUntil?: string | null;
+}): CinematicGenerationJob[] {
+  const operatorActionAt = new Date().toISOString();
+  return input.jobs.map((job) => ({
+    ...job,
+    manual_approval_status: input.status,
+    approval_token_id: input.approvalTokenId ?? job.approval_token_id,
+    deferred_until: input.deferredUntil ?? job.deferred_until,
+    last_operator_action_at: operatorActionAt,
+  }));
+}
+
+function resolveApprovalToken(record: CinematicProductionMemoryRecord, tokenId?: string): CinematicExecutionApprovalToken | null {
+  if (!tokenId) {
+    return null;
+  }
+  return record.execution_approval_tokens.find((entry) => entry.token_id === tokenId) ?? null;
+}
+
+function tokenIsValid(token: CinematicExecutionApprovalToken | null, jobs: CinematicGenerationJob[]): boolean {
+  if (!token || !token.active) {
+    return false;
+  }
+  if (new Date(token.expires_at).getTime() <= Date.now()) {
+    return false;
+  }
+  return jobs.every((entry) => token.job_ids.includes(entry.job_id) && token.provider === entry.provider && token.sequence_id === entry.sequence_id);
 }
 
 function upsertGenerationJobs(currentJobs: CinematicGenerationJob[], nextJobs: CinematicGenerationJob[]): CinematicGenerationJob[] {
@@ -2168,6 +2393,382 @@ export async function prepareCinematicManualTriggerBridge(input: {
   };
 }
 
+export async function approveCinematicGenerationJobs(input: {
+  root?: string;
+  operatorId: string;
+  jobIds: string[];
+  tokenTtlMinutes?: number;
+  persist?: boolean;
+}): Promise<CinematicApprovalActionResult> {
+  const initialization = await loadProductionMemory(input.root);
+  const jobs = resolveKnownGenerationJobs(initialization.record, input.jobIds);
+  const { provider, sequenceId } = resolveSharedJobContext(jobs);
+  const now = new Date();
+  const token: CinematicExecutionApprovalToken = {
+    token_id: `approval-token-${provider.toLowerCase()}-${sequenceId}-${Date.now()}`,
+    operator_id: input.operatorId,
+    provider,
+    sequence_id: sequenceId,
+    job_ids: input.jobIds,
+    issued_at: now.toISOString(),
+    expires_at: new Date(now.getTime() + ((input.tokenTtlMinutes ?? 30) * 60_000)).toISOString(),
+    token_scope: "future-real-execution-bridge",
+    active: true,
+  };
+  const updatedJobs = updateJobsForOperatorAction({
+    jobs,
+    status: "approved",
+    approvalTokenId: token.token_id,
+  });
+  const auditEntry = buildApprovalAuditEntry({
+    record: initialization.record,
+    action: "approve-job",
+    operatorId: input.operatorId,
+    provider,
+    sequenceId,
+    jobIds: input.jobIds,
+    detail: `Operator approved ${input.jobIds.length} queued job(s) and issued explicit execution token ${token.token_id}.`,
+    approvalTokenId: token.token_id,
+  });
+
+  if (input.persist === false) {
+    return { jobs: updatedJobs, token, audit_entries: [auditEntry], persisted: false };
+  }
+
+  const nextRecord = withUpdatedJobs(initialization.record, updatedJobs);
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, {
+    ...nextRecord,
+    execution_approval_tokens: [...initialization.record.execution_approval_tokens, token],
+    approval_audit_trail: [...initialization.record.approval_audit_trail, auditEntry],
+  });
+  return { jobs: updatedJobs, token, audit_entries: [auditEntry], persisted: true };
+}
+
+export async function rejectCinematicGenerationJobs(input: {
+  root?: string;
+  operatorId: string;
+  jobIds: string[];
+  reason: string;
+  persist?: boolean;
+}): Promise<CinematicApprovalActionResult> {
+  const initialization = await loadProductionMemory(input.root);
+  const jobs = resolveKnownGenerationJobs(initialization.record, input.jobIds);
+  const { provider, sequenceId } = resolveSharedJobContext(jobs);
+  const updatedJobs = updateJobsForOperatorAction({ jobs, status: "rejected" });
+  const auditEntry = buildApprovalAuditEntry({
+    record: initialization.record,
+    action: "reject-job",
+    operatorId: input.operatorId,
+    provider,
+    sequenceId,
+    jobIds: input.jobIds,
+    detail: `Operator rejected queued jobs: ${normalizeText(input.reason)}`,
+  });
+
+  if (input.persist === false) {
+    return { jobs: updatedJobs, token: null, audit_entries: [auditEntry], persisted: false };
+  }
+
+  const nextRecord = withUpdatedJobs(initialization.record, updatedJobs);
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, {
+    ...nextRecord,
+    approval_audit_trail: [...initialization.record.approval_audit_trail, auditEntry],
+  });
+  return { jobs: updatedJobs, token: null, audit_entries: [auditEntry], persisted: true };
+}
+
+export async function requestCinematicRetryPlan(input: {
+  root?: string;
+  operatorId: string;
+  jobIds: string[];
+  reason: string;
+  persist?: boolean;
+}): Promise<CinematicApprovalActionResult> {
+  const initialization = await loadProductionMemory(input.root);
+  const jobs = resolveKnownGenerationJobs(initialization.record, input.jobIds);
+  const { provider, sequenceId } = resolveSharedJobContext(jobs);
+  const updatedJobs = updateJobsForOperatorAction({ jobs, status: "retry-requested" });
+  const auditEntry = buildApprovalAuditEntry({
+    record: initialization.record,
+    action: "request-retry-plan",
+    operatorId: input.operatorId,
+    provider,
+    sequenceId,
+    jobIds: input.jobIds,
+    detail: `Operator requested a retry plan: ${normalizeText(input.reason)}`,
+  });
+
+  if (input.persist === false) {
+    return { jobs: updatedJobs, token: null, audit_entries: [auditEntry], persisted: false };
+  }
+
+  const nextRecord = withUpdatedJobs(initialization.record, updatedJobs);
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, {
+    ...nextRecord,
+    approval_audit_trail: [...initialization.record.approval_audit_trail, auditEntry],
+  });
+  return { jobs: updatedJobs, token: null, audit_entries: [auditEntry], persisted: true };
+}
+
+export async function archiveFailedCinematicPlan(input: {
+  root?: string;
+  operatorId: string;
+  jobIds: string[];
+  reason: string;
+  persist?: boolean;
+}): Promise<CinematicApprovalActionResult> {
+  const initialization = await loadProductionMemory(input.root);
+  const jobs = resolveKnownGenerationJobs(initialization.record, input.jobIds);
+  const { provider, sequenceId } = resolveSharedJobContext(jobs);
+  const updatedJobs = updateJobsForOperatorAction({ jobs, status: "archived" });
+  const auditEntry = buildApprovalAuditEntry({
+    record: initialization.record,
+    action: "archive-failed-plan",
+    operatorId: input.operatorId,
+    provider,
+    sequenceId,
+    jobIds: input.jobIds,
+    detail: `Operator archived plan: ${normalizeText(input.reason)}`,
+  });
+
+  if (input.persist === false) {
+    return { jobs: updatedJobs, token: null, audit_entries: [auditEntry], persisted: false };
+  }
+
+  const nextRecord = withUpdatedJobs(initialization.record, updatedJobs);
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, {
+    ...nextRecord,
+    approval_audit_trail: [...initialization.record.approval_audit_trail, auditEntry],
+  });
+  return { jobs: updatedJobs, token: null, audit_entries: [auditEntry], persisted: true };
+}
+
+export async function deferCinematicExecutionPlan(input: {
+  root?: string;
+  operatorId: string;
+  jobIds: string[];
+  reason: string;
+  deferredUntil: string;
+  persist?: boolean;
+}): Promise<CinematicApprovalActionResult> {
+  const initialization = await loadProductionMemory(input.root);
+  const jobs = resolveKnownGenerationJobs(initialization.record, input.jobIds);
+  const { provider, sequenceId } = resolveSharedJobContext(jobs);
+  const deferredPlan: CinematicDeferredExecutionPlan = {
+    defer_id: `deferred-plan-${provider.toLowerCase()}-${sequenceId}-${Date.now()}`,
+    operator_id: input.operatorId,
+    provider,
+    sequence_id: sequenceId,
+    job_ids: input.jobIds,
+    reason: normalizeText(input.reason),
+    deferred_until: input.deferredUntil,
+    recorded_at: new Date().toISOString(),
+    status: "deferred",
+  };
+  const updatedJobs = updateJobsForOperatorAction({ jobs, status: "deferred", deferredUntil: input.deferredUntil });
+  const auditEntry = buildApprovalAuditEntry({
+    record: initialization.record,
+    action: "defer-execution",
+    operatorId: input.operatorId,
+    provider,
+    sequenceId,
+    jobIds: input.jobIds,
+    detail: `Operator deferred execution until ${input.deferredUntil}: ${normalizeText(input.reason)}`,
+  });
+
+  if (input.persist === false) {
+    return { jobs: updatedJobs, token: null, audit_entries: [auditEntry], persisted: false };
+  }
+
+  const nextRecord = withUpdatedJobs(initialization.record, updatedJobs);
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, {
+    ...nextRecord,
+    deferred_execution_plans: [...initialization.record.deferred_execution_plans, deferredPlan],
+    approval_audit_trail: [...initialization.record.approval_audit_trail, auditEntry],
+  });
+  return { jobs: updatedJobs, token: null, audit_entries: [auditEntry], persisted: true };
+}
+
+export async function recordCinematicBudgetOverrideDecision(input: {
+  root?: string;
+  operatorId: string;
+  sequenceId: string;
+  provider: CinematicGenerationProvider;
+  requestedBudgetCap: number;
+  approvedOverride: boolean;
+  reason: string;
+  persist?: boolean;
+}): Promise<{ decision: CinematicBudgetGovernanceDecision; audit_entry: CinematicApprovalAuditEntry; persisted: boolean }> {
+  const initialization = await loadProductionMemory(input.root);
+  const decision: CinematicBudgetGovernanceDecision = {
+    decision_id: `budget-governance-${input.provider.toLowerCase()}-${input.sequenceId}-${Date.now()}`,
+    operator_id: input.operatorId,
+    provider: input.provider,
+    sequence_id: input.sequenceId,
+    requested_budget_cap: input.requestedBudgetCap,
+    approved_override: input.approvedOverride,
+    reason: normalizeText(input.reason),
+    recorded_at: new Date().toISOString(),
+  };
+  const relatedJobIds = initialization.record.generation_jobs
+    .filter((entry) => entry.sequence_id === input.sequenceId && entry.provider === input.provider)
+    .map((entry) => entry.job_id);
+  const auditEntry = buildApprovalAuditEntry({
+    record: initialization.record,
+    action: "budget-override",
+    operatorId: input.operatorId,
+    provider: input.provider,
+    sequenceId: input.sequenceId,
+    jobIds: relatedJobIds,
+    detail: `${input.approvedOverride ? "Approved" : "Rejected"} budget override to ${input.requestedBudgetCap}: ${normalizeText(input.reason)}`,
+    budgetOverrideDecisionId: decision.decision_id,
+  });
+
+  if (input.persist === false) {
+    return { decision, audit_entry: auditEntry, persisted: false };
+  }
+
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, {
+    ...initialization.record,
+    budget_governance_decisions: [...initialization.record.budget_governance_decisions, decision],
+    approval_audit_trail: [...initialization.record.approval_audit_trail, auditEntry],
+  });
+  return { decision, audit_entry: auditEntry, persisted: true };
+}
+
+export async function recordCinematicContinuityReviewNote(input: {
+  root?: string;
+  operatorId: string;
+  sequenceId: string;
+  shotId?: string;
+  detail: string;
+  persist?: boolean;
+}): Promise<{ note: CinematicContinuityReviewNote; audit_entry: CinematicApprovalAuditEntry; persisted: boolean }> {
+  const initialization = await loadProductionMemory(input.root);
+  const sequence = initialization.record.scene_sequences.find((entry) => entry.sequence_id === input.sequenceId);
+  if (!sequence) {
+    throw new Error(`Unknown cinematic sequence id: ${input.sequenceId}`);
+  }
+  const dependencySnapshot = input.shotId
+    ? sequence.shots.find((entry) => entry.shot_id === input.shotId)?.continuity_dependencies ?? []
+    : sequence.shots.flatMap((entry) => entry.continuity_dependencies);
+  const provider = initialization.record.generation_jobs.find((entry) => entry.sequence_id === input.sequenceId)?.provider ?? "LocalFutureProvider";
+  const relatedJobIds = initialization.record.generation_jobs.filter((entry) => entry.sequence_id === input.sequenceId).map((entry) => entry.job_id);
+  const note: CinematicContinuityReviewNote = {
+    note_id: `continuity-review-${input.sequenceId}-${Date.now()}`,
+    operator_id: input.operatorId,
+    sequence_id: input.sequenceId,
+    shot_id: input.shotId ?? null,
+    detail: normalizeText(input.detail),
+    dependency_snapshot: dependencySnapshot,
+    recorded_at: new Date().toISOString(),
+  };
+  const auditEntry = buildApprovalAuditEntry({
+    record: initialization.record,
+    action: "continuity-review-note",
+    operatorId: input.operatorId,
+    provider,
+    sequenceId: input.sequenceId,
+    jobIds: relatedJobIds,
+    detail: `Operator added continuity review note: ${note.detail}`,
+  });
+
+  if (input.persist === false) {
+    return { note, audit_entry: auditEntry, persisted: false };
+  }
+
+  await writeProductionMemoryRecord(initialization.productionMemoryPath, {
+    ...initialization.record,
+    continuity_review_notes: [...initialization.record.continuity_review_notes, note],
+    approval_audit_trail: [...initialization.record.approval_audit_trail, auditEntry],
+  });
+  return { note, audit_entry: auditEntry, persisted: true };
+}
+
+export async function validateCinematicExecutionReadiness(input: {
+  root?: string;
+  jobIds: string[];
+  approvalTokenId?: string;
+}): Promise<CinematicExecutionReadinessReport> {
+  const record = await readCinematicProductionMemory({ root: input.root });
+  const jobs = resolveKnownGenerationJobs(record, input.jobIds);
+  const { provider, sequenceId } = resolveSharedJobContext(jobs);
+  const approvalToken = resolveApprovalToken(record, input.approvalTokenId ?? jobs[0]?.approval_token_id ?? undefined);
+  const approvalTokenValid = tokenIsValid(approvalToken, jobs);
+  const continuityValidation = await validateCinematicExecutionPlan({
+    root: input.root,
+    sequenceId,
+    shotIds: jobs.map((entry) => entry.shot_id),
+  });
+  const budget = await enforceCinematicGenerationBudget({
+    root: input.root,
+    jobs,
+    actualProviderExecutionRequested: true,
+    manualApprovalGranted: approvalTokenValid,
+  });
+  const payloadValidationResults = await Promise.all(jobs.map(async (job) => {
+    const payload = await compileCinematicProviderPayload({
+      root: input.root,
+      jobId: job.job_id,
+      provider: job.provider,
+    });
+    return validateCinematicProviderPayload({ root: input.root, payload });
+  }));
+  const providerCompatibilityPassed = payloadValidationResults.every((entry) => entry.valid);
+  const dependencyCheckPassed = jobs.every((job) => job.continuity_context.dependency_shot_ids.every((dependencyShotId) => jobs.some((entry) => entry.shot_id === dependencyShotId) || job.continuity_context.preserved_output_refs.length > 0));
+  const retryLimitsPassed = jobs.every((entry) => entry.retry_count <= record.generation_budget_policy.max_retries_per_job);
+  const cooldownIssue = budget.issues.find((entry) => /cooldown/i.test(entry)) ?? null;
+
+  const checks: CinematicExecutionReadinessCheck[] = [
+    {
+      check: "approval-present",
+      passed: approvalTokenValid,
+      detail: approvalTokenValid ? `Approval token ${approvalToken?.token_id ?? "unknown"} is active.` : "Explicit approval token is missing, expired, or does not match the queued jobs.",
+    },
+    {
+      check: "budget-available",
+      passed: !budget.issues.some((entry) => /Estimated sequence cost|Sandbox-only mode|Manual approval/i.test(entry)),
+      detail: budget.allowed ? "Budget policy allows future execution review." : budget.issues.join(" | "),
+    },
+    {
+      check: "continuity-validated",
+      passed: continuityValidation.valid,
+      detail: continuityValidation.valid ? "Continuity validation passed for the selected jobs." : continuityValidation.issues.map((entry) => entry.detail).join(" | "),
+    },
+    {
+      check: "dependencies-resolved",
+      passed: dependencyCheckPassed,
+      detail: dependencyCheckPassed ? "All continuity dependencies are selected or already preserved." : "One or more continuity dependencies are unresolved.",
+    },
+    {
+      check: "provider-compatibility",
+      passed: providerCompatibilityPassed,
+      detail: providerCompatibilityPassed ? "Compiled provider payloads are valid." : payloadValidationResults.flatMap((entry) => entry.issues.map((issue) => issue.detail)).join(" | "),
+    },
+    {
+      check: "retry-limits",
+      passed: retryLimitsPassed,
+      detail: retryLimitsPassed ? "Retry counts remain within the bounded policy." : `Retry count exceeded max ${record.generation_budget_policy.max_retries_per_job}.`,
+    },
+    {
+      check: "cooldown-state",
+      passed: cooldownIssue === null,
+      detail: cooldownIssue ?? "Provider cooldown is clear for future execution review.",
+    },
+  ];
+  const blockedReasons = checks.filter((entry) => !entry.passed).map((entry) => entry.detail);
+  return {
+    provider,
+    sequence_id: sequenceId,
+    job_ids: input.jobIds,
+    ready_for_real_execution: blockedReasons.length === 0,
+    approval_token_valid: approvalTokenValid,
+    approval_token: approvalToken,
+    checks,
+    blocked_reasons: blockedReasons,
+  };
+}
+
 export async function planCinematicGenerationJobs(input: {
   root?: string;
   sequenceId: string;
@@ -2243,6 +2844,11 @@ export async function planCinematicGenerationJobs(input: {
     estimated_cost: getEstimatedProviderCost(selectedCapability, routing.estimated_cost_tier),
     output_refs: [],
     validation_state: "validated",
+    requires_manual_approval: initialization.record.generation_budget_policy.manual_approval_required,
+    manual_approval_status: initialization.record.generation_budget_policy.manual_approval_required ? "pending" : "approved",
+    approval_token_id: null,
+    deferred_until: null,
+    last_operator_action_at: null,
     created_at: createdAt,
   } satisfies CinematicGenerationJob));
   const batches = buildShotBatches({

@@ -70,13 +70,17 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Architecture/Continuity Rules.md"));
     assert.ok(files.includes("Outcomes/Outcome History.md"));
     assert.ok(files.includes("Outcomes/Failed Generations.md"));
+    assert.ok(files.includes("Outcomes/Approval Audit Trail.md"));
     assert.ok(files.includes("Outcomes/Sandbox Simulation Results.md"));
     assert.ok(files.includes("Outcomes/Successful Generations.md"));
     assert.ok(files.includes("Recovery/Recovery Procedures.md"));
     assert.ok(files.includes("Architecture/Provider Capability Registry.md"));
     assert.ok(files.includes("Architecture/Prompt Normalization Rules.md"));
     assert.ok(files.includes("Architecture/Generation Budget Rules.md"));
+    assert.ok(files.includes("Architecture/Budget Governance Decisions.md"));
+    assert.ok(files.includes("Architecture/Execution Readiness Checklist.md"));
     assert.ok(files.includes("Architecture/Manual Approval Workflow.md"));
+    assert.ok(files.includes("Architecture/Continuity Review Notes.md"));
     assert.ok(files.includes("Resources/Asset Reuse Log.md"));
     assert.ok(files.includes("Resources/Asset Reuse Decisions.md"));
     assert.ok(files.includes("Resources/Cost-Aware Iteration Notes.md"));
@@ -85,7 +89,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Strategy/Strategic Roadmap.md"));
     assert.ok(files.includes("Strategy/Cinematic Production Memory.md"));
     assert.ok(files.includes("Strategy/Generation Job Queue.md"));
+    assert.ok(files.includes("Strategy/Operator Approval Queue.md"));
     assert.ok(files.includes("Strategy/Provider Payload Examples.md"));
+    assert.ok(files.includes("Strategy/Deferred Execution Plans.md"));
     assert.ok(files.includes("Strategy/Scene Sequences.md"));
     assert.ok(files.includes("Strategy/Gameplay Cutscene Triggers.md"));
     assert.ok(files.includes("Strategy/Shot Planning Rules.md"));
@@ -124,12 +130,18 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const capabilityRegistryText = await readFile(path.join(vaultRoot, "Architecture", "Provider Capability Registry.md"), "utf8");
     const normalizationRulesText = await readFile(path.join(vaultRoot, "Architecture", "Prompt Normalization Rules.md"), "utf8");
     const budgetRulesText = await readFile(path.join(vaultRoot, "Architecture", "Generation Budget Rules.md"), "utf8");
+    const budgetGovernanceText = await readFile(path.join(vaultRoot, "Architecture", "Budget Governance Decisions.md"), "utf8");
+    const readinessChecklistText = await readFile(path.join(vaultRoot, "Architecture", "Execution Readiness Checklist.md"), "utf8");
     const approvalWorkflowText = await readFile(path.join(vaultRoot, "Architecture", "Manual Approval Workflow.md"), "utf8");
+    const continuityReviewText = await readFile(path.join(vaultRoot, "Architecture", "Continuity Review Notes.md"), "utf8");
     const lifecycleText = await readFile(path.join(vaultRoot, "Architecture", "Cinematic Execution Lifecycle.md"), "utf8");
     const retryRulesText = await readFile(path.join(vaultRoot, "Architecture", "Retry Planning Rules.md"), "utf8");
     const generationStrategyText = await readFile(path.join(vaultRoot, "Resources", "Cost-Aware Generation Strategy.md"), "utf8");
     const costForecastText = await readFile(path.join(vaultRoot, "Resources", "Cost Forecast Examples.md"), "utf8");
+    const operatorQueueText = await readFile(path.join(vaultRoot, "Strategy", "Operator Approval Queue.md"), "utf8");
+    const deferredPlansText = await readFile(path.join(vaultRoot, "Strategy", "Deferred Execution Plans.md"), "utf8");
     const payloadExamplesText = await readFile(path.join(vaultRoot, "Strategy", "Provider Payload Examples.md"), "utf8");
+    const approvalAuditText = await readFile(path.join(vaultRoot, "Outcomes", "Approval Audit Trail.md"), "utf8");
     const sandboxResultsText = await readFile(path.join(vaultRoot, "Outcomes", "Sandbox Simulation Results.md"), "utf8");
 
     assert.match(cinematicMemoryText, /Production Memory Manager/);
@@ -150,12 +162,18 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(capabilityRegistryText, /Sora: duration<=20s/i);
     assert.match(normalizationRulesText, /Normalize prompts into provider-ready payloads without changing continuity intent/i);
     assert.match(budgetRulesText, /Sandbox-only mode: enabled/i);
+    assert.match(budgetGovernanceText, /No budget governance decisions recorded yet\./i);
+    assert.match(readinessChecklistText, /Sandbox-only mode: still blocking real execution/i);
     assert.match(approvalWorkflowText, /A human approval step is required before any provider execution or credit spend is considered valid/i);
+    assert.match(continuityReviewText, /No continuity review notes recorded yet\./i);
     assert.match(lifecycleText, /Execution lifecycle remains append-only/i);
     assert.match(retryRulesText, /Retry planning must preserve successful shot outputs/i);
     assert.match(generationStrategyText, /Use cheap draft routing for first-pass framing validation/i);
     assert.match(costForecastText, /Seedance draft pass/i);
+    assert.match(operatorQueueText, /No operator-facing jobs are queued yet\./i);
+    assert.match(deferredPlansText, /No deferred execution plans recorded yet\./i);
     assert.match(payloadExamplesText, /Sora-ready payloads should keep cinematic prose/i);
+    assert.match(approvalAuditText, /No approval audit entries recorded yet\./i);
     assert.match(sandboxResultsText, /No sandbox simulations recorded yet\./);
 
     const existingTitles = new Set(files.map((file) => path.basename(file, ".md")));

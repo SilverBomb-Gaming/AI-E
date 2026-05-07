@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T16:56:36.707Z
+updated_at: 2026-05-07T17:12:24.817Z
 session_id: phase7c-skip-task-session
 status: generated_provider_payload_examples
 tags:

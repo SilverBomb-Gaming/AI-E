@@ -1199,7 +1199,7 @@ function buildManualApprovalWorkflowNote(input: {
   latestSessionId: string;
 }): ObsidianExportNote {
   const production = input.productionMemory;
-  const approvalPendingCount = production.generation_jobs.filter((entry) => entry.manual_approval_status === "required").length;
+  const approvalPendingCount = production.generation_jobs.filter((entry) => entry.manual_approval_status === "pending").length;
   return {
     title: "Manual Approval Workflow",
     directory: "Architecture",
@@ -1225,6 +1225,212 @@ function buildManualApprovalWorkflowNote(input: {
         toLink("Generation Budget Rules"),
         toLink("Generation Job Queue"),
         toLink("Cinematic Execution Lifecycle"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildOperatorApprovalQueueNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const queuedJobs = production.generation_jobs.filter((entry) => entry.manual_approval_status !== "archived");
+  return {
+    title: "Operator Approval Queue",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_operator_approval_queue",
+      tags: ["second-brain", "operator-approval", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Queued Jobs",
+      asBulletList(queuedJobs.length > 0
+        ? queuedJobs.map((entry) => `${entry.job_id}: approval=${entry.manual_approval_status} | provider=${entry.provider} | token=${entry.approval_token_id ?? "none"} | deferred_until=${entry.deferred_until ?? "n/a"}`)
+        : ["No operator-facing jobs are queued yet."]),
+      "",
+      "## Governance Summary",
+      asBulletList([
+        `Pending approvals: ${production.generation_jobs.filter((entry) => entry.manual_approval_status === "pending").length}`,
+        `Approved jobs: ${production.generation_jobs.filter((entry) => entry.manual_approval_status === "approved").length}`,
+        `Deferred jobs: ${production.generation_jobs.filter((entry) => entry.manual_approval_status === "deferred").length}`,
+      ]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Manual Approval Workflow"),
+        toLink("Execution Readiness Checklist"),
+        toLink("Approval Audit Trail"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildExecutionReadinessChecklistNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const activeTokens = production.execution_approval_tokens.filter((entry) => entry.active);
+  const approvedJobs = production.generation_jobs.filter((entry) => entry.manual_approval_status === "approved");
+  return {
+    title: "Execution Readiness Checklist",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_execution_readiness_checklist",
+      tags: ["second-brain", "execution-readiness", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Checklist",
+      asBulletList([
+        `Explicit approval tokens active: ${activeTokens.length}`,
+        `Sandbox-only mode: ${production.generation_budget_policy.sandbox_only_mode ? "still blocking real execution" : "lifted"}`,
+        `Approved jobs with token references: ${approvedJobs.filter((entry) => entry.approval_token_id).length}`,
+        `Deferred plans requiring revisit: ${production.deferred_execution_plans.filter((entry) => entry.status === "deferred").length}`,
+      ]),
+      "",
+      "## Hard Gates",
+      asBulletList([
+        "Continuity validation remains mandatory before any future execution handoff.",
+        "Budget enforcement remains hard-gated even after operator approval.",
+        "Approval tokens must stay explicit and time-scoped.",
+      ]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Operator Approval Queue"),
+        toLink("Generation Budget Rules"),
+        toLink("Deferred Execution Plans"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildBudgetGovernanceDecisionsNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Budget Governance Decisions",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_budget_governance_decisions",
+      tags: ["second-brain", "budget-governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Decisions",
+      asBulletList(production.budget_governance_decisions.length > 0
+        ? production.budget_governance_decisions.map((entry) => `${entry.decision_id}: override=${entry.approved_override ? "approved" : "rejected"} | requested_cap=${entry.requested_budget_cap} | reason=${entry.reason}`)
+        : ["No budget governance decisions recorded yet."]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Generation Budget Rules"),
+        toLink("Execution Readiness Checklist"),
+        toLink("Approval Audit Trail"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildApprovalAuditTrailNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Approval Audit Trail",
+    directory: "Outcomes",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_approval_audit_trail",
+      tags: ["second-brain", "approval-audit", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Audit Entries",
+      asBulletList(production.approval_audit_trail.length > 0
+        ? production.approval_audit_trail.map((entry) => `${entry.append_only_index}. ${entry.action} | operator=${entry.operator_id} | ${entry.detail}`)
+        : ["No approval audit entries recorded yet."]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Operator Approval Queue"),
+        toLink("Budget Governance Decisions"),
+        toLink("Deferred Execution Plans"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildContinuityReviewNotesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Continuity Review Notes",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_continuity_review_notes",
+      tags: ["second-brain", "continuity-review", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Review Notes",
+      asBulletList(production.continuity_review_notes.length > 0
+        ? production.continuity_review_notes.map((entry) => `${entry.note_id}: shot=${entry.shot_id ?? "sequence"} | detail=${entry.detail}`)
+        : ["No continuity review notes recorded yet."]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Continuity Validation Rules"),
+        toLink("Operator Approval Queue"),
+        toLink("Approval Audit Trail"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildDeferredExecutionPlansNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  return {
+    title: "Deferred Execution Plans",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_deferred_execution_plans",
+      tags: ["second-brain", "deferred-execution", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Deferred Plans",
+      asBulletList(production.deferred_execution_plans.length > 0
+        ? production.deferred_execution_plans.map((entry) => `${entry.defer_id}: status=${entry.status} | until=${entry.deferred_until} | reason=${entry.reason}`)
+        : ["No deferred execution plans recorded yet."]),
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Operator Approval Queue"),
+        toLink("Execution Readiness Checklist"),
+        toLink("Approval Audit Trail"),
       ]),
     ].join("\n"),
   };
@@ -1678,16 +1884,22 @@ export async function exportSecondBrainToObsidian(input?: {
     buildSuccessfulGenerationsNote({ productionMemory, latestSessionId }),
     buildCostAwareIterationNotes({ productionMemory, latestSessionId }),
     buildGenerationJobQueueNote({ productionMemory, latestSessionId }),
+    buildOperatorApprovalQueueNote({ productionMemory, latestSessionId }),
     buildProviderRoutingRulesNote({ productionMemory, latestSessionId }),
     buildProviderCapabilityRegistryNote({ productionMemory, latestSessionId }),
     buildPromptNormalizationRulesNote({ productionMemory, latestSessionId }),
     buildGenerationBudgetRulesNote({ productionMemory, latestSessionId }),
+    buildBudgetGovernanceDecisionsNote({ productionMemory, latestSessionId }),
     buildManualApprovalWorkflowNote({ productionMemory, latestSessionId }),
+    buildExecutionReadinessChecklistNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
+    buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),
     buildCostAwareGenerationStrategyNote({ productionMemory, latestSessionId }),
     buildCostForecastExamplesNote({ productionMemory, latestSessionId }),
     buildProviderPayloadExamplesNote({ productionMemory, latestSessionId }),
+    buildDeferredExecutionPlansNote({ productionMemory, latestSessionId }),
+    buildApprovalAuditTrailNote({ productionMemory, latestSessionId }),
     buildSandboxSimulationResultsNote({ productionMemory, latestSessionId }),
     buildSessionContinuitySummaryNote({ record, repoProjectContext, latestSessionId }),
     buildHomeNote({
