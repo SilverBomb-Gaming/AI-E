@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T19:56:48.802Z
+updated_at: 2026-05-07T20:05:21.785Z
 session_id: phase7c-skip-task-session
 status: generated_future_bounded_execution_rules
 tags:
@@ -17,7 +17,7 @@ tags:
 
 ## Rule Summary
 - Rule count: 6
-- Recorded at: 2026-05-07T19:56:48.790Z
+- Recorded at: 2026-05-07T20:05:21.765Z
 
 ## Rules
 - single-frame-only-execution: unlocked=no | blockers=No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.

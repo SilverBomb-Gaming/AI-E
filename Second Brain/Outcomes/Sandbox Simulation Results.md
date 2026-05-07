@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T19:56:48.802Z
+updated_at: 2026-05-07T20:05:21.785Z
 session_id: phase7c-skip-task-session
 status: generated_sandbox_simulation_results
 tags:
@@ -21,6 +21,7 @@ tags:
 - bootstrap-sandbox-1778182144023: provider=LocalFutureProvider | approved=0 | failed=2 | retries=3
 - bootstrap-sandbox-1778183041927: provider=LocalFutureProvider | approved=0 | failed=2 | retries=3
 - bootstrap-sandbox-1778183808798: provider=LocalFutureProvider | approved=0 | failed=2 | retries=3
+- bootstrap-sandbox-1778184321779: provider=LocalFutureProvider | approved=0 | failed=2 | retries=3
 
 ## Asset Reuse During Simulation
 - Preserve continuity context for sequence-wave-transition-001-intro while keeping local execution disabled.
@@ -33,6 +34,9 @@ tags:
 - Keep loader-wan-2.1-t2v-q8 activation simulated-only and governance-bound.
 - Keep loader-ltx-video-img2vid-int8 activation simulated-only and governance-bound.
 - Keep loader-hunyuan-video-13b-planned activation simulated-only and governance-bound.
+- Keep loader-wan-2.1-t2v-q8 inside dry bootstrap boundaries with inference and rendering disabled.
+- Keep loader-ltx-video-img2vid-int8 inside dry bootstrap boundaries with inference and rendering disabled.
+- Keep loader-hunyuan-video-13b-planned inside dry bootstrap boundaries with inference and rendering disabled.
 - Keep loader-wan-2.1-t2v-q8 inside dry bootstrap boundaries with inference and rendering disabled.
 - Keep loader-ltx-video-img2vid-int8 inside dry bootstrap boundaries with inference and rendering disabled.
 - Keep loader-hunyuan-video-13b-planned inside dry bootstrap boundaries with inference and rendering disabled.

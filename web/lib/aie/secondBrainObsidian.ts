@@ -2574,7 +2574,7 @@ function buildUpdatedReadinessProgressNote(input: {
 
 function latestControlledBootstrapSimulation(production: CinematicProductionMemoryRecord): CinematicProductionMemoryRecord["sandbox_simulations"][number] | null {
   return [...production.sandbox_simulations]
-    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor" || entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor" || entry.sandbox_kind === "gated-single-frame-dry-execution-path")
+    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor" || entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor" || entry.sandbox_kind === "gated-single-frame-dry-execution-path" || entry.sandbox_kind === "governed-single-frame-synthesis-preparation")
     .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
 }
 
@@ -3539,6 +3539,247 @@ function buildExecutionAttemptLedgerNote(input: {
   };
 }
 
+function buildSynthesisContainmentRegistryNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const registry = latestBootstrap?.synthesis_containment_registry ?? production.synthesis_containment_registry_history[0] ?? [];
+  return {
+    title: "Synthesis Containment Registry",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_synthesis_containment_registry",
+      tags: ["second-brain", "synthesis-containment", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Containment Summary",
+      registry.length > 0
+        ? asBulletList([
+          `Containment count: ${registry.length}`,
+          `Rollback authorities: ${[...new Set(registry.map((entry) => entry.rollback_authority))].join(", ")}`,
+          `Escalation authorities: ${[...new Set(registry.map((entry) => entry.escalation_authority))].join(", ")}`,
+        ])
+        : "- No synthesis containment registry recorded yet.",
+      "",
+      "## Containment Entries",
+      registry.length > 0
+        ? asBulletList(registry.map((entry) => `${entry.containment_id}: scope=${entry.synthesis_scope} | resolution=${entry.maximum_resolution} | frames=${entry.maximum_frame_count} | expires=${entry.containment_expiration}`))
+        : "- No synthesis containment entries recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Governed Synthesis Preparation"),
+        toLink("Synthesis Validation Layer"),
+        toLink("Governed Rollback Ledger"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildGovernedSynthesisPreparationNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const preparation = latestBootstrap?.governed_synthesis_preparation ?? production.governed_synthesis_preparation_history[0] ?? null;
+  return {
+    title: "Governed Synthesis Preparation",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_governed_synthesis_preparation",
+      tags: ["second-brain", "synthesis-preparation", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Preparation Summary",
+      preparation
+        ? asBulletList([
+          `Containment id: ${preparation.containment_id ?? "none"}`,
+          `Next stage: ${preparation.next_stage ?? "none"}`,
+          `Stage count: ${preparation.stages.length}`,
+        ])
+        : "- No governed synthesis preparation recorded yet.",
+      "",
+      "## Preparation Stages",
+      preparation?.stages?.length
+        ? asBulletList(preparation.stages.map((entry) => `${entry.order}. ${entry.stage}: status=${entry.status} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No governed synthesis preparation stages recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Synthesis Containment Registry"),
+        toLink("Synthesis Validation Layer"),
+        toLink("Future Low Resolution Output"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildSynthesisValidationLayerNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const validation = latestBootstrap?.synthesis_validation_layer ?? production.synthesis_validation_layer_history[0] ?? null;
+  return {
+    title: "Synthesis Validation Layer",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_synthesis_validation_layer",
+      tags: ["second-brain", "synthesis-validation", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Validation Summary",
+      validation
+        ? asBulletList([
+          `Valid: ${validation.valid ? "yes" : "no"}`,
+          `Next unlock condition: ${validation.next_unlock_condition}`,
+          `Blocked transitions: ${validation.blocked_transitions.join(", ") || "none"}`,
+        ])
+        : "- No synthesis validation layer recorded yet.",
+      "",
+      "## Validation Checks",
+      validation?.checks?.length
+        ? asBulletList(validation.checks.map((entry) => `${entry.check}: passed=${entry.passed ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No synthesis validation checks recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Synthesis Containment Registry"),
+        toLink("Governed Synthesis Preparation"),
+        toLink("Contained Escalation Modeling"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildContainedEscalationModelingNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const escalation = latestBootstrap?.contained_escalation_modeling ?? production.contained_escalation_modeling_history[0] ?? null;
+  return {
+    title: "Contained Escalation Modeling",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_contained_escalation_modeling",
+      tags: ["second-brain", "contained-escalation", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Escalation Scenarios",
+      escalation?.scenarios?.length
+        ? asBulletList(escalation.scenarios.map((entry) => `${entry.escalation}: triggered=${entry.triggered ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No contained escalation modeling recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Synthesis Validation Layer"),
+        toLink("Future Low Resolution Output"),
+        toLink("Governed Rollback Ledger"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFutureLowResolutionOutputNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const output = latestBootstrap?.future_low_resolution_output ?? production.future_low_resolution_output_history[0] ?? null;
+  return {
+    title: "Future Low Resolution Output",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_future_low_resolution_output",
+      tags: ["second-brain", "low-resolution-output", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Output Summary",
+      output
+        ? asBulletList([
+          `Milestone unlocking governed output: ${output.milestone_unlocks_governed_output}`,
+          `Output count: ${output.outputs.length}`,
+        ])
+        : "- No future low resolution output recorded yet.",
+      "",
+      "## Output Scaffolds",
+      output?.outputs?.length
+        ? asBulletList(output.outputs.map((entry) => `${entry.output_id}: unlocked=no | target=${entry.target_resolution} | prerequisites=${entry.prerequisites.join(", ")}`))
+        : "- No future low resolution output scaffolds recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Governed Synthesis Preparation"),
+        toLink("Contained Escalation Modeling"),
+        toLink("Governed Rollback Ledger"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildGovernedRollbackLedgerNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const ledger = latestBootstrap?.governed_rollback_ledger ?? production.governed_rollback_ledger_history[0] ?? null;
+  return {
+    title: "Governed Rollback Ledger",
+    directory: "Outcomes",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_governed_rollback_ledger",
+      tags: ["second-brain", "governed-rollback", "ledger", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Rollback Summary",
+      ledger
+        ? asBulletList([
+          `Entry count: ${ledger.entries.length}`,
+          `Recorded at: ${ledger.recorded_at}`,
+        ])
+        : "- No governed rollback ledger recorded yet.",
+      "",
+      "## Rollback Entries",
+      ledger?.entries?.length
+        ? asBulletList(ledger.entries.map((entry) => `${entry.containment_id}: violations=${entry.containment_violations.join(", ") || "none"} | blocked_output=${entry.blocked_output_attempts.join(", ") || "none"}`))
+        : "- No governed rollback entries recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Synthesis Containment Registry"),
+        toLink("Contained Escalation Modeling"),
+        toLink("Future Low Resolution Output"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildCinematicExecutionLifecycleNote(input: {
   productionMemory: CinematicProductionMemoryRecord;
   latestSessionId: string;
@@ -4049,6 +4290,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildDryExecutionRecoveryNote({ productionMemory, latestSessionId }),
     buildFutureFrameSynthesisUnlocksNote({ productionMemory, latestSessionId }),
     buildExecutionAttemptLedgerNote({ productionMemory, latestSessionId }),
+    buildSynthesisContainmentRegistryNote({ productionMemory, latestSessionId }),
+    buildGovernedSynthesisPreparationNote({ productionMemory, latestSessionId }),
+    buildSynthesisValidationLayerNote({ productionMemory, latestSessionId }),
+    buildContainedEscalationModelingNote({ productionMemory, latestSessionId }),
+    buildFutureLowResolutionOutputNote({ productionMemory, latestSessionId }),
+    buildGovernedRollbackLedgerNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),

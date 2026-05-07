@@ -503,7 +503,7 @@ export type CinematicGenerationJobHistoryEntry = {
 
 export type CinematicSandboxSimulationRecord = {
   simulation_id: string;
-  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor" | "gated-single-frame-dry-execution-path";
+  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor" | "gated-single-frame-dry-execution-path" | "governed-single-frame-synthesis-preparation";
   sequence_id: string;
   routing_mode: CinematicProviderRoutingMode;
   provider: CinematicGenerationProvider;
@@ -547,6 +547,12 @@ export type CinematicSandboxSimulationRecord = {
   dry_execution_recovery?: CinematicDryExecutionRecoveryModeling;
   future_frame_synthesis_unlocks?: CinematicFutureFrameSynthesisUnlocks;
   execution_attempt_ledger?: CinematicExecutionAttemptLedger;
+  synthesis_containment_registry?: CinematicSynthesisContainmentRegistryEntry[];
+  governed_synthesis_preparation?: CinematicGovernedSynthesisPreparationPath;
+  synthesis_validation_layer?: CinematicSynthesisValidationLayer;
+  contained_escalation_modeling?: CinematicContainedEscalationModeling;
+  future_low_resolution_output?: CinematicFutureLowResolutionOutputScaffolding;
+  governed_rollback_ledger?: CinematicGovernedRollbackLedger;
   readiness_tracking_id?: string | null;
   hybrid_escalation?: CinematicHybridEscalationSimulation | null;
   recorded_at: string;
@@ -1347,6 +1353,142 @@ export type CinematicExecutionAttemptLedger = {
   attempts: CinematicExecutionAttemptLedgerEntry[];
 };
 
+export type CinematicSynthesisContainmentScope =
+  | "governed_single_frame_preparation"
+  | "governed_thumbnail_preparation"
+  | "preview_frame_preparation"
+  | "renderer_preview_preparation";
+
+export type CinematicSynthesisContainmentRegistryEntry = {
+  containment_id: string;
+  synthesis_scope: CinematicSynthesisContainmentScope;
+  allowed_resolution: CinematicVideoResolution;
+  maximum_resolution: CinematicVideoResolution;
+  allowed_frame_count: number;
+  maximum_frame_count: number;
+  output_permissions: string[];
+  output_restrictions: string[];
+  rollback_authority: string;
+  escalation_authority: string;
+  forbidden_synthesis_states: string[];
+  continuity_constraints: string[];
+  governance_constraints: string[];
+  containment_expiration: string;
+};
+
+export type CinematicGovernedSynthesisPreparationStage =
+  | "synthesis_prepare_request"
+  | "synthesis_scheduler_prepare"
+  | "synthesis_pipeline_prepare"
+  | "synthesis_frame_prepare"
+  | "synthesis_output_blocked"
+  | "synthesis_prepare_archived";
+
+export type CinematicGovernedSynthesisPreparationStageState = {
+  stage: CinematicGovernedSynthesisPreparationStage;
+  order: number;
+  simulated: true;
+  status: "ready" | "blocked" | "archived";
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicGovernedSynthesisPreparationPath = {
+  preparation_id: string;
+  recorded_at: string;
+  containment_id: string | null;
+  stages: CinematicGovernedSynthesisPreparationStageState[];
+  next_stage: CinematicGovernedSynthesisPreparationStage | null;
+};
+
+export type CinematicSynthesisValidationCheckName =
+  | "synthesis-containment-validity"
+  | "execution-token-compatibility"
+  | "continuity-state-readiness"
+  | "governance-approval-state"
+  | "forbidden-state-enforcement"
+  | "runtime-integrity-sufficiency"
+  | "escalation-compliance"
+  | "output-block-enforcement";
+
+export type CinematicSynthesisValidationCheck = {
+  check: CinematicSynthesisValidationCheckName;
+  passed: boolean;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicSynthesisValidationLayer = {
+  validation_id: string;
+  recorded_at: string;
+  valid: boolean;
+  checks: CinematicSynthesisValidationCheck[];
+  blocked_transitions: string[];
+  next_unlock_condition: string;
+};
+
+export type CinematicContainedEscalationKind =
+  | "low-resolution-escalation"
+  | "continuity-risk-escalation"
+  | "blocked-output-escalation"
+  | "rollback-escalation"
+  | "containment-expiration-recovery"
+  | "bounded-retry-escalation";
+
+export type CinematicContainedEscalationScenario = {
+  escalation: CinematicContainedEscalationKind;
+  triggered: boolean;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicContainedEscalationModeling = {
+  escalation_id: string;
+  recorded_at: string;
+  scenarios: CinematicContainedEscalationScenario[];
+};
+
+export type CinematicFutureLowResolutionOutputId =
+  | "governed-thumbnail-synthesis"
+  | "governed-preview-frame-synthesis"
+  | "bounded-low-resolution-output"
+  | "continuity-safe-preview-rendering"
+  | "governed-renderer-preview-mode";
+
+export type CinematicFutureLowResolutionOutputEntry = {
+  output_id: CinematicFutureLowResolutionOutputId;
+  unlocked: false;
+  prerequisites: string[];
+  still_forbidden_operations: string[];
+  target_resolution: CinematicVideoResolution;
+};
+
+export type CinematicFutureLowResolutionOutputScaffolding = {
+  scaffold_id: string;
+  recorded_at: string;
+  outputs: CinematicFutureLowResolutionOutputEntry[];
+  milestone_unlocks_governed_output: string;
+};
+
+export type CinematicGovernedRollbackLedgerEntry = {
+  entry_id: string;
+  recorded_at: string;
+  containment_id: string;
+  synthesis_preparation_attempt: string;
+  rollback_events: string[];
+  blocked_output_attempts: string[];
+  containment_violations: string[];
+  escalation_triggers: string[];
+  rollback_authority_actions: string[];
+  execution_temperature_transitions: string[];
+};
+
+export type CinematicGovernedRollbackLedger = {
+  ledger_id: string;
+  recorded_at: string;
+  entries: CinematicGovernedRollbackLedgerEntry[];
+};
+
 export type CinematicFutureActivationPlan = {
   future_frame_synthesis_activation: boolean;
   future_temporal_pipeline_activation: boolean;
@@ -1395,6 +1537,12 @@ export type CinematicControlledLocalInferenceBootstrapValidation = {
   dry_execution_recovery: CinematicDryExecutionRecoveryModeling;
   future_frame_synthesis_unlocks: CinematicFutureFrameSynthesisUnlocks;
   execution_attempt_ledger: CinematicExecutionAttemptLedger;
+  synthesis_containment_registry: CinematicSynthesisContainmentRegistryEntry[];
+  governed_synthesis_preparation: CinematicGovernedSynthesisPreparationPath;
+  synthesis_validation_layer: CinematicSynthesisValidationLayer;
+  contained_escalation_modeling: CinematicContainedEscalationModeling;
+  future_low_resolution_output: CinematicFutureLowResolutionOutputScaffolding;
+  governed_rollback_ledger: CinematicGovernedRollbackLedger;
   execution_enabled: false;
 };
 
@@ -1659,7 +1807,7 @@ export type CinematicReadinessMilestoneDelta = {
 
 export type CinematicReadinessDeltaTrackingRecord = {
   tracking_id: string;
-  source: "local-readiness-validation" | "local-execution-sandbox" | "runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor" | "gated-single-frame-dry-execution-path";
+  source: "local-readiness-validation" | "local-execution-sandbox" | "runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor" | "gated-single-frame-dry-execution-path" | "governed-single-frame-synthesis-preparation";
   recorded_at: string;
   milestones: CinematicReadinessMilestoneDelta[];
 };
@@ -1865,6 +2013,12 @@ export type CinematicProductionMemoryRecord = {
   dry_execution_recovery_history: CinematicDryExecutionRecoveryModeling[];
   future_frame_synthesis_unlocks_history: CinematicFutureFrameSynthesisUnlocks[];
   execution_attempt_ledger_history: CinematicExecutionAttemptLedger[];
+  synthesis_containment_registry_history: CinematicSynthesisContainmentRegistryEntry[][];
+  governed_synthesis_preparation_history: CinematicGovernedSynthesisPreparationPath[];
+  synthesis_validation_layer_history: CinematicSynthesisValidationLayer[];
+  contained_escalation_modeling_history: CinematicContainedEscalationModeling[];
+  future_low_resolution_output_history: CinematicFutureLowResolutionOutputScaffolding[];
+  governed_rollback_ledger_history: CinematicGovernedRollbackLedger[];
   provider_routing_rules: string[];
   prompt_normalization_rules: string[];
   provider_validation_rules: string[];
@@ -2811,6 +2965,12 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
   dry_execution_recovery_history: [],
   future_frame_synthesis_unlocks_history: [],
   execution_attempt_ledger_history: [],
+  synthesis_containment_registry_history: [],
+  governed_synthesis_preparation_history: [],
+  synthesis_validation_layer_history: [],
+  contained_escalation_modeling_history: [],
+  future_low_resolution_output_history: [],
+  governed_rollback_ledger_history: [],
   provider_routing_rules: [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
@@ -2990,6 +3150,12 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     dry_execution_recovery_history: nextRecord.dry_execution_recovery_history ?? defaults.dry_execution_recovery_history,
     future_frame_synthesis_unlocks_history: nextRecord.future_frame_synthesis_unlocks_history ?? defaults.future_frame_synthesis_unlocks_history,
     execution_attempt_ledger_history: nextRecord.execution_attempt_ledger_history ?? defaults.execution_attempt_ledger_history,
+    synthesis_containment_registry_history: nextRecord.synthesis_containment_registry_history ?? defaults.synthesis_containment_registry_history,
+    governed_synthesis_preparation_history: nextRecord.governed_synthesis_preparation_history ?? defaults.governed_synthesis_preparation_history,
+    synthesis_validation_layer_history: nextRecord.synthesis_validation_layer_history ?? defaults.synthesis_validation_layer_history,
+    contained_escalation_modeling_history: nextRecord.contained_escalation_modeling_history ?? defaults.contained_escalation_modeling_history,
+    future_low_resolution_output_history: nextRecord.future_low_resolution_output_history ?? defaults.future_low_resolution_output_history,
+    governed_rollback_ledger_history: nextRecord.governed_rollback_ledger_history ?? defaults.governed_rollback_ledger_history,
     provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
     prompt_normalization_rules: nextRecord.prompt_normalization_rules ?? defaults.prompt_normalization_rules,
     provider_validation_rules: nextRecord.provider_validation_rules ?? defaults.provider_validation_rules,
@@ -5878,6 +6044,309 @@ function buildExecutionAttemptLedger(input: {
   };
 }
 
+function buildSynthesisContainmentRegistry(input: {
+  tokenRegistry: CinematicDryExecutionTokenRegistryEntry[];
+  activationAuthorityRegistry: CinematicActivationAuthorityRegistryEntry[];
+  executionTemperatureState: CinematicExecutionTemperatureStateRecord;
+  boundary: CinematicExecutionBoundaryState;
+}): CinematicSynthesisContainmentRegistryEntry[] {
+  const rollbackAuthority = input.activationAuthorityRegistry[0]?.authority_id ?? "authority-manual-operator-gate";
+  const escalationAuthority = input.activationAuthorityRegistry[2]?.authority_id ?? "authority-runtime-integrity-review";
+  return [
+    {
+      containment_id: "containment-governed-single-frame-prepare",
+      synthesis_scope: "governed_single_frame_preparation",
+      allowed_resolution: "720p",
+      maximum_resolution: "720p",
+      allowed_frame_count: 1,
+      maximum_frame_count: 1,
+      output_permissions: ["simulation_only", "no_output_emission"],
+      output_restrictions: ["renderer_disabled", "preview_disabled", "image_video_output_blocked"],
+      rollback_authority: rollbackAuthority,
+      escalation_authority: escalationAuthority,
+      forbidden_synthesis_states: ["image_generate", "video_generate", "renderer_activate", "preview_output", "temporal_synthesis"],
+      continuity_constraints: ["continuity state remains read-only", "single-frame preparation must preserve sequence evidence"],
+      governance_constraints: [
+        "manual containment approval required",
+        `temperature=${input.executionTemperatureState.current_state}`,
+        ...input.boundary.tracked_statuses,
+      ],
+      containment_expiration: "expires_after_reviewed_single_frame_synthesis_preparation",
+    },
+    {
+      containment_id: "containment-governed-preview-prepare",
+      synthesis_scope: "preview_frame_preparation",
+      allowed_resolution: "720p",
+      maximum_resolution: "720p",
+      allowed_frame_count: 1,
+      maximum_frame_count: 1,
+      output_permissions: ["simulation_only", "governed_preview_scaffold_only"],
+      output_restrictions: ["no_preview_render", "no_renderer_unlock", "blocked_output_persistence"],
+      rollback_authority: rollbackAuthority,
+      escalation_authority: escalationAuthority,
+      forbidden_synthesis_states: ["preview_render", "renderer_preview_activate", "output_images_video"],
+      continuity_constraints: ["preview preparation cannot mutate continuity records"],
+      governance_constraints: ["preview mode remains hard-gated", `token_count=${input.tokenRegistry.length}`],
+      containment_expiration: "expires_when_preview_preparation_review_closes_without_output_unlock",
+    },
+  ];
+}
+
+function buildGovernedSynthesisPreparationPath(input: {
+  containmentRegistry: CinematicSynthesisContainmentRegistryEntry[];
+  synthesisValidationLayer: CinematicSynthesisValidationLayer | null;
+}): CinematicGovernedSynthesisPreparationPath {
+  const validationBlockers = input.synthesisValidationLayer?.blocked_transitions ?? [];
+  const stages: CinematicGovernedSynthesisPreparationStage[] = [
+    "synthesis_prepare_request",
+    "synthesis_scheduler_prepare",
+    "synthesis_pipeline_prepare",
+    "synthesis_frame_prepare",
+    "synthesis_output_blocked",
+    "synthesis_prepare_archived",
+  ];
+  const containment = input.containmentRegistry[0] ?? null;
+  return {
+    preparation_id: `governed-synthesis-preparation-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    containment_id: containment?.containment_id ?? null,
+    stages: stages.map((stage, index) => ({
+      stage,
+      order: index + 1,
+      simulated: true,
+      status: stage === "synthesis_prepare_request"
+        ? "ready"
+        : stage === "synthesis_prepare_archived"
+          ? "archived"
+          : "blocked",
+      detail: stage === "synthesis_prepare_request"
+        ? `Containment ${containment?.containment_id ?? "none"} authorizes preparation modeling only.`
+        : stage === "synthesis_output_blocked"
+          ? "Synthesis output remains blocked to preserve strict non-rendering boundaries."
+          : stage === "synthesis_prepare_archived"
+            ? "The governed synthesis preparation is archived append-only without renderer output."
+            : `Stage ${stage} remains simulated-only until every synthesis containment gate is satisfied.`,
+      blockers: stage === "synthesis_prepare_request" ? [] : validationBlockers,
+    })),
+    next_stage: "synthesis_prepare_request",
+  };
+}
+
+function buildSynthesisValidationLayer(input: {
+  containmentRegistry: CinematicSynthesisContainmentRegistryEntry[];
+  tokenRegistry: CinematicDryExecutionTokenRegistryEntry[];
+  readiness: CinematicLocalInferenceReadinessReport;
+  preInferenceGateValidation: CinematicPreInferenceGateValidation;
+  forbiddenExecutionStates: CinematicForbiddenExecutionStateEnforcement;
+  runtimeIntegrityValidation: CinematicRuntimeIntegrityValidation;
+  containedAuthorities: CinematicActivationAuthorityRegistryEntry[];
+  dryExecutionRecovery: CinematicDryExecutionRecoveryModeling;
+}): CinematicSynthesisValidationLayer {
+  const continuityProgress = input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation")?.percentage ?? 0;
+  const knownAuthorities = new Set(input.containedAuthorities.map((entry) => entry.authority_id));
+  const outputBlocked = input.containmentRegistry.every((entry) => entry.output_restrictions.some((restriction) => /block|disabled/i.test(restriction)));
+  const checks: CinematicSynthesisValidationCheck[] = [
+    {
+      check: "synthesis-containment-validity",
+      passed: input.containmentRegistry.length > 0 && input.containmentRegistry.every((entry) => entry.maximum_frame_count <= 1),
+      detail: "Synthesis containment must exist and remain bounded to a single governed frame preparation.",
+      blockers: input.containmentRegistry.length > 0 && input.containmentRegistry.every((entry) => entry.maximum_frame_count <= 1)
+        ? []
+        : ["Synthesis containment is missing or exceeds the single-frame preparation bound."],
+    },
+    {
+      check: "execution-token-compatibility",
+      passed: input.tokenRegistry.length > 0 && input.containmentRegistry.every((entry) => knownAuthorities.has(entry.rollback_authority) && knownAuthorities.has(entry.escalation_authority)),
+      detail: "Containment rollback and escalation authorities must remain compatible with the governed execution token path.",
+      blockers: input.tokenRegistry.length > 0 && input.containmentRegistry.every((entry) => knownAuthorities.has(entry.rollback_authority) && knownAuthorities.has(entry.escalation_authority))
+        ? []
+        : ["Containment authorities are not compatible with the governed token path."],
+    },
+    {
+      check: "continuity-state-readiness",
+      passed: continuityProgress >= 70,
+      detail: "Continuity readiness must stay above threshold before synthesis preparation is considered safe.",
+      blockers: continuityProgress >= 70 ? [] : ["Continuity state readiness remains below governed synthesis threshold."],
+    },
+    {
+      check: "governance-approval-state",
+      passed: input.preInferenceGateValidation.checks.find((entry) => entry.gate === "manual-governance-review")?.passed ?? false,
+      detail: "Governance approval state must remain manually reviewed before synthesis preparation advances.",
+      blockers: input.preInferenceGateValidation.checks.find((entry) => entry.gate === "manual-governance-review")?.blockers ?? ["Manual governance review is not satisfied."],
+    },
+    {
+      check: "forbidden-state-enforcement",
+      passed: input.forbiddenExecutionStates.states.every((entry) => entry.blocked),
+      detail: "Forbidden-state enforcement must continue blocking inference, generation, and renderer output.",
+      blockers: input.forbiddenExecutionStates.states.every((entry) => entry.blocked) ? [] : ["A forbidden synthesis state is not blocked."],
+    },
+    {
+      check: "runtime-integrity-sufficiency",
+      passed: input.runtimeIntegrityValidation.valid,
+      detail: "Runtime integrity remains a hard blocker even for synthesis preparation modeling.",
+      blockers: input.runtimeIntegrityValidation.blockers,
+    },
+    {
+      check: "escalation-compliance",
+      passed: input.dryExecutionRecovery.scenarios.some((entry) => entry.recovery === "dry-rollback-sequencing" && entry.triggered),
+      detail: "Escalation compliance requires rollback and recovery governance to remain modeled.",
+      blockers: input.dryExecutionRecovery.scenarios.filter((entry) => entry.triggered).flatMap((entry) => entry.blockers),
+    },
+    {
+      check: "output-block-enforcement",
+      passed: outputBlocked,
+      detail: "Output blocking must stay explicit in every synthesis containment record.",
+      blockers: outputBlocked ? [] : ["One or more synthesis containment records do not explicitly block output."],
+    },
+  ];
+  return {
+    validation_id: `synthesis-validation-layer-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    valid: checks.every((entry) => entry.passed),
+    checks,
+    blocked_transitions: checks.filter((entry) => !entry.passed).map((entry) => entry.check),
+    next_unlock_condition: checks.find((entry) => !entry.passed)?.detail ?? "Synthesis preparation remains validated, but real synthesis stays hard-gated.",
+  };
+}
+
+function buildContainedEscalationModeling(input: {
+  containmentRegistry: CinematicSynthesisContainmentRegistryEntry[];
+  synthesisValidationLayer: CinematicSynthesisValidationLayer;
+  readiness: CinematicLocalInferenceReadinessReport;
+  runtimeIntegrityValidation: CinematicRuntimeIntegrityValidation;
+  governedPreparation: CinematicGovernedSynthesisPreparationPath;
+}): CinematicContainedEscalationModeling {
+  const continuityProgress = input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation")?.percentage ?? 0;
+  const outputBlocked = input.containmentRegistry.some((entry) => entry.output_restrictions.some((restriction) => /block/i.test(restriction)));
+  return {
+    escalation_id: `contained-escalation-modeling-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    scenarios: [
+      {
+        escalation: "low-resolution-escalation",
+        triggered: input.containmentRegistry.some((entry) => entry.maximum_resolution === "720p"),
+        detail: "Low-resolution escalation keeps future output scaffolding bounded to governed 720p preparation.",
+        blockers: input.containmentRegistry.map((entry) => `${entry.containment_id}: max=${entry.maximum_resolution}`),
+      },
+      {
+        escalation: "continuity-risk-escalation",
+        triggered: continuityProgress < 70,
+        detail: "Continuity risk escalation returns synthesis preparation to manual review when continuity evidence is weak.",
+        blockers: continuityProgress < 70 ? ["Continuity state readiness remains below threshold."] : [],
+      },
+      {
+        escalation: "blocked-output-escalation",
+        triggered: outputBlocked,
+        detail: "Blocked-output escalation preserves non-rendering boundaries instead of allowing preview output.",
+        blockers: outputBlocked ? ["Output remains intentionally blocked by containment policy."] : [],
+      },
+      {
+        escalation: "rollback-escalation",
+        triggered: input.synthesisValidationLayer.blocked_transitions.length > 0,
+        detail: "Rollback escalation archives the preparation attempt and returns authority to governed rollback review.",
+        blockers: input.synthesisValidationLayer.blocked_transitions,
+      },
+      {
+        escalation: "containment-expiration-recovery",
+        triggered: input.containmentRegistry.some((entry) => /expires/i.test(entry.containment_expiration)),
+        detail: "Containment expiration requires renewed manual approval instead of automatic carry-forward.",
+        blockers: input.containmentRegistry.map((entry) => `${entry.containment_id}: ${entry.containment_expiration}`),
+      },
+      {
+        escalation: "bounded-retry-escalation",
+        triggered: !input.runtimeIntegrityValidation.valid || input.governedPreparation.stages.some((entry) => entry.status === "blocked"),
+        detail: "Bounded retry escalation keeps retries manual, append-only, and non-rendering.",
+        blockers: uniqueNormalizedStrings([
+          ...input.runtimeIntegrityValidation.blockers,
+          ...input.governedPreparation.stages.filter((entry) => entry.status === "blocked").map((entry) => entry.stage),
+        ]),
+      },
+    ],
+  };
+}
+
+function buildFutureLowResolutionOutputScaffolding(input: {
+  containmentRegistry: CinematicSynthesisContainmentRegistryEntry[];
+  synthesisValidationLayer: CinematicSynthesisValidationLayer;
+}): CinematicFutureLowResolutionOutputScaffolding {
+  const stillForbidden = uniqueNormalizedStrings(input.containmentRegistry.flatMap((entry) => [
+    ...entry.forbidden_synthesis_states,
+    ...entry.output_restrictions,
+  ]));
+  const prerequisiteBlockers = uniqueNormalizedStrings(input.synthesisValidationLayer.checks.filter((entry) => !entry.passed).flatMap((entry) => entry.blockers));
+  const milestone = "reviewed-governed-low-resolution-output-bridge";
+  return {
+    scaffold_id: `future-low-resolution-output-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    milestone_unlocks_governed_output: milestone,
+    outputs: [
+      {
+        output_id: "governed-thumbnail-synthesis",
+        unlocked: false,
+        prerequisites: uniqueNormalizedStrings(["thumbnail governance approval", ...prerequisiteBlockers]),
+        still_forbidden_operations: stillForbidden,
+        target_resolution: "720p",
+      },
+      {
+        output_id: "governed-preview-frame-synthesis",
+        unlocked: false,
+        prerequisites: uniqueNormalizedStrings(["preview frame containment approval", ...prerequisiteBlockers]),
+        still_forbidden_operations: stillForbidden,
+        target_resolution: "720p",
+      },
+      {
+        output_id: "bounded-low-resolution-output",
+        unlocked: false,
+        prerequisites: ["bounded output review", "manual rollback coverage"],
+        still_forbidden_operations: stillForbidden,
+        target_resolution: "720p",
+      },
+      {
+        output_id: "continuity-safe-preview-rendering",
+        unlocked: false,
+        prerequisites: ["continuity-safe preview review", "sequence continuity evidence preserved"],
+        still_forbidden_operations: stillForbidden,
+        target_resolution: "720p",
+      },
+      {
+        output_id: "governed-renderer-preview-mode",
+        unlocked: false,
+        prerequisites: ["renderer preview governance review", "blocked output enforcement remains provable"],
+        still_forbidden_operations: stillForbidden,
+        target_resolution: "720p",
+      },
+    ],
+  };
+}
+
+function buildGovernedRollbackLedger(input: {
+  containmentRegistry: CinematicSynthesisContainmentRegistryEntry[];
+  governedPreparation: CinematicGovernedSynthesisPreparationPath;
+  synthesisValidationLayer: CinematicSynthesisValidationLayer;
+  containedEscalationModeling: CinematicContainedEscalationModeling;
+  executionTemperatureState: CinematicExecutionTemperatureStateRecord;
+}): CinematicGovernedRollbackLedger {
+  const containment = input.containmentRegistry[0];
+  return {
+    ledger_id: `governed-rollback-ledger-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    entries: [
+      {
+        entry_id: `governed-rollback-entry-${Date.now()}`,
+        recorded_at: new Date().toISOString(),
+        containment_id: containment?.containment_id ?? "no-containment",
+        synthesis_preparation_attempt: input.governedPreparation.stages.map((entry) => entry.stage).join(" -> "),
+        rollback_events: ["synthesis_prepare_archived", "rollback_authority_review_required"],
+        blocked_output_attempts: input.governedPreparation.stages.filter((entry) => entry.stage === "synthesis_output_blocked").map((entry) => entry.detail),
+        containment_violations: input.synthesisValidationLayer.blocked_transitions,
+        escalation_triggers: input.containedEscalationModeling.scenarios.filter((entry) => entry.triggered).map((entry) => entry.escalation),
+        rollback_authority_actions: input.containmentRegistry.map((entry) => `${entry.rollback_authority}: archive_preparation_only`),
+        execution_temperature_transitions: input.executionTemperatureState.transitions.map((entry) => `${entry.state}:${entry.transition_reason}`),
+      },
+    ],
+  };
+}
+
 function applyGatedInferencePrecursorReadiness(input: {
   readiness: CinematicLocalInferenceReadinessReport;
   activationAuthorityRegistry: CinematicActivationAuthorityRegistryEntry[];
@@ -5897,6 +6366,12 @@ function applyGatedInferencePrecursorReadiness(input: {
   dryExecutionRecovery: CinematicDryExecutionRecoveryModeling;
   futureFrameSynthesisUnlocks: CinematicFutureFrameSynthesisUnlocks;
   executionAttemptLedger: CinematicExecutionAttemptLedger;
+  synthesisContainmentRegistry: CinematicSynthesisContainmentRegistryEntry[];
+  governedSynthesisPreparation: CinematicGovernedSynthesisPreparationPath;
+  synthesisValidationLayer: CinematicSynthesisValidationLayer;
+  containedEscalationModeling: CinematicContainedEscalationModeling;
+  futureLowResolutionOutput: CinematicFutureLowResolutionOutputScaffolding;
+  governedRollbackLedger: CinematicGovernedRollbackLedger;
 }): CinematicLocalInferenceReadinessReport {
   const sequencingCoverage = input.sequencing.stages.length > 0;
   const unlockCoverage = input.futureUnlockConditions.conditions.length > 0;
@@ -5910,6 +6385,10 @@ function applyGatedInferencePrecursorReadiness(input: {
   const traversalCoverage = input.singleFrameDryExecutionPath.stages.length > 0;
   const traversalValidationCoverage = input.frameTraversalValidation.checks.filter((entry) => entry.passed).length;
   const synthesisUnlockCoverage = input.futureFrameSynthesisUnlocks.unlocks.length > 0;
+  const synthesisContainmentCoverage = input.synthesisContainmentRegistry.length > 0;
+  const synthesisPreparationCoverage = input.governedSynthesisPreparation.stages.length > 0;
+  const synthesisValidationCoverage = input.synthesisValidationLayer.checks.filter((entry) => entry.passed).length;
+  const futureLowResolutionCoverage = input.futureLowResolutionOutput.outputs.length > 0;
   const updatedMilestones = input.readiness.milestone_progress.map((entry) => {
     const blockers = uniqueNormalizedStrings([
       ...entry.blockers,
@@ -5920,44 +6399,44 @@ function applyGatedInferencePrecursorReadiness(input: {
       case "local-inference-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (authorityCoverage ? 3 : 0) + (sequencingCoverage ? 2 : 0) + (unlockCoverage ? 2 : 0) + (warmupCoverage >= 4 ? 4 : 0) + (dryTokenCoverage ? 3 : 0) + (traversalValidationCoverage >= 4 ? 3 : 0) + (input.executionTemperatureState.current_state === "simulated_only" ? 2 : 0)),
+          percentage: clampPercentage(entry.percentage + (authorityCoverage ? 3 : 0) + (sequencingCoverage ? 2 : 0) + (unlockCoverage ? 2 : 0) + (warmupCoverage >= 4 ? 4 : 0) + (dryTokenCoverage ? 3 : 0) + (traversalValidationCoverage >= 4 ? 3 : 0) + (synthesisContainmentCoverage ? 4 : 0) + (synthesisValidationCoverage >= 5 ? 3 : 0) + (input.executionTemperatureState.current_state === "simulated_only" ? 2 : 0)),
           blockers,
         };
       case "local-runtime-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "execution-boundary-intact")?.passed ? 3 : 0) + (triggeredEscalations > 0 ? 2 : 0) + (warmupCoverage >= 2 ? 3 : 0) + (traversalCoverage ? 3 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "execution-boundary-intact")?.passed ? 3 : 0) + (triggeredEscalations > 0 ? 2 : 0) + (warmupCoverage >= 2 ? 3 : 0) + (traversalCoverage ? 3 : 0) + (synthesisPreparationCoverage ? 3 : 0)),
           blockers,
         };
       case "local-frame-generation-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_frame_stage_prepare") ? 2 : 0) + (frameStageCoverage >= 5 ? 4 : 0) + (precursorCoverage ? 2 : 0) + (traversalValidationCoverage >= 5 ? 4 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_frame_stage_prepare") ? 2 : 0) + (frameStageCoverage >= 5 ? 4 : 0) + (precursorCoverage ? 2 : 0) + (traversalValidationCoverage >= 5 ? 4 : 0) + (synthesisPreparationCoverage ? 5 : 0) + (futureLowResolutionCoverage ? 3 : 0)),
           blockers,
         };
       case "local-renderer-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_render_output_prepare") ? 2 : 0) + (precursorCoverage ? 2 : 0) + (boundedRuleCoverage ? 2 : 0) + (synthesisUnlockCoverage ? 3 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_render_output_prepare") ? 2 : 0) + (precursorCoverage ? 2 : 0) + (boundedRuleCoverage ? 2 : 0) + (synthesisUnlockCoverage ? 3 : 0) + (futureLowResolutionCoverage ? 4 : 0)),
           blockers,
         };
       case "continuity-preserving-local-generation":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "continuity-state-available")?.passed ? 3 : 0) + (input.frameStageReadiness.checks.find((check) => check.check === "continuity-readiness")?.passed ? 4 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "continuity-state-available")?.passed ? 3 : 0) + (input.frameStageReadiness.checks.find((check) => check.check === "continuity-readiness")?.passed ? 4 : 0) + (input.synthesisValidationLayer.checks.find((check) => check.check === "continuity-state-readiness")?.passed ? 3 : 0)),
           blockers,
         };
       case "hybrid-local-cloud-orchestration":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.escalationModeling.scenarios.some((scenario) => scenario.escalation === "offline-mode-escalation") ? 2 : 0) + (input.warmupEscalationModeling.scenarios.some((scenario) => scenario.escalation === "hybrid-escalation") ? 2 : 0) + (input.dryExecutionRecovery.scenarios.some((scenario) => scenario.recovery === "governance-escalation-recovery") ? 2 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.escalationModeling.scenarios.some((scenario) => scenario.escalation === "offline-mode-escalation") ? 2 : 0) + (input.warmupEscalationModeling.scenarios.some((scenario) => scenario.escalation === "hybrid-escalation") ? 2 : 0) + (input.dryExecutionRecovery.scenarios.some((scenario) => scenario.recovery === "governance-escalation-recovery") ? 2 : 0) + (input.containedEscalationModeling.scenarios.some((scenario) => scenario.triggered) ? 3 : 0)),
           blockers,
         };
       case "self-sustaining-generation-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + 3),
-          blockers: uniqueNormalizedStrings([...blockers, "Self-sustaining generation remains forbidden pending a reviewed real-inference bridge."]),
+          percentage: clampPercentage(entry.percentage + 4),
+          blockers: uniqueNormalizedStrings([...blockers, "Self-sustaining generation remains forbidden pending a reviewed governed-output bridge."]),
         };
       default:
         return entry;
@@ -5975,12 +6454,17 @@ function applyGatedInferencePrecursorReadiness(input: {
       `Dry execution tokens recorded: ${input.dryExecutionTokenRegistry.length}.`,
       `Dry execution traversal stages recorded: ${input.singleFrameDryExecutionPath.stages.length}.`,
       `Execution attempts recorded: ${input.executionAttemptLedger.attempts.length}.`,
+      `Synthesis containment records recorded: ${input.synthesisContainmentRegistry.length}.`,
+      `Governed synthesis preparation stages recorded: ${input.governedSynthesisPreparation.stages.length}.`,
+      `Governed rollback ledger entries recorded: ${input.governedRollbackLedger.entries.length}.`,
       `Future real inference remains locked behind ${input.futureUnlockConditions.milestone_unlocks_real_inference}.`,
+      `Future governed output remains locked behind ${input.futureLowResolutionOutput.milestone_unlocks_governed_output}.`,
     ]),
     blocked_reasons: uniqueNormalizedStrings([
       ...input.readiness.blocked_reasons,
       ...input.gateValidation.checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
       ...input.frameStageReadiness.checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
+      ...input.synthesisValidationLayer.checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
     ]),
     milestone_progress: updatedMilestones,
   };
@@ -7338,6 +7822,44 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     recovery: dryExecutionRecovery,
     executionTemperatureState,
   });
+  const synthesisContainmentRegistry = buildSynthesisContainmentRegistry({
+    tokenRegistry: dryExecutionTokenRegistry,
+    activationAuthorityRegistry,
+    executionTemperatureState,
+    boundary: executionBoundaryState,
+  });
+  const synthesisValidationLayer = buildSynthesisValidationLayer({
+    containmentRegistry: synthesisContainmentRegistry,
+    tokenRegistry: dryExecutionTokenRegistry,
+    readiness,
+    preInferenceGateValidation,
+    forbiddenExecutionStates,
+    runtimeIntegrityValidation,
+    containedAuthorities: activationAuthorityRegistry,
+    dryExecutionRecovery,
+  });
+  const governedSynthesisPreparation = buildGovernedSynthesisPreparationPath({
+    containmentRegistry: synthesisContainmentRegistry,
+    synthesisValidationLayer,
+  });
+  const containedEscalationModeling = buildContainedEscalationModeling({
+    containmentRegistry: synthesisContainmentRegistry,
+    synthesisValidationLayer,
+    readiness,
+    runtimeIntegrityValidation,
+    governedPreparation: governedSynthesisPreparation,
+  });
+  const futureLowResolutionOutput = buildFutureLowResolutionOutputScaffolding({
+    containmentRegistry: synthesisContainmentRegistry,
+    synthesisValidationLayer,
+  });
+  const governedRollbackLedger = buildGovernedRollbackLedger({
+    containmentRegistry: synthesisContainmentRegistry,
+    governedPreparation: governedSynthesisPreparation,
+    synthesisValidationLayer,
+    containedEscalationModeling,
+    executionTemperatureState,
+  });
   const readinessWithPrecursor = applyGatedInferencePrecursorReadiness({
     readiness,
     activationAuthorityRegistry,
@@ -7357,11 +7879,17 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     dryExecutionRecovery,
     futureFrameSynthesisUnlocks,
     executionAttemptLedger,
+    synthesisContainmentRegistry,
+    governedSynthesisPreparation,
+    synthesisValidationLayer,
+    containedEscalationModeling,
+    futureLowResolutionOutput,
+    governedRollbackLedger,
   });
   const trackingUpdate = appendReadinessDeltaTracking({
     record: nextRecord,
     readiness: readinessWithPrecursor,
-    source: "gated-single-frame-dry-execution-path",
+    source: "governed-single-frame-synthesis-preparation",
   });
   await writeProductionMemoryRecord(initialization.productionMemoryPath, {
     ...trackingUpdate.record,
@@ -7384,6 +7912,12 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     dry_execution_recovery_history: [dryExecutionRecovery, ...trackingUpdate.record.dry_execution_recovery_history].slice(0, 24),
     future_frame_synthesis_unlocks_history: [futureFrameSynthesisUnlocks, ...trackingUpdate.record.future_frame_synthesis_unlocks_history].slice(0, 24),
     execution_attempt_ledger_history: [executionAttemptLedger, ...trackingUpdate.record.execution_attempt_ledger_history].slice(0, 24),
+    synthesis_containment_registry_history: [synthesisContainmentRegistry, ...trackingUpdate.record.synthesis_containment_registry_history].slice(0, 24),
+    governed_synthesis_preparation_history: [governedSynthesisPreparation, ...trackingUpdate.record.governed_synthesis_preparation_history].slice(0, 24),
+    synthesis_validation_layer_history: [synthesisValidationLayer, ...trackingUpdate.record.synthesis_validation_layer_history].slice(0, 24),
+    contained_escalation_modeling_history: [containedEscalationModeling, ...trackingUpdate.record.contained_escalation_modeling_history].slice(0, 24),
+    future_low_resolution_output_history: [futureLowResolutionOutput, ...trackingUpdate.record.future_low_resolution_output_history].slice(0, 24),
+    governed_rollback_ledger_history: [governedRollbackLedger, ...trackingUpdate.record.governed_rollback_ledger_history].slice(0, 24),
   });
   return {
     readiness: readinessWithPrecursor,
@@ -7413,6 +7947,12 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     dry_execution_recovery: dryExecutionRecovery,
     future_frame_synthesis_unlocks: futureFrameSynthesisUnlocks,
     execution_attempt_ledger: executionAttemptLedger,
+    synthesis_containment_registry: synthesisContainmentRegistry,
+    governed_synthesis_preparation: governedSynthesisPreparation,
+    synthesis_validation_layer: synthesisValidationLayer,
+    contained_escalation_modeling: containedEscalationModeling,
+    future_low_resolution_output: futureLowResolutionOutput,
+    governed_rollback_ledger: governedRollbackLedger,
     execution_enabled: false,
   };
 }
@@ -7427,7 +7967,7 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
   const record = await readCinematicProductionMemory({ root: input?.root });
   const simulation: CinematicSandboxSimulationRecord = {
     simulation_id: `bootstrap-sandbox-${Date.now()}`,
-    sandbox_kind: "gated-single-frame-dry-execution-path",
+    sandbox_kind: "governed-single-frame-synthesis-preparation",
     sequence_id: "controlled-local-bootstrap-planning-only",
     routing_mode: validation.readiness.recommended_routing_mode,
     provider: "LocalFutureProvider",
@@ -7468,6 +8008,12 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
     dry_execution_recovery: validation.dry_execution_recovery,
     future_frame_synthesis_unlocks: validation.future_frame_synthesis_unlocks,
     execution_attempt_ledger: validation.execution_attempt_ledger,
+    synthesis_containment_registry: validation.synthesis_containment_registry,
+    governed_synthesis_preparation: validation.governed_synthesis_preparation,
+    synthesis_validation_layer: validation.synthesis_validation_layer,
+    contained_escalation_modeling: validation.contained_escalation_modeling,
+    future_low_resolution_output: validation.future_low_resolution_output,
+    governed_rollback_ledger: validation.governed_rollback_ledger,
     readiness_tracking_id: validation.readiness_delta.tracking_id,
     hybrid_escalation: null,
     recorded_at: new Date().toISOString(),

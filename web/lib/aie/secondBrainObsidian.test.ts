@@ -80,6 +80,7 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Outcomes/Failed Generations.md"));
     assert.ok(files.includes("Outcomes/Approval Audit Trail.md"));
     assert.ok(files.includes("Outcomes/Execution Attempt Ledger.md"));
+    assert.ok(files.includes("Outcomes/Governed Rollback Ledger.md"));
     assert.ok(files.includes("Outcomes/Sandbox Simulation Results.md"));
     assert.ok(files.includes("Outcomes/Successful Generations.md"));
     assert.ok(files.includes("Recovery/Recovery Procedures.md"));
@@ -116,6 +117,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Architecture/Dry Execution Token Registry.md"));
     assert.ok(files.includes("Architecture/Frame Traversal Validation.md"));
     assert.ok(files.includes("Architecture/Dry Execution Recovery.md"));
+    assert.ok(files.includes("Architecture/Synthesis Containment Registry.md"));
+    assert.ok(files.includes("Architecture/Synthesis Validation Layer.md"));
+    assert.ok(files.includes("Architecture/Contained Escalation Modeling.md"));
     assert.ok(files.includes("Architecture/Manual Approval Workflow.md"));
     assert.ok(files.includes("Architecture/Continuity Review Notes.md"));
     assert.ok(files.includes("Architecture/Provider Constraint Matrix.md"));
@@ -146,6 +150,8 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Strategy/Future Bounded Execution Rules.md"));
     assert.ok(files.includes("Strategy/Single-Frame Dry Execution Path.md"));
     assert.ok(files.includes("Strategy/Future Frame Synthesis Unlocks.md"));
+    assert.ok(files.includes("Strategy/Governed Synthesis Preparation.md"));
+    assert.ok(files.includes("Strategy/Future Low Resolution Output.md"));
     assert.ok(files.includes("Strategy/Queue Orchestration Planning.md"));
     assert.ok(files.includes("Strategy/Generation Job Queue.md"));
     assert.ok(files.includes("Strategy/Operator Approval Queue.md"));
@@ -223,6 +229,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const dryExecutionTokenRegistryText = await readFile(path.join(vaultRoot, "Architecture", "Dry Execution Token Registry.md"), "utf8");
     const frameTraversalValidationText = await readFile(path.join(vaultRoot, "Architecture", "Frame Traversal Validation.md"), "utf8");
     const dryExecutionRecoveryText = await readFile(path.join(vaultRoot, "Architecture", "Dry Execution Recovery.md"), "utf8");
+    const synthesisContainmentRegistryText = await readFile(path.join(vaultRoot, "Architecture", "Synthesis Containment Registry.md"), "utf8");
+    const synthesisValidationLayerText = await readFile(path.join(vaultRoot, "Architecture", "Synthesis Validation Layer.md"), "utf8");
+    const containedEscalationModelingText = await readFile(path.join(vaultRoot, "Architecture", "Contained Escalation Modeling.md"), "utf8");
     const lifecycleText = await readFile(path.join(vaultRoot, "Architecture", "Cinematic Execution Lifecycle.md"), "utf8");
     const retryRulesText = await readFile(path.join(vaultRoot, "Architecture", "Retry Planning Rules.md"), "utf8");
     const generationStrategyText = await readFile(path.join(vaultRoot, "Resources", "Cost-Aware Generation Strategy.md"), "utf8");
@@ -241,6 +250,8 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const futureBoundedExecutionRulesText = await readFile(path.join(vaultRoot, "Strategy", "Future Bounded Execution Rules.md"), "utf8");
     const singleFrameDryExecutionPathText = await readFile(path.join(vaultRoot, "Strategy", "Single-Frame Dry Execution Path.md"), "utf8");
     const futureFrameSynthesisUnlocksText = await readFile(path.join(vaultRoot, "Strategy", "Future Frame Synthesis Unlocks.md"), "utf8");
+    const governedSynthesisPreparationText = await readFile(path.join(vaultRoot, "Strategy", "Governed Synthesis Preparation.md"), "utf8");
+    const futureLowResolutionOutputText = await readFile(path.join(vaultRoot, "Strategy", "Future Low Resolution Output.md"), "utf8");
     const framePipelineText = await readFile(path.join(vaultRoot, "Strategy", "Frame Generation Pipeline Planning.md"), "utf8");
     const rendererRoadmapText = await readFile(path.join(vaultRoot, "Strategy", "Renderer Capability Roadmap.md"), "utf8");
     const hybridStrategyText = await readFile(path.join(vaultRoot, "Strategy", "Hybrid Local Cloud Strategy.md"), "utf8");
@@ -256,6 +267,7 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const payloadExamplesText = await readFile(path.join(vaultRoot, "Strategy", "Provider Payload Examples.md"), "utf8");
     const approvalAuditText = await readFile(path.join(vaultRoot, "Outcomes", "Approval Audit Trail.md"), "utf8");
     const executionAttemptLedgerText = await readFile(path.join(vaultRoot, "Outcomes", "Execution Attempt Ledger.md"), "utf8");
+    const governedRollbackLedgerText = await readFile(path.join(vaultRoot, "Outcomes", "Governed Rollback Ledger.md"), "utf8");
     const sandboxResultsText = await readFile(path.join(vaultRoot, "Outcomes", "Sandbox Simulation Results.md"), "utf8");
     const rendererRecoveryText = await readFile(path.join(vaultRoot, "Recovery", "Renderer Recovery Planning.md"), "utf8");
     const activationRecoveryText = await readFile(path.join(vaultRoot, "Recovery", "Activation Failure Recovery.md"), "utf8");
@@ -311,6 +323,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(dryExecutionTokenRegistryText, /No dry execution token registry recorded yet\./i);
     assert.match(frameTraversalValidationText, /No frame traversal validation recorded yet\./i);
     assert.match(dryExecutionRecoveryText, /No dry execution recovery recorded yet\./i);
+    assert.match(synthesisContainmentRegistryText, /No synthesis containment registry recorded yet\./i);
+    assert.match(synthesisValidationLayerText, /No synthesis validation layer recorded yet\./i);
+    assert.match(containedEscalationModelingText, /No contained escalation modeling recorded yet\./i);
     assert.match(lifecycleText, /Execution lifecycle remains append-only/i);
     assert.match(retryRulesText, /Retry planning must preserve successful shot outputs/i);
     assert.match(generationStrategyText, /Use cheap draft routing for first-pass framing validation/i);
@@ -329,6 +344,8 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(futureBoundedExecutionRulesText, /No future bounded execution rules recorded yet\./i);
     assert.match(singleFrameDryExecutionPathText, /No single-frame dry execution path recorded yet\./i);
     assert.match(futureFrameSynthesisUnlocksText, /No future frame synthesis unlocks recorded yet\./i);
+    assert.match(governedSynthesisPreparationText, /No governed synthesis preparation recorded yet\./i);
+    assert.match(futureLowResolutionOutputText, /No future low resolution output recorded yet\./i);
     assert.match(framePipelineText, /Prompt Compilation/i);
     assert.match(rendererRoadmapText, /Image Sequence Rendering/i);
     assert.match(hybridStrategyText, /Local Draft Rendering/i);
@@ -344,6 +361,7 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(payloadExamplesText, /Sora-ready payloads should keep cinematic prose/i);
     assert.match(approvalAuditText, /No approval audit entries recorded yet\./i);
     assert.match(executionAttemptLedgerText, /No execution attempt ledger recorded yet\./i);
+    assert.match(governedRollbackLedgerText, /No governed rollback ledger recorded yet\./i);
     assert.match(sandboxResultsText, /No sandbox simulations recorded yet\./);
     assert.match(rendererRecoveryText, /No renderer recovery causes recorded yet\./i);
     assert.match(activationRecoveryText, /No activation failure causes recorded yet\./i);
@@ -533,6 +551,9 @@ test("exportSecondBrainToObsidian projects controlled local bootstrap into the n
     const dryExecutionTokenRegistryText = await readFile(path.join(vaultRoot, "Architecture", "Dry Execution Token Registry.md"), "utf8");
     const frameTraversalValidationText = await readFile(path.join(vaultRoot, "Architecture", "Frame Traversal Validation.md"), "utf8");
     const dryExecutionRecoveryText = await readFile(path.join(vaultRoot, "Architecture", "Dry Execution Recovery.md"), "utf8");
+    const synthesisContainmentRegistryText = await readFile(path.join(vaultRoot, "Architecture", "Synthesis Containment Registry.md"), "utf8");
+    const synthesisValidationLayerText = await readFile(path.join(vaultRoot, "Architecture", "Synthesis Validation Layer.md"), "utf8");
+    const containedEscalationModelingText = await readFile(path.join(vaultRoot, "Architecture", "Contained Escalation Modeling.md"), "utf8");
     const controlledProfilesText = await readFile(path.join(vaultRoot, "Strategy", "Controlled Runtime Profiles.md"), "utf8");
     const futureInferenceText = await readFile(path.join(vaultRoot, "Strategy", "Future Inference Activation.md"), "utf8");
     const inferenceSequencingText = await readFile(path.join(vaultRoot, "Strategy", "Inference Entry Sequencing.md"), "utf8");
@@ -542,7 +563,10 @@ test("exportSecondBrainToObsidian projects controlled local bootstrap into the n
     const futureBoundedExecutionRulesText = await readFile(path.join(vaultRoot, "Strategy", "Future Bounded Execution Rules.md"), "utf8");
     const singleFrameDryExecutionPathText = await readFile(path.join(vaultRoot, "Strategy", "Single-Frame Dry Execution Path.md"), "utf8");
     const futureFrameSynthesisUnlocksText = await readFile(path.join(vaultRoot, "Strategy", "Future Frame Synthesis Unlocks.md"), "utf8");
+    const governedSynthesisPreparationText = await readFile(path.join(vaultRoot, "Strategy", "Governed Synthesis Preparation.md"), "utf8");
+    const futureLowResolutionOutputText = await readFile(path.join(vaultRoot, "Strategy", "Future Low Resolution Output.md"), "utf8");
     const executionAttemptLedgerText = await readFile(path.join(vaultRoot, "Outcomes", "Execution Attempt Ledger.md"), "utf8");
+    const governedRollbackLedgerText = await readFile(path.join(vaultRoot, "Outcomes", "Governed Rollback Ledger.md"), "utf8");
 
     assert.match(dryBootstrapText, /Valid: yes/i);
     assert.match(dryBootstrapText, /runtime-binary-presence: passed=yes/i);
@@ -566,6 +590,10 @@ test("exportSecondBrainToObsidian projects controlled local bootstrap into the n
     assert.match(frameTraversalValidationText, /execution-token-validity: passed=yes/i);
     assert.match(frameTraversalValidationText, /runtime-integrity-sufficiency: passed=no/i);
     assert.match(dryExecutionRecoveryText, /dry-rollback-sequencing: triggered=yes/i);
+    assert.match(synthesisContainmentRegistryText, /containment-governed-single-frame-prepare: scope=governed_single_frame_preparation/i);
+    assert.match(synthesisValidationLayerText, /synthesis-containment-validity: passed=yes/i);
+    assert.match(synthesisValidationLayerText, /output-block-enforcement: passed=yes/i);
+    assert.match(containedEscalationModelingText, /blocked-output-escalation: triggered=yes/i);
     assert.match(controlledProfilesText, /Low VRAM Safe|Offline Safe/i);
     assert.match(controlledProfilesText, /viable=yes|viable=no/i);
     assert.match(futureInferenceText, /Dry model initialization: yes/i);
@@ -580,7 +608,12 @@ test("exportSecondBrainToObsidian projects controlled local bootstrap into the n
     assert.match(singleFrameDryExecutionPathText, /dry_output_blocked: status=blocked/i);
     assert.match(futureFrameSynthesisUnlocksText, /Milestone unlocking real synthesis: reviewed-real-frame-synthesis-bridge/i);
     assert.match(futureFrameSynthesisUnlocksText, /governed-single-frame-synthesis: unlocked=no/i);
+    assert.match(governedSynthesisPreparationText, /synthesis_prepare_request: status=ready/i);
+    assert.match(governedSynthesisPreparationText, /synthesis_output_blocked: status=blocked/i);
+    assert.match(futureLowResolutionOutputText, /Milestone unlocking governed output: reviewed-governed-low-resolution-output-bridge/i);
+    assert.match(futureLowResolutionOutputText, /governed-thumbnail-synthesis: unlocked=no/i);
     assert.match(executionAttemptLedgerText, /token-single-frame-dry-governed: blocked=/i);
+    assert.match(governedRollbackLedgerText, /containment-governed-single-frame-prepare: violations=/i);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
