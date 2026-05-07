@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 import {
+  executeGovernedPreviewMicroSequenceRequest,
   executeGovernedPreviewRequest,
+  readGovernedPreviewPrerequisiteState,
   rollbackGovernedPreviewSandbox,
 } from "@/lib/aie/governedPreviewGeneration";
 import {
@@ -49,10 +51,31 @@ function serializeError(error: unknown) {
   return { message: String(error) };
 }
 
+export async function GET() {
+  try {
+    const prerequisiteState = await readGovernedPreviewPrerequisiteState();
+    return NextResponse.json({ prerequisiteState });
+  } catch (error) {
+    console.error("[api/operator/preview-generation] status failed", serializeError(error));
+    return NextResponse.json({ error: SAFE_ERROR_MESSAGE }, { status: 500 });
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Record<string, unknown>;
-    const action = body.action === "rollback" ? "rollback" : "generate";
+    const action = body.action === "rollback"
+      ? "rollback"
+      : body.action === "generate-micro-sequence"
+        ? "generate-micro-sequence"
+        : body.action === "status"
+          ? "status"
+          : "generate";
+
+    if (action === "status") {
+      const prerequisiteState = await readGovernedPreviewPrerequisiteState();
+      return NextResponse.json({ prerequisiteState });
+    }
 
     if (action === "rollback") {
       const rollback = await rollbackGovernedPreviewSandbox();
@@ -65,8 +88,14 @@ export async function POST(request: Request) {
     }
 
     const compiledRequest = compileGovernedPreviewRequest(input);
+
+    if (action === "generate-micro-sequence") {
+      const microSequence = await executeGovernedPreviewMicroSequenceRequest(compiledRequest);
+      return NextResponse.json({ compiledRequest, microSequence, prerequisiteState: microSequence.prerequisite_state });
+    }
+
     const execution = await executeGovernedPreviewRequest(compiledRequest);
-    return NextResponse.json({ compiledRequest, execution });
+    return NextResponse.json({ compiledRequest, execution, prerequisiteState: execution.prerequisite_state });
   } catch (error) {
     console.error("[api/operator/preview-generation] request failed", serializeError(error));
     return NextResponse.json({ error: SAFE_ERROR_MESSAGE }, { status: 500 });

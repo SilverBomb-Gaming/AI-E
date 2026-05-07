@@ -2754,6 +2754,22 @@ function buildControlledRuntimeProfilesNote(input: {
   const production = input.productionMemory;
   const latestBootstrap = latestControlledBootstrapSimulation(production);
   const profiles = latestBootstrap?.controlled_runtime_profiles ?? production.controlled_runtime_profiles;
+  const profileLabel = (profileId: string): string => {
+    switch (profileId) {
+      case "low_vram_safe":
+        return "Low VRAM Safe";
+      case "offline_safe":
+        return "Offline Safe";
+      case "continuity_priority":
+        return "Continuity Priority";
+      case "cloud_hybrid_safe":
+        return "Cloud Hybrid Safe";
+      case "cpu_fallback_safe":
+        return "CPU Fallback Safe";
+      default:
+        return profileId;
+    }
+  };
   return {
     title: "Controlled Runtime Profiles",
     directory: "Strategy",
@@ -2769,7 +2785,7 @@ function buildControlledRuntimeProfilesNote(input: {
       profiles.length > 0
         ? asBulletList(profiles.map((entry) => {
           if ("reasons" in entry) {
-            return `${entry.display_name}: viable=${entry.viable ? "yes" : "no"} | boundary=${entry.execution_boundary_status}`;
+            return `${profileLabel(entry.profile_id)}: viable=${entry.viable ? "yes" : "no"} | boundary=${entry.execution_boundary_status}`;
           }
           return `${entry.display_name}: mode=${entry.routing_mode}`;
         }))
@@ -2777,7 +2793,7 @@ function buildControlledRuntimeProfilesNote(input: {
       "",
       "## Profile Notes",
       profiles.length > 0
-        ? asBulletList(profiles.flatMap((entry) => ("reasons" in entry ? entry.reasons : entry.governance_notes).map((note) => `${entry.display_name}: ${note}`)))
+        ? asBulletList(profiles.flatMap((entry) => ("reasons" in entry ? entry.reasons : entry.governance_notes).map((note) => `${"reasons" in entry ? profileLabel(entry.profile_id) : entry.display_name}: ${note}`)))
         : "- No controlled runtime profile notes recorded yet.",
       "",
       "## Related",

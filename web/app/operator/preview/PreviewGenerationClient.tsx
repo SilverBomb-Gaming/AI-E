@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 
 import {
   GOVERNED_PREVIEW_RESOLUTION,
@@ -10,6 +10,8 @@ import {
 } from "@/lib/aie/governedPreviewGenerationContract";
 import type {
   GovernedPreviewExecutionResult,
+  GovernedPreviewMicroSequenceResult,
+  GovernedPreviewPrerequisiteState,
   GovernedPreviewRollbackResult,
 } from "@/lib/aie/governedPreviewGeneration";
 
@@ -44,10 +46,46 @@ export function PreviewGenerationClient() {
   const [form, setForm] = useState<GovernedPreviewFormInput>(DEFAULT_FORM);
   const [compiledRequest, setCompiledRequest] = useState<GovernedPreviewRequest | null>(null);
   const [execution, setExecution] = useState<GovernedPreviewExecutionResult | null>(null);
+  const [microSequence, setMicroSequence] = useState<GovernedPreviewMicroSequenceResult | null>(null);
+  const [prerequisiteState, setPrerequisiteState] = useState<GovernedPreviewPrerequisiteState | null>(null);
   const [rollback, setRollback] = useState<GovernedPreviewRollbackResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string>("Governed preview interface ready. Manual approval remains required.");
   const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetch("/api/operator/preview-generation", { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json() as {
+          error?: string;
+          prerequisiteState?: GovernedPreviewPrerequisiteState;
+        };
+
+        if (!response.ok || !payload.prerequisiteState) {
+          throw new Error(payload.error ?? "We couldn't load the governed preview prerequisite state.");
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setPrerequisiteState(payload.prerequisiteState);
+        setMessage(payload.prerequisiteState.motion_preview_ready
+          ? "Governed micro-sequence prerequisite satisfied. Motion preview generation is available."
+          : "Governed motion preview is blocked until the micro-sequence continuity prerequisite is satisfied.");
+      })
+      .catch((nextError) => {
+        if (!cancelled) {
+          setError(nextError instanceof Error ? nextError.message : "We couldn't load the governed preview prerequisite state.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function updateField<Key extends keyof GovernedPreviewFormInput>(key: Key, value: GovernedPreviewFormInput[Key]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -69,6 +107,7 @@ export function PreviewGenerationClient() {
             error?: string;
             compiledRequest?: GovernedPreviewRequest;
             execution?: GovernedPreviewExecutionResult;
+            prerequisiteState?: GovernedPreviewPrerequisiteState;
           };
 
           if (!response.ok || !payload.compiledRequest || !payload.execution) {
@@ -77,12 +116,55 @@ export function PreviewGenerationClient() {
 
           setCompiledRequest(payload.compiledRequest);
           setExecution(payload.execution);
+          setMicroSequence(null);
+          setPrerequisiteState(payload.prerequisiteState ?? payload.execution.prerequisite_state);
           setMessage(payload.execution.status === "accepted"
             ? "Governed preview request accepted inside the low-duration sandbox."
-            : "Governed preview request blocked by approval or compile-time safety checks.");
+            : payload.execution.blockers.includes("micro-sequence-prerequisite")
+              ? "Governed motion preview is blocked until the micro-sequence continuity prerequisite is satisfied."
+              : "Governed preview request blocked by approval or compile-time safety checks.");
         })
         .catch((nextError) => {
           setError(nextError instanceof Error ? nextError.message : "Governed preview generation failed.");
+        });
+    });
+  }
+
+  function handleGenerateMicroSequence() {
+    setError(null);
+    setRollback(null);
+    startTransition(() => {
+      void fetch("/api/operator/preview-generation", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ action: "generate-micro-sequence", input: form }),
+      })
+        .then(async (response) => {
+          const payload = await response.json() as {
+            error?: string;
+            compiledRequest?: GovernedPreviewRequest;
+            microSequence?: GovernedPreviewMicroSequenceResult;
+            prerequisiteState?: GovernedPreviewPrerequisiteState;
+          };
+
+          if (!response.ok || !payload.compiledRequest || !payload.microSequence) {
+            throw new Error(payload.error ?? "Governed micro-sequence generation failed.");
+          }
+
+          setCompiledRequest(payload.compiledRequest);
+          setExecution(null);
+          setMicroSequence(payload.microSequence);
+          setPrerequisiteState(payload.prerequisiteState ?? payload.microSequence.prerequisite_state);
+          setMessage(payload.microSequence.status === "generated"
+            ? "Governed micro-sequence continuity preview generated. Motion preview can be retried once continuity remains green."
+            : payload.microSequence.request.blockers.length > 0
+              ? "Governed micro-sequence generation remains blocked by approval or compile-time safety checks."
+              : `Governed micro-sequence continuity preview ran, but motion preview remains blocked by ${payload.microSequence.blockers.join(", ") || "continuity validation blockers"}.`);
+        })
+        .catch((nextError) => {
+          setError(nextError instanceof Error ? nextError.message : "Governed micro-sequence generation failed.");
         });
     });
   }
@@ -121,6 +203,13 @@ export function PreviewGenerationClient() {
     : execution?.status === "blocked"
       ? "blocked"
       : "default";
+  const motionPreviewReady = prerequisiteState?.motion_preview_ready === true;
+  const latestMicroSequenceFrameReferences = microSequence?.generated_frame_references.length
+    ? microSequence.generated_frame_references
+    : (prerequisiteState?.generated_frame_references ?? []);
+  const showGenerateMicroSequenceCta = !motionPreviewReady
+    || execution?.blockers.includes("micro-sequence-prerequisite")
+    || microSequence?.status === "blocked";
 
   return (
     <main className="page-shell min-h-screen bg-mist/80">
@@ -243,10 +332,18 @@ export function PreviewGenerationClient() {
               <button
                 type="button"
                 onClick={handleGenerate}
-                disabled={isPending}
+                disabled={isPending || !motionPreviewReady}
                 className="rounded-full border border-ocean/20 bg-ocean px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Generate Preview
+              </button>
+              <button
+                type="button"
+                onClick={handleGenerateMicroSequence}
+                disabled={isPending}
+                className="rounded-full border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Generate Micro-Sequence First
               </button>
               <button
                 type="button"
@@ -257,6 +354,11 @@ export function PreviewGenerationClient() {
                 Clear Preview Sandbox
               </button>
             </div>
+            {!motionPreviewReady ? (
+              <p className="mt-4 rounded-[1.25rem] border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-700">
+                Motion preview generation stays disabled until the governed micro-sequence exists and frame-to-frame continuity validation passes.
+              </p>
+            ) : null}
           </section>
 
           <section className="glass-card rounded-[2rem] p-6 shadow-float">
@@ -265,6 +367,7 @@ export function PreviewGenerationClient() {
               <div className="flex flex-wrap items-center gap-2">
                 <StatusPill label={execution?.status ?? "idle"} tone={statusTone} />
                 <StatusPill label={isPending ? "pending" : "ready"} tone={isPending ? "warn" : "default"} />
+                <StatusPill label={motionPreviewReady ? "prerequisite-ready" : "prerequisite-required"} tone={motionPreviewReady ? "ok" : "warn"} />
               </div>
               <p className="text-sm leading-7 body-muted">{message}</p>
               {error ? <p className="rounded-[1.25rem] border border-coral/20 bg-coral/10 p-4 text-sm text-ember">{error}</p> : null}
@@ -276,6 +379,28 @@ export function PreviewGenerationClient() {
                   <p><strong className="text-ink">Resolution:</strong> {compiledRequest.resolution}</p>
                   <p><strong className="text-ink">No autonomous continuation:</strong> {compiledRequest.autonomous_continuation_allowed ? "no" : "yes"}</p>
                 </article>
+              ) : null}
+              {prerequisiteState ? (
+                <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4 text-sm leading-7 body-muted">
+                  <p><strong className="text-ink">Micro-sequence exists:</strong> {prerequisiteState.micro_sequence_exists ? "yes" : "no"}</p>
+                  <p><strong className="text-ink">Motion preview ready:</strong> {prerequisiteState.motion_preview_ready ? "yes" : "no"}</p>
+                  <p><strong className="text-ink">Continuity validation:</strong> {prerequisiteState.continuity_validation.valid ? "passed" : "blocked"}</p>
+                  <p><strong className="text-ink">Continuity summary:</strong> {prerequisiteState.continuity_validation.summary}</p>
+                </article>
+              ) : null}
+              {showGenerateMicroSequenceCta ? (
+                <div className="rounded-[1.25rem] border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-700">
+                  <p className="font-semibold text-amber-800">Next step required before motion preview</p>
+                  <p className="mt-2">Use the governed micro-sequence continuity preview to satisfy the prerequisite before generating a motion preview clip.</p>
+                  <button
+                    type="button"
+                    onClick={handleGenerateMicroSequence}
+                    disabled={isPending}
+                    className="mt-4 rounded-full border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Generate Micro-Sequence First
+                  </button>
+                </div>
               ) : null}
               {execution ? (
                 <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4 text-sm leading-7 body-muted">
@@ -289,6 +414,15 @@ export function PreviewGenerationClient() {
                   <p><strong className="text-ink">Continuity summary:</strong> {execution.continuity_validation.summary}</p>
                 </article>
               ) : null}
+              {microSequence ? (
+                <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4 text-sm leading-7 body-muted">
+                  <p><strong className="text-ink">Micro-sequence sandbox:</strong> {microSequence.sandbox_path ?? "not created"}</p>
+                  <p><strong className="text-ink">Sandbox root:</strong> {microSequence.sandbox_output_root ?? "not created"}</p>
+                  <p><strong className="text-ink">Continuity validation:</strong> {microSequence.continuity_validation.valid ? "passed" : "blocked"}</p>
+                  <p><strong className="text-ink">Continuity summary:</strong> {microSequence.continuity_validation.summary}</p>
+                  <p><strong className="text-ink">Preview cleanup after prerequisite run:</strong> {microSequence.rollback_status || "No preview cleanup actions were required."}</p>
+                </article>
+              ) : null}
               {rollback ? (
                 <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4 text-sm leading-7 body-muted">
                   <p><strong className="text-ink">Rollback status:</strong> {rollback.rollback_status}</p>
@@ -300,7 +434,22 @@ export function PreviewGenerationClient() {
           </section>
         </div>
 
-        <section className="mt-6 grid gap-6 lg:grid-cols-2">
+        <section className="mt-6 grid gap-6 lg:grid-cols-3">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <p className="section-label">Micro-Sequence Frames</p>
+            <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
+              {latestMicroSequenceFrameReferences.length ? (
+                <ul className="space-y-2">
+                  {latestMicroSequenceFrameReferences.map((reference) => (
+                    <li key={reference} className="rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3">{reference}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p>{microSequence?.sandbox_path ? "No governed micro-sequence frame files were produced for the latest prerequisite run." : "No governed micro-sequence frames are available yet."}</p>
+              )}
+            </div>
+          </article>
+
           <article className="glass-card rounded-[2rem] p-6 shadow-float">
             <p className="section-label">Preview Outputs</p>
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
@@ -319,6 +468,13 @@ export function PreviewGenerationClient() {
           <article className="glass-card rounded-[2rem] p-6 shadow-float">
             <p className="section-label">Blockers And Rollback</p>
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
+              {prerequisiteState?.continuity_validation.blockers.length ? (
+                <ul className="space-y-2">
+                  {prerequisiteState.continuity_validation.blockers.map((blocker) => (
+                    <li key={`continuity-${blocker}`} className="rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-amber-700">{blocker}</li>
+                  ))}
+                </ul>
+              ) : null}
               {execution?.blockers.length ? (
                 <ul className="space-y-2">
                   {execution.blockers.map((blocker) => (

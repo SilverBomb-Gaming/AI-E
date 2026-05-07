@@ -2,10 +2,28 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  executeGovernedPreviewMicroSequenceRequest,
   executeGovernedPreviewRequest,
+  readGovernedPreviewPrerequisiteState,
   rollbackGovernedPreviewSandbox,
 } from "./governedPreviewGeneration";
 import { compileGovernedPreviewRequest } from "./governedPreviewGenerationContract";
+
+test("readGovernedPreviewPrerequisiteState reports missing micro-sequence prerequisite when no history exists", async () => {
+  const prerequisiteState = await readGovernedPreviewPrerequisiteState({
+    deps: {
+      readProductionMemory: async () => ({
+        governed_micro_sequence_sandbox_history: [],
+        frame_to_frame_continuity_validation_history: [],
+      }),
+    },
+  });
+
+  assert.equal(prerequisiteState.micro_sequence_exists, false);
+  assert.equal(prerequisiteState.motion_preview_ready, false);
+  assert.equal(prerequisiteState.next_step_action, "generate-micro-sequence-first");
+  assert.match(prerequisiteState.continuity_validation.summary, /Generate the governed micro-sequence continuity preview first/i);
+});
 
 test("compileGovernedPreviewRequest blocks requests without manual approval", () => {
   const request = compileGovernedPreviewRequest({
@@ -89,6 +107,25 @@ test("executeGovernedPreviewRequest returns sandbox outputs and does not call pr
       providerCall: () => {
         providerCallCount += 1;
       },
+      readProductionMemory: async () => ({
+        governed_micro_sequence_sandbox_history: [
+          {
+            sequence_directory: ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001",
+            output_root: ".aie/governed_micro_sequence_sandbox",
+            output_file_paths: [
+              ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001/governed_preview_sequence_frame_001.ppm",
+            ],
+            real_sequence_written: true,
+          },
+        ],
+        frame_to_frame_continuity_validation_history: [
+          {
+            valid: true,
+            blocked_transitions: [],
+            next_unlock_condition: "Micro-sequence continuity preview is validated within bounded temporal scope.",
+          },
+        ],
+      }),
       simulateBootstrap: async () => {
         simulateCallCount += 1;
         return {
@@ -136,6 +173,107 @@ test("executeGovernedPreviewRequest returns sandbox outputs and does not call pr
   assert.equal(result.generated_preview_references.length, 3);
   assert.equal(result.execution_ledger_state.attempt_count, 1);
   assert.equal(result.live_workspace_blocked_output, false);
+});
+
+test("executeGovernedPreviewRequest blocks when the governed micro-sequence prerequisite is missing", async () => {
+  let simulateCallCount = 0;
+  const request = compileGovernedPreviewRequest({
+    prompt: "Preview a careful turn toward the doorway.",
+    subject: "Operator",
+    motion_intent: "careful turn",
+    style: "grounded cinematic",
+    duration_seconds: 1,
+    resolution: "720p",
+    continuity_priority: "medium",
+    governance_approval: true,
+  });
+
+  const result = await executeGovernedPreviewRequest(request, {
+    deps: {
+      readProductionMemory: async () => ({
+        governed_micro_sequence_sandbox_history: [],
+        frame_to_frame_continuity_validation_history: [],
+      }),
+      simulateBootstrap: async () => {
+        simulateCallCount += 1;
+        throw new Error("simulate should not run before prerequisite readiness");
+      },
+    },
+  });
+
+  assert.equal(simulateCallCount, 0);
+  assert.equal(result.status, "blocked");
+  assert.deepEqual(result.blockers, ["micro-sequence-prerequisite"]);
+  assert.equal(result.prerequisite_state.motion_preview_ready, false);
+  assert.equal(result.prerequisite_state.next_step_action, "generate-micro-sequence-first");
+});
+
+test("executeGovernedPreviewMicroSequenceRequest returns micro-sequence frame references and continuity status", async () => {
+  const request = compileGovernedPreviewRequest({
+    prompt: "Prepare a bounded continuity preview before motion generation.",
+    subject: "Scout",
+    motion_intent: "measured lean",
+    style: "stylized realism",
+    duration_seconds: 2,
+    resolution: "720p",
+    continuity_priority: "high",
+    governance_approval: true,
+  });
+
+  const result = await executeGovernedPreviewMicroSequenceRequest(request, {
+    deps: {
+      simulateBootstrap: async () => ({
+        validation: {
+          governed_micro_sequence_sandbox: {
+            sequence_directory: ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001",
+            output_root: ".aie/governed_micro_sequence_sandbox",
+            output_file_paths: [
+              ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001/governed_preview_sequence_frame_001.ppm",
+              ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001/governed_preview_sequence_frame_002.ppm",
+              ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001/governed_preview_sequence_frame_003.ppm",
+            ],
+            real_sequence_written: true,
+          },
+          frame_to_frame_continuity_validation: {
+            valid: true,
+            blocked_transitions: [],
+            next_unlock_condition: "Micro-sequence continuity preview is validated within bounded temporal scope.",
+          },
+        },
+        simulation: {
+          simulation_id: "simulation-002",
+        },
+      } as never),
+      clearPreviewSandbox: async () => ({
+        rolled_back: true,
+        recorded_at: "2026-05-07T00:00:00.000Z",
+        output_root: ".aie/governed_motion_preview_sandbox",
+        clip_directory: ".aie/governed_motion_preview_sandbox/clip-governed-motion-preview-001",
+        deleted_output_targets: [
+          ".aie/governed_motion_preview_sandbox/clip-governed-motion-preview-001/governed_motion_preview_manifest.json",
+        ],
+        rollback: {
+          actions: [
+            {
+              triggered: true,
+              detail: "Deletion remains bounded to the governed motion preview sandbox root.",
+              affected_output_targets: [
+                ".aie/governed_motion_preview_sandbox/clip-governed-motion-preview-001/governed_motion_preview_manifest.json",
+              ],
+            },
+          ],
+        },
+        governance_status: "Rollback remained bounded to governed motion preview sandbox outputs only.",
+        sandbox_limited: true,
+      }),
+    },
+  });
+
+  assert.equal(result.status, "generated");
+  assert.equal(result.generated_frame_references.length, 3);
+  assert.equal(result.continuity_validation.valid, true);
+  assert.equal(result.prerequisite_state.motion_preview_ready, true);
+  assert.equal(result.preview_cleanup_targets.length, 1);
 });
 
 test("rollbackGovernedPreviewSandbox stays bounded to preview sandbox outputs", async () => {
