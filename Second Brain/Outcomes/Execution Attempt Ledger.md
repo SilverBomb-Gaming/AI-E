@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:26:31.842Z
+updated_at: 2026-05-07T20:38:37.338Z
 session_id: phase7c-skip-task-session
 status: generated_execution_attempt_ledger
 tags:
@@ -17,10 +17,10 @@ tags:
 
 ## Attempt Summary
 - Attempt count: 1
-- Recorded at: 2026-05-07T20:26:31.812Z
+- Recorded at: 2026-05-07T20:38:37.300Z
 
 ## Attempts
-- token-single-frame-dry-governed: blocked=runtime-integrity-sufficiency | escalations=token-expiration-recovery, blocked-stage-recovery, low-vram-recovery, governance-escalation-recovery, dry-rollback-sequencing
+- token-single-frame-dry-governed: blocked=continuity-state-readiness, runtime-integrity-sufficiency | escalations=token-expiration-recovery, blocked-stage-recovery, continuity-recovery, low-vram-recovery, governance-escalation-recovery, dry-rollback-sequencing
 
 ## Related
 - [[Dry Execution Token Registry]]

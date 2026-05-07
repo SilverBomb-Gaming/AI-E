@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:26:31.842Z
+updated_at: 2026-05-07T20:38:37.338Z
 session_id: phase7c-skip-task-session
 status: generated_future_low_resolution_output
 tags:
@@ -20,8 +20,8 @@ tags:
 - Output count: 5
 
 ## Output Scaffolds
-- governed-thumbnail-synthesis: unlocked=no | target=720p | prerequisites=thumbnail governance approval, Manual governance review is not satisfied., No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.
-- governed-preview-frame-synthesis: unlocked=no | target=720p | prerequisites=preview frame containment approval, Manual governance review is not satisfied., No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.
+- governed-thumbnail-synthesis: unlocked=no | target=720p | prerequisites=thumbnail governance approval, Continuity state readiness remains below governed synthesis threshold., Manual governance review is not satisfied., No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.
+- governed-preview-frame-synthesis: unlocked=no | target=720p | prerequisites=preview frame containment approval, Continuity state readiness remains below governed synthesis threshold., Manual governance review is not satisfied., No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.
 - bounded-low-resolution-output: unlocked=no | target=720p | prerequisites=bounded output review, manual rollback coverage
 - continuity-safe-preview-rendering: unlocked=no | target=720p | prerequisites=continuity-safe preview review, sequence continuity evidence preserved
 - governed-renderer-preview-mode: unlocked=no | target=720p | prerequisites=renderer preview governance review, blocked output enforcement remains provable

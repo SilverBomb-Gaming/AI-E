@@ -82,6 +82,7 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Outcomes/Execution Attempt Ledger.md"));
     assert.ok(files.includes("Outcomes/Governed Rollback Ledger.md"));
     assert.ok(files.includes("Outcomes/Real Output Rollback.md"));
+    assert.ok(files.includes("Outcomes/Sequence Rollback Recovery.md"));
     assert.ok(files.includes("Outcomes/Sandbox Simulation Results.md"));
     assert.ok(files.includes("Outcomes/Successful Generations.md"));
     assert.ok(files.includes("Recovery/Recovery Procedures.md"));
@@ -123,6 +124,8 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Architecture/Contained Escalation Modeling.md"));
     assert.ok(files.includes("Architecture/Real Output Authorization Registry.md"));
     assert.ok(files.includes("Architecture/Output Containment Validation.md"));
+    assert.ok(files.includes("Architecture/Continuity Sequence Containment.md"));
+    assert.ok(files.includes("Architecture/Frame To Frame Continuity Validation.md"));
     assert.ok(files.includes("Architecture/Manual Approval Workflow.md"));
     assert.ok(files.includes("Architecture/Continuity Review Notes.md"));
     assert.ok(files.includes("Architecture/Provider Constraint Matrix.md"));
@@ -158,6 +161,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.ok(files.includes("Strategy/Governed Low Resolution Sandbox.md"));
     assert.ok(files.includes("Strategy/First Real Synthesis Path.md"));
     assert.ok(files.includes("Strategy/Future Renderer Escalation.md"));
+    assert.ok(files.includes("Strategy/Governed Micro Sequence Sandbox.md"));
+    assert.ok(files.includes("Strategy/Continuity Preview Sequencing.md"));
+    assert.ok(files.includes("Strategy/Future Cinematic Continuity.md"));
     assert.ok(files.includes("Strategy/Queue Orchestration Planning.md"));
     assert.ok(files.includes("Strategy/Generation Job Queue.md"));
     assert.ok(files.includes("Strategy/Operator Approval Queue.md"));
@@ -240,6 +246,8 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const containedEscalationModelingText = await readFile(path.join(vaultRoot, "Architecture", "Contained Escalation Modeling.md"), "utf8");
     const realOutputAuthorizationRegistryText = await readFile(path.join(vaultRoot, "Architecture", "Real Output Authorization Registry.md"), "utf8");
     const outputContainmentValidationText = await readFile(path.join(vaultRoot, "Architecture", "Output Containment Validation.md"), "utf8");
+    const continuitySequenceContainmentText = await readFile(path.join(vaultRoot, "Architecture", "Continuity Sequence Containment.md"), "utf8");
+    const frameToFrameContinuityValidationText = await readFile(path.join(vaultRoot, "Architecture", "Frame To Frame Continuity Validation.md"), "utf8");
     const lifecycleText = await readFile(path.join(vaultRoot, "Architecture", "Cinematic Execution Lifecycle.md"), "utf8");
     const retryRulesText = await readFile(path.join(vaultRoot, "Architecture", "Retry Planning Rules.md"), "utf8");
     const generationStrategyText = await readFile(path.join(vaultRoot, "Resources", "Cost-Aware Generation Strategy.md"), "utf8");
@@ -263,6 +271,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const governedLowResolutionSandboxText = await readFile(path.join(vaultRoot, "Strategy", "Governed Low Resolution Sandbox.md"), "utf8");
     const firstRealSynthesisPathText = await readFile(path.join(vaultRoot, "Strategy", "First Real Synthesis Path.md"), "utf8");
     const futureRendererEscalationText = await readFile(path.join(vaultRoot, "Strategy", "Future Renderer Escalation.md"), "utf8");
+    const governedMicroSequenceSandboxText = await readFile(path.join(vaultRoot, "Strategy", "Governed Micro Sequence Sandbox.md"), "utf8");
+    const continuityPreviewSequencingText = await readFile(path.join(vaultRoot, "Strategy", "Continuity Preview Sequencing.md"), "utf8");
+    const futureCinematicContinuityText = await readFile(path.join(vaultRoot, "Strategy", "Future Cinematic Continuity.md"), "utf8");
     const framePipelineText = await readFile(path.join(vaultRoot, "Strategy", "Frame Generation Pipeline Planning.md"), "utf8");
     const rendererRoadmapText = await readFile(path.join(vaultRoot, "Strategy", "Renderer Capability Roadmap.md"), "utf8");
     const hybridStrategyText = await readFile(path.join(vaultRoot, "Strategy", "Hybrid Local Cloud Strategy.md"), "utf8");
@@ -280,6 +291,7 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     const executionAttemptLedgerText = await readFile(path.join(vaultRoot, "Outcomes", "Execution Attempt Ledger.md"), "utf8");
     const governedRollbackLedgerText = await readFile(path.join(vaultRoot, "Outcomes", "Governed Rollback Ledger.md"), "utf8");
     const realOutputRollbackText = await readFile(path.join(vaultRoot, "Outcomes", "Real Output Rollback.md"), "utf8");
+    const sequenceRollbackRecoveryText = await readFile(path.join(vaultRoot, "Outcomes", "Sequence Rollback Recovery.md"), "utf8");
     const sandboxResultsText = await readFile(path.join(vaultRoot, "Outcomes", "Sandbox Simulation Results.md"), "utf8");
     const rendererRecoveryText = await readFile(path.join(vaultRoot, "Recovery", "Renderer Recovery Planning.md"), "utf8");
     const activationRecoveryText = await readFile(path.join(vaultRoot, "Recovery", "Activation Failure Recovery.md"), "utf8");
@@ -340,6 +352,8 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(containedEscalationModelingText, /No contained escalation modeling recorded yet\./i);
     assert.match(realOutputAuthorizationRegistryText, /No real output authorization registry recorded yet\./i);
     assert.match(outputContainmentValidationText, /No output containment validation recorded yet\./i);
+    assert.match(continuitySequenceContainmentText, /No continuity sequence containment recorded yet\./i);
+    assert.match(frameToFrameContinuityValidationText, /No frame-to-frame continuity validation recorded yet\./i);
     assert.match(lifecycleText, /Execution lifecycle remains append-only/i);
     assert.match(retryRulesText, /Retry planning must preserve successful shot outputs/i);
     assert.match(generationStrategyText, /Use cheap draft routing for first-pass framing validation/i);
@@ -363,6 +377,9 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(governedLowResolutionSandboxText, /No governed low resolution sandbox recorded yet\./i);
     assert.match(firstRealSynthesisPathText, /No first real synthesis path recorded yet\./i);
     assert.match(futureRendererEscalationText, /No future renderer escalation recorded yet\./i);
+    assert.match(governedMicroSequenceSandboxText, /No governed micro sequence sandbox recorded yet\./i);
+    assert.match(continuityPreviewSequencingText, /No continuity preview sequencing recorded yet\./i);
+    assert.match(futureCinematicContinuityText, /No future cinematic continuity recorded yet\./i);
     assert.match(framePipelineText, /Prompt Compilation/i);
     assert.match(rendererRoadmapText, /Image Sequence Rendering/i);
     assert.match(hybridStrategyText, /Local Draft Rendering/i);
@@ -380,6 +397,7 @@ test("exportSecondBrainToObsidian creates deterministic vault structure and read
     assert.match(executionAttemptLedgerText, /No execution attempt ledger recorded yet\./i);
     assert.match(governedRollbackLedgerText, /No governed rollback ledger recorded yet\./i);
     assert.match(realOutputRollbackText, /No real output rollback recorded yet\./i);
+    assert.match(sequenceRollbackRecoveryText, /No sequence rollback recovery actions recorded yet\./i);
     assert.match(sandboxResultsText, /No sandbox simulations recorded yet\./);
     assert.match(rendererRecoveryText, /No renderer recovery causes recorded yet\./i);
     assert.match(activationRecoveryText, /No activation failure causes recorded yet\./i);
@@ -574,6 +592,8 @@ test("exportSecondBrainToObsidian projects controlled local bootstrap into the n
     const containedEscalationModelingText = await readFile(path.join(vaultRoot, "Architecture", "Contained Escalation Modeling.md"), "utf8");
     const realOutputAuthorizationRegistryText = await readFile(path.join(vaultRoot, "Architecture", "Real Output Authorization Registry.md"), "utf8");
     const outputContainmentValidationText = await readFile(path.join(vaultRoot, "Architecture", "Output Containment Validation.md"), "utf8");
+    const continuitySequenceContainmentText = await readFile(path.join(vaultRoot, "Architecture", "Continuity Sequence Containment.md"), "utf8");
+    const frameToFrameContinuityValidationText = await readFile(path.join(vaultRoot, "Architecture", "Frame To Frame Continuity Validation.md"), "utf8");
     const controlledProfilesText = await readFile(path.join(vaultRoot, "Strategy", "Controlled Runtime Profiles.md"), "utf8");
     const futureInferenceText = await readFile(path.join(vaultRoot, "Strategy", "Future Inference Activation.md"), "utf8");
     const inferenceSequencingText = await readFile(path.join(vaultRoot, "Strategy", "Inference Entry Sequencing.md"), "utf8");
@@ -588,8 +608,12 @@ test("exportSecondBrainToObsidian projects controlled local bootstrap into the n
     const governedLowResolutionSandboxText = await readFile(path.join(vaultRoot, "Strategy", "Governed Low Resolution Sandbox.md"), "utf8");
     const firstRealSynthesisPathText = await readFile(path.join(vaultRoot, "Strategy", "First Real Synthesis Path.md"), "utf8");
     const futureRendererEscalationText = await readFile(path.join(vaultRoot, "Strategy", "Future Renderer Escalation.md"), "utf8");
+    const governedMicroSequenceSandboxText = await readFile(path.join(vaultRoot, "Strategy", "Governed Micro Sequence Sandbox.md"), "utf8");
+    const continuityPreviewSequencingText = await readFile(path.join(vaultRoot, "Strategy", "Continuity Preview Sequencing.md"), "utf8");
+    const futureCinematicContinuityText = await readFile(path.join(vaultRoot, "Strategy", "Future Cinematic Continuity.md"), "utf8");
     const executionAttemptLedgerText = await readFile(path.join(vaultRoot, "Outcomes", "Execution Attempt Ledger.md"), "utf8");
     const realOutputRollbackText = await readFile(path.join(vaultRoot, "Outcomes", "Real Output Rollback.md"), "utf8");
+    const sequenceRollbackRecoveryText = await readFile(path.join(vaultRoot, "Outcomes", "Sequence Rollback Recovery.md"), "utf8");
     const governedRollbackLedgerText = await readFile(path.join(vaultRoot, "Outcomes", "Governed Rollback Ledger.md"), "utf8");
 
     assert.match(dryBootstrapText, /Valid: yes/i);
@@ -621,6 +645,9 @@ test("exportSecondBrainToObsidian projects controlled local bootstrap into the n
     assert.match(realOutputAuthorizationRegistryText, /authorization-governed-low-res-single-frame: scope=governed_preview_frame_output/i);
     assert.match(outputContainmentValidationText, /authorization-validity: passed=yes/i);
     assert.match(outputContainmentValidationText, /output-target-safety: passed=yes/i);
+    assert.match(continuitySequenceContainmentText, /sequence-governed-micro-preview-001: frames=3/i);
+    assert.match(frameToFrameContinuityValidationText, /continuity-drift-thresholds: passed=yes/i);
+    assert.match(frameToFrameContinuityValidationText, /temporal-scope-restrictions: passed=yes/i);
     assert.match(controlledProfilesText, /Low VRAM Safe|Offline Safe/i);
     assert.match(controlledProfilesText, /viable=yes|viable=no/i);
     assert.match(futureInferenceText, /Dry model initialization: yes/i);
@@ -645,9 +672,17 @@ test("exportSecondBrainToObsidian projects controlled local bootstrap into the n
     assert.match(firstRealSynthesisPathText, /bounded_output_write: status=completed/i);
     assert.match(futureRendererEscalationText, /Milestone unlocking renderer escalation: reviewed-governed-renderer-escalation-bridge/i);
     assert.match(futureRendererEscalationText, /governed-renderer-preview-mode: unlocked=no/i);
+    assert.match(governedMicroSequenceSandboxText, /Sequence written: yes/i);
+    assert.match(governedMicroSequenceSandboxText, /Frame count: 3/i);
+    assert.match(continuityPreviewSequencingText, /bounded_sequence_write: status=completed/i);
+    assert.match(continuityPreviewSequencingText, /sequence_archived: status=archived/i);
+    assert.match(futureCinematicContinuityText, /Milestone unlocking cinematic continuity: reviewed-governed-cinematic-continuity-bridge/i);
+    assert.match(futureCinematicContinuityText, /governed-teaser-preview-mode: unlocked=no/i);
     assert.match(executionAttemptLedgerText, /token-single-frame-dry-governed: blocked=/i);
     assert.match(realOutputRollbackText, /rollback-authority-enforcement: triggered=yes/i);
     assert.match(realOutputRollbackText, /bounded-output-deletion: triggered=yes/i);
+    assert.match(sequenceRollbackRecoveryText, /sequence-rollback-cleanup: triggered=yes/i);
+    assert.match(sequenceRollbackRecoveryText, /sequence-attempt-archival: triggered=yes/i);
     assert.match(governedRollbackLedgerText, /containment-governed-single-frame-prepare: violations=/i);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:26:31.842Z
+updated_at: 2026-05-07T20:38:37.338Z
 session_id: phase7c-skip-task-session
 status: generated_governed_synthesis_preparation
 tags:
@@ -22,11 +22,11 @@ tags:
 
 ## Preparation Stages
 - 1. synthesis_prepare_request: status=ready | blockers=none
-- 2. synthesis_scheduler_prepare: status=blocked | blockers=governance-approval-state, runtime-integrity-sufficiency
-- 3. synthesis_pipeline_prepare: status=blocked | blockers=governance-approval-state, runtime-integrity-sufficiency
-- 4. synthesis_frame_prepare: status=blocked | blockers=governance-approval-state, runtime-integrity-sufficiency
-- 5. synthesis_output_blocked: status=blocked | blockers=governance-approval-state, runtime-integrity-sufficiency
-- 6. synthesis_prepare_archived: status=archived | blockers=governance-approval-state, runtime-integrity-sufficiency
+- 2. synthesis_scheduler_prepare: status=blocked | blockers=continuity-state-readiness, governance-approval-state, runtime-integrity-sufficiency
+- 3. synthesis_pipeline_prepare: status=blocked | blockers=continuity-state-readiness, governance-approval-state, runtime-integrity-sufficiency
+- 4. synthesis_frame_prepare: status=blocked | blockers=continuity-state-readiness, governance-approval-state, runtime-integrity-sufficiency
+- 5. synthesis_output_blocked: status=blocked | blockers=continuity-state-readiness, governance-approval-state, runtime-integrity-sufficiency
+- 6. synthesis_prepare_archived: status=archived | blockers=continuity-state-readiness, governance-approval-state, runtime-integrity-sufficiency
 
 ## Related
 - [[Synthesis Containment Registry]]

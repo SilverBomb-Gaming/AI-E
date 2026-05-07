@@ -2574,7 +2574,7 @@ function buildUpdatedReadinessProgressNote(input: {
 
 function latestControlledBootstrapSimulation(production: CinematicProductionMemoryRecord): CinematicProductionMemoryRecord["sandbox_simulations"][number] | null {
   return [...production.sandbox_simulations]
-    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor" || entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor" || entry.sandbox_kind === "gated-single-frame-dry-execution-path" || entry.sandbox_kind === "governed-single-frame-synthesis-preparation" || entry.sandbox_kind === "governed-low-resolution-frame-synthesis-sandbox")
+    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor" || entry.sandbox_kind === "dry-inference-warmup-single-frame-precursor" || entry.sandbox_kind === "gated-single-frame-dry-execution-path" || entry.sandbox_kind === "governed-single-frame-synthesis-preparation" || entry.sandbox_kind === "governed-low-resolution-frame-synthesis-sandbox" || entry.sandbox_kind === "governed-micro-sequence-continuity-preview")
     .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
 }
 
@@ -4026,6 +4026,261 @@ function buildFutureRendererEscalationNote(input: {
   };
 }
 
+function buildContinuitySequenceContainmentNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const registry = latestBootstrap?.continuity_sequence_containment ?? production.continuity_sequence_containment_history[0] ?? [];
+  return {
+    title: "Continuity Sequence Containment",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_continuity_sequence_containment",
+      tags: ["second-brain", "continuity-sequence-containment", "micro-sequence", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Containment Summary",
+      registry.length > 0
+        ? asBulletList([
+          `Containment count: ${registry.length}`,
+          `Temporal scopes: ${[...new Set(registry.map((entry) => entry.allowed_temporal_scope))].join(", ")}`,
+          `Maximum frame count: ${Math.max(...registry.map((entry) => entry.maximum_frame_count))}`,
+        ])
+        : "- No continuity sequence containment recorded yet.",
+      "",
+      "## Containment Entries",
+      registry.length > 0
+        ? asBulletList(registry.map((entry) => `${entry.sequence_id}: frames=${entry.maximum_frame_count} | anchor=${entry.continuity_anchor_policy} | drift=${entry.escalation_threshold} | forbidden=${entry.forbidden_sequence_behaviors.join(", ")}`))
+        : "- No continuity sequence containment entries recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Governed Micro Sequence Sandbox"),
+        toLink("Frame To Frame Continuity Validation"),
+        toLink("Sequence Rollback Recovery"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildGovernedMicroSequenceSandboxNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const sandbox = latestBootstrap?.governed_micro_sequence_sandbox ?? production.governed_micro_sequence_sandbox_history[0] ?? null;
+  return {
+    title: "Governed Micro Sequence Sandbox",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_governed_micro_sequence_sandbox",
+      tags: ["second-brain", "micro-sequence-sandbox", "continuity", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Sandbox Summary",
+      sandbox
+        ? asBulletList([
+          `Sequence id: ${sandbox.sequence_id ?? "none"}`,
+          `Sequence written: ${sandbox.real_sequence_written ? "yes" : "no"}`,
+          `Frame count: ${sandbox.sequence_frame_count}`,
+          `Sequence directory: ${sandbox.sequence_directory}`,
+        ])
+        : "- No governed micro sequence sandbox recorded yet.",
+      "",
+      "## Sandbox Controls",
+      sandbox
+        ? asBulletList([
+          `Retention: ${sandbox.output_retention_policy}`,
+          `Retry limit: ${sandbox.bounded_retry_limit}`,
+          `Continuity anchor: ${sandbox.continuity_anchor}`,
+        ])
+        : "- No governed micro sequence sandbox controls recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Continuity Sequence Containment"),
+        toLink("Continuity Preview Sequencing"),
+        toLink("Sequence Rollback Recovery"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildContinuityPreviewSequencingNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const pathState = latestBootstrap?.continuity_preview_sequencing ?? production.continuity_preview_sequencing_history[0] ?? null;
+  return {
+    title: "Continuity Preview Sequencing",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_continuity_preview_sequencing",
+      tags: ["second-brain", "continuity-preview", "micro-sequence", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Sequencing Summary",
+      pathState
+        ? asBulletList([
+          `Sequence id: ${pathState.sequence_id ?? "none"}`,
+          `Next stage: ${pathState.next_stage ?? "none"}`,
+          `Output count: ${pathState.output_file_paths.length}`,
+        ])
+        : "- No continuity preview sequencing recorded yet.",
+      "",
+      "## Sequencing Stages",
+      pathState?.stages?.length
+        ? asBulletList(pathState.stages.map((entry) => `${entry.order}. ${entry.stage}: status=${entry.status} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No continuity preview sequencing stages recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Governed Micro Sequence Sandbox"),
+        toLink("Frame To Frame Continuity Validation"),
+        toLink("Future Cinematic Continuity"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFrameToFrameContinuityValidationNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const validation = latestBootstrap?.frame_to_frame_continuity_validation ?? production.frame_to_frame_continuity_validation_history[0] ?? null;
+  return {
+    title: "Frame To Frame Continuity Validation",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_frame_to_frame_continuity_validation",
+      tags: ["second-brain", "frame-to-frame-continuity", "validation", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Validation Summary",
+      validation
+        ? asBulletList([
+          `Valid: ${validation.valid ? "yes" : "no"}`,
+          `Next unlock condition: ${validation.next_unlock_condition}`,
+          `Blocked transitions: ${validation.blocked_transitions.join(", ") || "none"}`,
+        ])
+        : "- No frame-to-frame continuity validation recorded yet.",
+      "",
+      "## Validation Checks",
+      validation?.checks?.length
+        ? asBulletList(validation.checks.map((entry) => `${entry.check}: passed=${entry.passed ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No frame-to-frame continuity checks recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Continuity Sequence Containment"),
+        toLink("Governed Micro Sequence Sandbox"),
+        toLink("Future Cinematic Continuity"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildSequenceRollbackRecoveryNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const rollback = latestBootstrap?.sequence_rollback_recovery ?? production.sequence_rollback_recovery_history[0] ?? null;
+  return {
+    title: "Sequence Rollback Recovery",
+    directory: "Outcomes",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_sequence_rollback_recovery",
+      tags: ["second-brain", "sequence-rollback", "continuity", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Recovery Actions",
+      rollback?.actions?.length
+        ? asBulletList(rollback.actions.map((entry) => `${entry.action}: triggered=${entry.triggered ? "yes" : "no"} | targets=${entry.affected_output_targets.join(", ") || "none"}`))
+        : "- No sequence rollback recovery actions recorded yet.",
+      "",
+      "## Recovery Summary",
+      rollback
+        ? asBulletList([
+          `Recovery id: ${rollback.recovery_id}`,
+          `Recorded at: ${rollback.recorded_at}`,
+        ])
+        : "- No sequence rollback recovery summary recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Continuity Sequence Containment"),
+        toLink("Governed Micro Sequence Sandbox"),
+        toLink("Future Cinematic Continuity"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFutureCinematicContinuityNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const future = latestBootstrap?.future_cinematic_continuity ?? production.future_cinematic_continuity_history[0] ?? null;
+  return {
+    title: "Future Cinematic Continuity",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_future_cinematic_continuity",
+      tags: ["second-brain", "future-cinematic-continuity", "continuity", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Continuity Summary",
+      future
+        ? asBulletList([
+          `Milestone unlocking cinematic continuity: ${future.milestone_unlocks_cinematic_continuity}`,
+          `Entry count: ${future.entries.length}`,
+        ])
+        : "- No future cinematic continuity recorded yet.",
+      "",
+      "## Continuity Scaffolds",
+      future?.entries?.length
+        ? asBulletList(future.entries.map((entry) => `${entry.continuity_id}: unlocked=no | prerequisites=${entry.prerequisites.join(", ")}`))
+        : "- No future cinematic continuity scaffolds recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Continuity Preview Sequencing"),
+        toLink("Frame To Frame Continuity Validation"),
+        toLink("Sequence Rollback Recovery"),
+      ]),
+    ].join("\n"),
+  };
+}
+
 function buildCinematicExecutionLifecycleNote(input: {
   productionMemory: CinematicProductionMemoryRecord;
   latestSessionId: string;
@@ -4548,6 +4803,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildOutputContainmentValidationNote({ productionMemory, latestSessionId }),
     buildRealOutputRollbackNote({ productionMemory, latestSessionId }),
     buildFutureRendererEscalationNote({ productionMemory, latestSessionId }),
+    buildContinuitySequenceContainmentNote({ productionMemory, latestSessionId }),
+    buildGovernedMicroSequenceSandboxNote({ productionMemory, latestSessionId }),
+    buildContinuityPreviewSequencingNote({ productionMemory, latestSessionId }),
+    buildFrameToFrameContinuityValidationNote({ productionMemory, latestSessionId }),
+    buildSequenceRollbackRecoveryNote({ productionMemory, latestSessionId }),
+    buildFutureCinematicContinuityNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),

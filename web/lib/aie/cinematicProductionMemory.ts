@@ -8,6 +8,7 @@ const SECOND_BRAIN_DIR = path.join("data", "second_brain");
 const PRODUCTION_MEMORY_FILE = "production_memory.json";
 const DEFAULT_CREATED_AT = "2026-05-07T00:00:00.000Z";
 const GOVERNED_LOW_RES_SANDBOX_DIR = path.join(".aie", "governed_low_res_frame_sandbox");
+const GOVERNED_MICRO_SEQUENCE_SANDBOX_DIR = path.join(".aie", "governed_micro_sequence_sandbox");
 
 export type CostTier = "low" | "medium" | "high";
 
@@ -504,7 +505,7 @@ export type CinematicGenerationJobHistoryEntry = {
 
 export type CinematicSandboxSimulationRecord = {
   simulation_id: string;
-  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor" | "gated-single-frame-dry-execution-path" | "governed-single-frame-synthesis-preparation" | "governed-low-resolution-frame-synthesis-sandbox";
+  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor" | "gated-single-frame-dry-execution-path" | "governed-single-frame-synthesis-preparation" | "governed-low-resolution-frame-synthesis-sandbox" | "governed-micro-sequence-continuity-preview";
   sequence_id: string;
   routing_mode: CinematicProviderRoutingMode;
   provider: CinematicGenerationProvider;
@@ -560,6 +561,12 @@ export type CinematicSandboxSimulationRecord = {
   output_containment_validation?: CinematicOutputContainmentValidation;
   real_output_rollback?: CinematicRealOutputRollbackLayer;
   future_renderer_escalation?: CinematicFutureRendererEscalationScaffolding;
+  continuity_sequence_containment?: CinematicContinuitySequenceContainmentRegistryEntry[];
+  governed_micro_sequence_sandbox?: CinematicGovernedMicroSequenceSandbox;
+  continuity_preview_sequencing?: CinematicContinuityPreviewSequencingPath;
+  frame_to_frame_continuity_validation?: CinematicFrameToFrameContinuityValidation;
+  sequence_rollback_recovery?: CinematicSequenceRollbackRecoveryLayer;
+  future_cinematic_continuity?: CinematicFutureCinematicContinuityScaffolding;
   readiness_tracking_id?: string | null;
   hybrid_escalation?: CinematicHybridEscalationSimulation | null;
   recorded_at: string;
@@ -1633,6 +1640,142 @@ export type CinematicFutureRendererEscalationScaffolding = {
   milestone_unlocks_renderer_escalation: string;
 };
 
+export type CinematicAllowedTemporalScope =
+  | "micro-sequence-only"
+  | "bounded-preview-window"
+  | "continuity-anchor-linked";
+
+export type CinematicContinuityStrength = "light" | "moderate" | "strong";
+
+export type CinematicContinuitySequenceContainmentRegistryEntry = {
+  sequence_id: string;
+  maximum_frame_count: number;
+  allowed_temporal_scope: CinematicAllowedTemporalScope;
+  continuity_anchor_policy: string;
+  continuity_strength: CinematicContinuityStrength;
+  rollback_window: number;
+  escalation_threshold: number;
+  frame_consistency_requirements: string[];
+  governance_constraints: string[];
+  output_constraints: string[];
+  forbidden_sequence_behaviors: string[];
+  containment_expiration: string;
+};
+
+export type CinematicGovernedMicroSequenceSandbox = {
+  sandbox_id: string;
+  recorded_at: string;
+  sequence_id: string | null;
+  output_root: string;
+  sequence_directory: string;
+  output_file_paths: string[];
+  output_retention_policy: string;
+  maximum_resolution: CinematicVideoResolution;
+  maximum_frame_count: number;
+  bounded_retry_limit: number;
+  manual_approval_required: true;
+  rollback_enabled: true;
+  continuity_anchor: string;
+  real_sequence_written: boolean;
+  sequence_frame_count: number;
+  deleted_output_targets: string[];
+};
+
+export type CinematicContinuityPreviewSequencingStage =
+  | "continuity_sequence_request"
+  | "continuity_anchor_prepare"
+  | "frame_sequence_stage"
+  | "continuity_validation_stage"
+  | "bounded_sequence_write"
+  | "rollback_ready"
+  | "sequence_archived";
+
+export type CinematicContinuityPreviewSequencingStageState = {
+  stage: CinematicContinuityPreviewSequencingStage;
+  order: number;
+  status: "ready" | "completed" | "rollback_ready" | "archived" | "blocked";
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicContinuityPreviewSequencingPath = {
+  path_id: string;
+  recorded_at: string;
+  sequence_id: string | null;
+  output_file_paths: string[];
+  stages: CinematicContinuityPreviewSequencingStageState[];
+  next_stage: CinematicContinuityPreviewSequencingStage | null;
+};
+
+export type CinematicFrameToFrameContinuityValidationCheckName =
+  | "continuity-anchor-integrity"
+  | "sequence-length-restrictions"
+  | "output-containment-restrictions"
+  | "rollback-availability"
+  | "runtime-integrity-sufficiency"
+  | "forbidden-state-enforcement"
+  | "continuity-drift-thresholds"
+  | "temporal-scope-restrictions";
+
+export type CinematicFrameToFrameContinuityValidationCheck = {
+  check: CinematicFrameToFrameContinuityValidationCheckName;
+  passed: boolean;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicFrameToFrameContinuityValidation = {
+  validation_id: string;
+  recorded_at: string;
+  valid: boolean;
+  checks: CinematicFrameToFrameContinuityValidationCheck[];
+  blocked_transitions: string[];
+  next_unlock_condition: string;
+};
+
+export type CinematicSequenceRollbackRecoveryActionKind =
+  | "sequence-rollback-cleanup"
+  | "bounded-sequence-deletion"
+  | "continuity-reset-recovery"
+  | "rollback-authority-enforcement"
+  | "sequence-attempt-archival"
+  | "containment-violation-recovery";
+
+export type CinematicSequenceRollbackRecoveryAction = {
+  action: CinematicSequenceRollbackRecoveryActionKind;
+  triggered: boolean;
+  detail: string;
+  affected_output_targets: string[];
+};
+
+export type CinematicSequenceRollbackRecoveryLayer = {
+  recovery_id: string;
+  recorded_at: string;
+  actions: CinematicSequenceRollbackRecoveryAction[];
+};
+
+export type CinematicFutureCinematicContinuityId =
+  | "governed-teaser-preview-mode"
+  | "continuity-safe-trailer-sequencing"
+  | "governed-dialogue-scene-previews"
+  | "continuity-preserving-cinematic-mode"
+  | "governed-episodic-sequencing"
+  | "governed-feature-length-orchestration";
+
+export type CinematicFutureCinematicContinuityEntry = {
+  continuity_id: CinematicFutureCinematicContinuityId;
+  unlocked: false;
+  prerequisites: string[];
+  still_forbidden_operations: string[];
+};
+
+export type CinematicFutureCinematicContinuityScaffolding = {
+  scaffold_id: string;
+  recorded_at: string;
+  entries: CinematicFutureCinematicContinuityEntry[];
+  milestone_unlocks_cinematic_continuity: string;
+};
+
 export type CinematicFutureActivationPlan = {
   future_frame_synthesis_activation: boolean;
   future_temporal_pipeline_activation: boolean;
@@ -1693,6 +1836,12 @@ export type CinematicControlledLocalInferenceBootstrapValidation = {
   output_containment_validation: CinematicOutputContainmentValidation;
   real_output_rollback: CinematicRealOutputRollbackLayer;
   future_renderer_escalation: CinematicFutureRendererEscalationScaffolding;
+  continuity_sequence_containment: CinematicContinuitySequenceContainmentRegistryEntry[];
+  governed_micro_sequence_sandbox: CinematicGovernedMicroSequenceSandbox;
+  continuity_preview_sequencing: CinematicContinuityPreviewSequencingPath;
+  frame_to_frame_continuity_validation: CinematicFrameToFrameContinuityValidation;
+  sequence_rollback_recovery: CinematicSequenceRollbackRecoveryLayer;
+  future_cinematic_continuity: CinematicFutureCinematicContinuityScaffolding;
   execution_enabled: false;
 };
 
@@ -1957,7 +2106,7 @@ export type CinematicReadinessMilestoneDelta = {
 
 export type CinematicReadinessDeltaTrackingRecord = {
   tracking_id: string;
-  source: "local-readiness-validation" | "local-execution-sandbox" | "runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor" | "gated-single-frame-dry-execution-path" | "governed-single-frame-synthesis-preparation" | "governed-low-resolution-frame-synthesis-sandbox";
+  source: "local-readiness-validation" | "local-execution-sandbox" | "runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor" | "dry-inference-warmup-single-frame-precursor" | "gated-single-frame-dry-execution-path" | "governed-single-frame-synthesis-preparation" | "governed-low-resolution-frame-synthesis-sandbox" | "governed-micro-sequence-continuity-preview";
   recorded_at: string;
   milestones: CinematicReadinessMilestoneDelta[];
 };
@@ -2175,6 +2324,12 @@ export type CinematicProductionMemoryRecord = {
   output_containment_validation_history: CinematicOutputContainmentValidation[];
   real_output_rollback_history: CinematicRealOutputRollbackLayer[];
   future_renderer_escalation_history: CinematicFutureRendererEscalationScaffolding[];
+  continuity_sequence_containment_history: CinematicContinuitySequenceContainmentRegistryEntry[][];
+  governed_micro_sequence_sandbox_history: CinematicGovernedMicroSequenceSandbox[];
+  continuity_preview_sequencing_history: CinematicContinuityPreviewSequencingPath[];
+  frame_to_frame_continuity_validation_history: CinematicFrameToFrameContinuityValidation[];
+  sequence_rollback_recovery_history: CinematicSequenceRollbackRecoveryLayer[];
+  future_cinematic_continuity_history: CinematicFutureCinematicContinuityScaffolding[];
   provider_routing_rules: string[];
   prompt_normalization_rules: string[];
   provider_validation_rules: string[];
@@ -3133,6 +3288,12 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
   output_containment_validation_history: [],
   real_output_rollback_history: [],
   future_renderer_escalation_history: [],
+  continuity_sequence_containment_history: [],
+  governed_micro_sequence_sandbox_history: [],
+  continuity_preview_sequencing_history: [],
+  frame_to_frame_continuity_validation_history: [],
+  sequence_rollback_recovery_history: [],
+  future_cinematic_continuity_history: [],
   provider_routing_rules: [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
@@ -3324,6 +3485,12 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     output_containment_validation_history: nextRecord.output_containment_validation_history ?? defaults.output_containment_validation_history,
     real_output_rollback_history: nextRecord.real_output_rollback_history ?? defaults.real_output_rollback_history,
     future_renderer_escalation_history: nextRecord.future_renderer_escalation_history ?? defaults.future_renderer_escalation_history,
+    continuity_sequence_containment_history: nextRecord.continuity_sequence_containment_history ?? defaults.continuity_sequence_containment_history,
+    governed_micro_sequence_sandbox_history: nextRecord.governed_micro_sequence_sandbox_history ?? defaults.governed_micro_sequence_sandbox_history,
+    continuity_preview_sequencing_history: nextRecord.continuity_preview_sequencing_history ?? defaults.continuity_preview_sequencing_history,
+    frame_to_frame_continuity_validation_history: nextRecord.frame_to_frame_continuity_validation_history ?? defaults.frame_to_frame_continuity_validation_history,
+    sequence_rollback_recovery_history: nextRecord.sequence_rollback_recovery_history ?? defaults.sequence_rollback_recovery_history,
+    future_cinematic_continuity_history: nextRecord.future_cinematic_continuity_history ?? defaults.future_cinematic_continuity_history,
     provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
     prompt_normalization_rules: nextRecord.prompt_normalization_rules ?? defaults.prompt_normalization_rules,
     provider_validation_rules: nextRecord.provider_validation_rules ?? defaults.provider_validation_rules,
@@ -6844,6 +7011,337 @@ function buildFutureRendererEscalationScaffolding(input: {
   };
 }
 
+function buildContinuitySequenceContainmentRegistry(input: {
+  readiness: CinematicLocalInferenceReadinessReport;
+  authorizationRegistry: CinematicRealOutputAuthorizationRegistryEntry[];
+}): CinematicContinuitySequenceContainmentRegistryEntry[] {
+  const continuityStrength: CinematicContinuityStrength = (input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation")?.percentage ?? 0) >= 80
+    ? "strong"
+    : "moderate";
+  return [
+    {
+      sequence_id: "sequence-governed-micro-preview-001",
+      maximum_frame_count: 3,
+      allowed_temporal_scope: "micro-sequence-only",
+      continuity_anchor_policy: "frame-001 remains the sequence anchor for all continuity comparisons",
+      continuity_strength: continuityStrength,
+      rollback_window: 3,
+      escalation_threshold: 1,
+      frame_consistency_requirements: [
+        "all frames must preserve the same continuity anchor signature",
+        "drift may not exceed the bounded continuity threshold",
+      ],
+      governance_constraints: [
+        "manual sequence approval required",
+        "bounded retry limit: 1",
+        `authorized_targets=${input.authorizationRegistry.flatMap((entry) => entry.allowed_output_targets).join(",")}`,
+      ],
+      output_constraints: [
+        "low_resolution_only",
+        "sandboxed_sequence_directory_only",
+        "maximum_5_frames_forbidden_boundary_enforced",
+      ],
+      forbidden_sequence_behaviors: [
+        "long_clip_generation",
+        "autonomous_continuation",
+        "unbounded_temporal_synthesis",
+        "unsandboxed_sequence_write",
+      ],
+      containment_expiration: "expires_after_single_reviewed_micro_sequence_execution",
+    },
+  ];
+}
+
+function buildFrameToFrameContinuityValidation(input: {
+  sequenceContainment: CinematicContinuitySequenceContainmentRegistryEntry[];
+  governedSandbox: CinematicGovernedLowResolutionSandbox;
+  outputContainmentValidation: CinematicOutputContainmentValidation;
+  bootstrap: CinematicDryRuntimeBootstrapValidation;
+  forbiddenExecutionStates: CinematicForbiddenExecutionStateEnforcement;
+}): CinematicFrameToFrameContinuityValidation {
+  const containment = input.sequenceContainment[0] ?? null;
+  const frameCount = containment?.maximum_frame_count ?? 0;
+  const driftThreshold = containment?.escalation_threshold ?? 0;
+  const checks: CinematicFrameToFrameContinuityValidationCheck[] = [
+    {
+      check: "continuity-anchor-integrity",
+      passed: Boolean(containment?.continuity_anchor_policy),
+      detail: "A continuity anchor must exist before multi-frame preview sequencing is allowed.",
+      blockers: Boolean(containment?.continuity_anchor_policy) ? [] : ["Continuity anchor is missing."],
+    },
+    {
+      check: "sequence-length-restrictions",
+      passed: frameCount >= 2 && frameCount <= 5,
+      detail: "Micro-sequence previews must stay within the 2 to 5 frame window.",
+      blockers: frameCount >= 2 && frameCount <= 5 ? [] : ["Sequence length is outside the bounded 2-5 frame window."],
+    },
+    {
+      check: "output-containment-restrictions",
+      passed: input.outputContainmentValidation.valid,
+      detail: "Micro-sequence output must inherit the bounded real-output containment checks.",
+      blockers: input.outputContainmentValidation.blocked_transitions,
+    },
+    {
+      check: "rollback-availability",
+      passed: containment !== null && containment.rollback_window >= frameCount,
+      detail: "Rollback window must cover the full bounded micro-sequence.",
+      blockers: containment !== null && containment.rollback_window >= frameCount ? [] : ["Rollback window does not cover the entire sequence."],
+    },
+    {
+      check: "runtime-integrity-sufficiency",
+      passed: input.bootstrap.valid,
+      detail: "The micro-sequence sandbox requires a valid bootstrap before bounded sequencing begins.",
+      blockers: input.bootstrap.valid ? [] : input.bootstrap.activation_blockers,
+    },
+    {
+      check: "forbidden-state-enforcement",
+      passed: input.forbiddenExecutionStates.states.every((entry) => entry.blocked),
+      detail: "Forbidden-state enforcement must keep unrestricted temporal behaviors blocked.",
+      blockers: input.forbiddenExecutionStates.states.every((entry) => entry.blocked) ? [] : ["A forbidden temporal state is not blocked."],
+    },
+    {
+      check: "continuity-drift-thresholds",
+      passed: driftThreshold <= 1,
+      detail: "Continuity drift thresholds must remain extremely tight for the first preview sequence.",
+      blockers: driftThreshold <= 1 ? [] : ["Continuity drift threshold exceeds the bounded micro-sequence limit."],
+    },
+    {
+      check: "temporal-scope-restrictions",
+      passed: containment?.allowed_temporal_scope === "micro-sequence-only",
+      detail: "Temporal scope must remain restricted to micro-sequence previews only.",
+      blockers: containment?.allowed_temporal_scope === "micro-sequence-only" ? [] : ["Temporal scope exceeds the bounded micro-sequence policy."],
+    },
+  ];
+  return {
+    validation_id: `frame-to-frame-continuity-validation-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    valid: checks.every((entry) => entry.passed),
+    checks,
+    blocked_transitions: checks.filter((entry) => !entry.passed).map((entry) => entry.check),
+    next_unlock_condition: checks.find((entry) => !entry.passed)?.detail ?? "Micro-sequence continuity preview is validated within bounded temporal scope.",
+  };
+}
+
+function buildDeterministicContinuityPreviewFrame(input: {
+  frameIndex: number;
+  width: number;
+  height: number;
+}): string {
+  const rows = ["P3", `# AI-E governed micro-sequence frame ${input.frameIndex + 1}`, `${input.width} ${input.height}`, "255"];
+  for (let y = 0; y < input.height; y += 1) {
+    const pixels: string[] = [];
+    for (let x = 0; x < input.width; x += 1) {
+      const red = (x * 17 + input.frameIndex * 9) % 256;
+      const green = (y * 29 + input.frameIndex * 7) % 256;
+      const blue = ((x + y) * 11 + input.frameIndex * 5) % 256;
+      pixels.push(`${red} ${green} ${blue}`);
+    }
+    rows.push(pixels.join(" "));
+  }
+  return `${rows.join("\n")}\n`;
+}
+
+async function executeGovernedMicroSequenceSandbox(input: {
+  root: string;
+  sequenceContainment: CinematicContinuitySequenceContainmentRegistryEntry[];
+  continuityValidation: CinematicFrameToFrameContinuityValidation;
+}): Promise<CinematicGovernedMicroSequenceSandbox> {
+  const containment = input.sequenceContainment[0] ?? null;
+  const outputRoot = path.join(input.root, GOVERNED_MICRO_SEQUENCE_SANDBOX_DIR);
+  await mkdir(outputRoot, { recursive: true });
+  const sequenceDirectory = containment?.sequence_id ?? "sequence-unset";
+  const absoluteSequenceDirectory = path.join(outputRoot, sequenceDirectory);
+  const deletedOutputTargets: string[] = [];
+  for (const entry of await readdir(outputRoot)) {
+    const childPath = path.join(outputRoot, entry);
+    if (childPath !== absoluteSequenceDirectory) {
+      await rm(childPath, { recursive: true, force: true });
+      deletedOutputTargets.push(path.relative(input.root, childPath).replace(/\\/g, "/"));
+    }
+  }
+  await rm(absoluteSequenceDirectory, { recursive: true, force: true });
+  await mkdir(absoluteSequenceDirectory, { recursive: true });
+  const outputFilePaths: string[] = [];
+  const frameCount = containment?.maximum_frame_count ?? 0;
+  const realSequenceWritten = input.continuityValidation.valid;
+  if (realSequenceWritten) {
+    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      const fileName = `governed_preview_sequence_frame_${String(frameIndex + 1).padStart(3, "0")}.ppm`;
+      const filePath = path.join(absoluteSequenceDirectory, fileName);
+      await writeFile(filePath, buildDeterministicContinuityPreviewFrame({ frameIndex, width: 16, height: 16 }), "utf8");
+      outputFilePaths.push(path.relative(input.root, filePath).replace(/\\/g, "/"));
+    }
+  }
+  return {
+    sandbox_id: `governed-micro-sequence-sandbox-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    sequence_id: containment?.sequence_id ?? null,
+    output_root: GOVERNED_MICRO_SEQUENCE_SANDBOX_DIR.replace(/\\/g, "/"),
+    sequence_directory: path.relative(input.root, absoluteSequenceDirectory).replace(/\\/g, "/"),
+    output_file_paths: outputFilePaths,
+    output_retention_policy: "retain_latest_micro_sequence_only",
+    maximum_resolution: "720p",
+    maximum_frame_count: containment?.maximum_frame_count ?? 0,
+    bounded_retry_limit: 1,
+    manual_approval_required: true,
+    rollback_enabled: true,
+    continuity_anchor: containment?.continuity_anchor_policy ?? "none",
+    real_sequence_written: realSequenceWritten,
+    sequence_frame_count: realSequenceWritten ? outputFilePaths.length : 0,
+    deleted_output_targets: deletedOutputTargets,
+  };
+}
+
+function buildContinuityPreviewSequencingPath(input: {
+  sequenceContainment: CinematicContinuitySequenceContainmentRegistryEntry[];
+  microSequenceSandbox: CinematicGovernedMicroSequenceSandbox;
+  continuityValidation: CinematicFrameToFrameContinuityValidation;
+}): CinematicContinuityPreviewSequencingPath {
+  const containment = input.sequenceContainment[0] ?? null;
+  const stages: CinematicContinuityPreviewSequencingStage[] = [
+    "continuity_sequence_request",
+    "continuity_anchor_prepare",
+    "frame_sequence_stage",
+    "continuity_validation_stage",
+    "bounded_sequence_write",
+    "rollback_ready",
+    "sequence_archived",
+  ];
+  return {
+    path_id: `continuity-preview-sequencing-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    sequence_id: containment?.sequence_id ?? null,
+    output_file_paths: input.microSequenceSandbox.output_file_paths,
+    stages: stages.map((stage, index) => ({
+      stage,
+      order: index + 1,
+      status: stage === "rollback_ready"
+        ? "rollback_ready"
+        : stage === "sequence_archived"
+          ? "archived"
+          : input.microSequenceSandbox.real_sequence_written
+            ? "completed"
+            : stage === "continuity_sequence_request"
+              ? "ready"
+              : "blocked",
+      detail: stage === "continuity_anchor_prepare"
+        ? `Continuity anchor policy: ${containment?.continuity_anchor_policy ?? "none"}.`
+        : stage === "bounded_sequence_write"
+          ? `Bounded sequence written to ${input.microSequenceSandbox.sequence_directory}.`
+          : stage === "rollback_ready"
+            ? `Rollback window remains ${containment?.rollback_window ?? 0} frames.`
+            : stage === "sequence_archived"
+              ? "The governed continuity preview sequence is archived append-only after bounded execution."
+              : `Stage ${stage} remains governed by sequence containment ${containment?.sequence_id ?? "none"}.`,
+      blockers: input.microSequenceSandbox.real_sequence_written ? [] : input.continuityValidation.blocked_transitions,
+    })),
+    next_stage: input.microSequenceSandbox.real_sequence_written ? "rollback_ready" : "continuity_sequence_request",
+  };
+}
+
+function buildSequenceRollbackRecoveryLayer(input: {
+  sequenceContainment: CinematicContinuitySequenceContainmentRegistryEntry[];
+  microSequenceSandbox: CinematicGovernedMicroSequenceSandbox;
+  continuityPreviewSequencing: CinematicContinuityPreviewSequencingPath;
+  continuityValidation: CinematicFrameToFrameContinuityValidation;
+}): CinematicSequenceRollbackRecoveryLayer {
+  const containment = input.sequenceContainment[0] ?? null;
+  return {
+    recovery_id: `sequence-rollback-recovery-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    actions: [
+      {
+        action: "sequence-rollback-cleanup",
+        triggered: input.microSequenceSandbox.real_sequence_written,
+        detail: "Sequence rollback cleanup can remove the bounded preview sequence without affecting other outputs.",
+        affected_output_targets: input.microSequenceSandbox.output_file_paths,
+      },
+      {
+        action: "bounded-sequence-deletion",
+        triggered: input.microSequenceSandbox.real_sequence_written,
+        detail: "Bounded sequence deletion remains limited to the sandboxed micro-sequence directory.",
+        affected_output_targets: input.microSequenceSandbox.output_file_paths,
+      },
+      {
+        action: "continuity-reset-recovery",
+        triggered: true,
+        detail: `Continuity anchor reset remains governed by ${containment?.continuity_anchor_policy ?? "unset"}.`,
+        affected_output_targets: input.microSequenceSandbox.output_file_paths,
+      },
+      {
+        action: "rollback-authority-enforcement",
+        triggered: containment !== null,
+        detail: `Rollback window remains ${containment?.rollback_window ?? 0} frames for governed cleanup.`,
+        affected_output_targets: input.microSequenceSandbox.output_file_paths,
+      },
+      {
+        action: "sequence-attempt-archival",
+        triggered: input.continuityPreviewSequencing.stages.some((entry) => entry.stage === "sequence_archived"),
+        detail: "Micro-sequence attempts are always archived append-only after execution or block.",
+        affected_output_targets: input.microSequenceSandbox.output_file_paths,
+      },
+      {
+        action: "containment-violation-recovery",
+        triggered: input.continuityValidation.blocked_transitions.length > 0,
+        detail: "Containment violations route through bounded rollback and continuity reset recovery.",
+        affected_output_targets: input.microSequenceSandbox.output_file_paths,
+      },
+    ],
+  };
+}
+
+function buildFutureCinematicContinuityScaffolding(input: {
+  sequenceContainment: CinematicContinuitySequenceContainmentRegistryEntry[];
+  continuityValidation: CinematicFrameToFrameContinuityValidation;
+}): CinematicFutureCinematicContinuityScaffolding {
+  const forbidden = uniqueNormalizedStrings(input.sequenceContainment.flatMap((entry) => entry.forbidden_sequence_behaviors));
+  const blockers = uniqueNormalizedStrings(input.continuityValidation.checks.filter((entry) => !entry.passed).flatMap((entry) => entry.blockers));
+  const milestone = "reviewed-governed-cinematic-continuity-bridge";
+  return {
+    scaffold_id: `future-cinematic-continuity-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    milestone_unlocks_cinematic_continuity: milestone,
+    entries: [
+      {
+        continuity_id: "governed-teaser-preview-mode",
+        unlocked: false,
+        prerequisites: uniqueNormalizedStrings(["teaser-preview governance approval", ...blockers]),
+        still_forbidden_operations: forbidden,
+      },
+      {
+        continuity_id: "continuity-safe-trailer-sequencing",
+        unlocked: false,
+        prerequisites: ["trailer continuity review", "extended rollback coverage"],
+        still_forbidden_operations: forbidden,
+      },
+      {
+        continuity_id: "governed-dialogue-scene-previews",
+        unlocked: false,
+        prerequisites: ["dialogue-scene preview governance approval", "anchor-consistency proof"],
+        still_forbidden_operations: forbidden,
+      },
+      {
+        continuity_id: "continuity-preserving-cinematic-mode",
+        unlocked: false,
+        prerequisites: ["cinematic continuity approval", "multi-shot containment review"],
+        still_forbidden_operations: forbidden,
+      },
+      {
+        continuity_id: "governed-episodic-sequencing",
+        unlocked: false,
+        prerequisites: ["episodic sequencing governance approval", "continuity drift audit"],
+        still_forbidden_operations: forbidden,
+      },
+      {
+        continuity_id: "governed-feature-length-orchestration",
+        unlocked: false,
+        prerequisites: ["feature-length orchestration governance approval", "long-window rollback proof"],
+        still_forbidden_operations: forbidden,
+      },
+    ],
+  };
+}
+
 function applyGatedInferencePrecursorReadiness(input: {
   readiness: CinematicLocalInferenceReadinessReport;
   activationAuthorityRegistry: CinematicActivationAuthorityRegistryEntry[];
@@ -6875,6 +7373,12 @@ function applyGatedInferencePrecursorReadiness(input: {
   outputContainmentValidation: CinematicOutputContainmentValidation;
   realOutputRollback: CinematicRealOutputRollbackLayer;
   futureRendererEscalation: CinematicFutureRendererEscalationScaffolding;
+  continuitySequenceContainment: CinematicContinuitySequenceContainmentRegistryEntry[];
+  governedMicroSequenceSandbox: CinematicGovernedMicroSequenceSandbox;
+  continuityPreviewSequencing: CinematicContinuityPreviewSequencingPath;
+  frameToFrameContinuityValidation: CinematicFrameToFrameContinuityValidation;
+  sequenceRollbackRecovery: CinematicSequenceRollbackRecoveryLayer;
+  futureCinematicContinuity: CinematicFutureCinematicContinuityScaffolding;
 }): CinematicLocalInferenceReadinessReport {
   const sequencingCoverage = input.sequencing.stages.length > 0;
   const unlockCoverage = input.futureUnlockConditions.conditions.length > 0;
@@ -6896,6 +7400,9 @@ function applyGatedInferencePrecursorReadiness(input: {
   const realSandboxCoverage = input.governedLowResolutionSandbox.real_output_written ? 1 : 0;
   const realOutputValidationCoverage = input.outputContainmentValidation.checks.filter((entry) => entry.passed).length;
   const rollbackCoverage = input.realOutputRollback.actions.filter((entry) => entry.triggered).length;
+  const continuitySequenceCoverage = input.continuitySequenceContainment.length > 0;
+  const microSequenceCoverage = input.governedMicroSequenceSandbox.real_sequence_written ? 1 : 0;
+  const frameContinuityCoverage = input.frameToFrameContinuityValidation.checks.filter((entry) => entry.passed).length;
   const updatedMilestones = input.readiness.milestone_progress.map((entry) => {
     const blockers = uniqueNormalizedStrings([
       ...entry.blockers,
@@ -6906,19 +7413,19 @@ function applyGatedInferencePrecursorReadiness(input: {
       case "local-inference-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (authorityCoverage ? 3 : 0) + (sequencingCoverage ? 2 : 0) + (unlockCoverage ? 2 : 0) + (warmupCoverage >= 4 ? 4 : 0) + (dryTokenCoverage ? 3 : 0) + (traversalValidationCoverage >= 4 ? 3 : 0) + (synthesisContainmentCoverage ? 4 : 0) + (synthesisValidationCoverage >= 5 ? 3 : 0) + (realOutputAuthorizationCoverage ? 4 : 0) + (realOutputValidationCoverage >= 6 ? 4 : 0) + (input.executionTemperatureState.current_state === "simulated_only" ? 2 : 0)),
+          percentage: clampPercentage(entry.percentage + (authorityCoverage ? 3 : 0) + (sequencingCoverage ? 2 : 0) + (unlockCoverage ? 2 : 0) + (warmupCoverage >= 4 ? 4 : 0) + (dryTokenCoverage ? 3 : 0) + (traversalValidationCoverage >= 4 ? 3 : 0) + (synthesisContainmentCoverage ? 4 : 0) + (synthesisValidationCoverage >= 5 ? 3 : 0) + (realOutputAuthorizationCoverage ? 4 : 0) + (realOutputValidationCoverage >= 6 ? 4 : 0) + (continuitySequenceCoverage ? 4 : 0) + (frameContinuityCoverage >= 6 ? 4 : 0) + (input.executionTemperatureState.current_state === "simulated_only" ? 2 : 0)),
           blockers,
         };
       case "local-runtime-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "execution-boundary-intact")?.passed ? 3 : 0) + (triggeredEscalations > 0 ? 2 : 0) + (warmupCoverage >= 2 ? 3 : 0) + (traversalCoverage ? 3 : 0) + (synthesisPreparationCoverage ? 3 : 0) + (realSandboxCoverage ? 5 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "execution-boundary-intact")?.passed ? 3 : 0) + (triggeredEscalations > 0 ? 2 : 0) + (warmupCoverage >= 2 ? 3 : 0) + (traversalCoverage ? 3 : 0) + (synthesisPreparationCoverage ? 3 : 0) + (realSandboxCoverage ? 5 : 0) + (microSequenceCoverage ? 6 : 0)),
           blockers,
         };
       case "local-frame-generation-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_frame_stage_prepare") ? 2 : 0) + (frameStageCoverage >= 5 ? 4 : 0) + (precursorCoverage ? 2 : 0) + (traversalValidationCoverage >= 5 ? 4 : 0) + (synthesisPreparationCoverage ? 5 : 0) + (futureLowResolutionCoverage ? 3 : 0) + (realSandboxCoverage ? 10 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_frame_stage_prepare") ? 2 : 0) + (frameStageCoverage >= 5 ? 4 : 0) + (precursorCoverage ? 2 : 0) + (traversalValidationCoverage >= 5 ? 4 : 0) + (synthesisPreparationCoverage ? 5 : 0) + (futureLowResolutionCoverage ? 3 : 0) + (realSandboxCoverage ? 10 : 0) + (microSequenceCoverage ? 12 : 0)),
           blockers,
         };
       case "local-renderer-readiness":
@@ -6930,20 +7437,20 @@ function applyGatedInferencePrecursorReadiness(input: {
       case "continuity-preserving-local-generation":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "continuity-state-available")?.passed ? 3 : 0) + (input.frameStageReadiness.checks.find((check) => check.check === "continuity-readiness")?.passed ? 4 : 0) + (input.synthesisValidationLayer.checks.find((check) => check.check === "continuity-state-readiness")?.passed ? 3 : 0) + (input.outputContainmentValidation.checks.find((check) => check.check === "continuity-state-integrity")?.passed ? 4 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "continuity-state-available")?.passed ? 3 : 0) + (input.frameStageReadiness.checks.find((check) => check.check === "continuity-readiness")?.passed ? 4 : 0) + (input.synthesisValidationLayer.checks.find((check) => check.check === "continuity-state-readiness")?.passed ? 3 : 0) + (input.outputContainmentValidation.checks.find((check) => check.check === "continuity-state-integrity")?.passed ? 4 : 0) + (input.frameToFrameContinuityValidation.checks.find((check) => check.check === "continuity-anchor-integrity")?.passed ? 5 : 0) + (input.frameToFrameContinuityValidation.checks.find((check) => check.check === "continuity-drift-thresholds")?.passed ? 4 : 0)),
           blockers,
         };
       case "hybrid-local-cloud-orchestration":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + (input.escalationModeling.scenarios.some((scenario) => scenario.escalation === "offline-mode-escalation") ? 2 : 0) + (input.warmupEscalationModeling.scenarios.some((scenario) => scenario.escalation === "hybrid-escalation") ? 2 : 0) + (input.dryExecutionRecovery.scenarios.some((scenario) => scenario.recovery === "governance-escalation-recovery") ? 2 : 0) + (input.containedEscalationModeling.scenarios.some((scenario) => scenario.triggered) ? 3 : 0) + (rollbackCoverage >= 3 ? 3 : 0)),
+          percentage: clampPercentage(entry.percentage + (input.escalationModeling.scenarios.some((scenario) => scenario.escalation === "offline-mode-escalation") ? 2 : 0) + (input.warmupEscalationModeling.scenarios.some((scenario) => scenario.escalation === "hybrid-escalation") ? 2 : 0) + (input.dryExecutionRecovery.scenarios.some((scenario) => scenario.recovery === "governance-escalation-recovery") ? 2 : 0) + (input.containedEscalationModeling.scenarios.some((scenario) => scenario.triggered) ? 3 : 0) + (rollbackCoverage >= 3 ? 3 : 0) + (input.sequenceRollbackRecovery.actions.filter((entry) => entry.triggered).length >= 3 ? 3 : 0)),
           blockers,
         };
       case "self-sustaining-generation-readiness":
         return {
           ...entry,
-          percentage: clampPercentage(entry.percentage + 5),
-          blockers: uniqueNormalizedStrings([...blockers, "Self-sustaining generation remains forbidden pending a reviewed renderer-escalation bridge."]),
+          percentage: clampPercentage(entry.percentage + 6),
+          blockers: uniqueNormalizedStrings([...blockers, "Self-sustaining generation remains forbidden pending a reviewed cinematic-continuity bridge."]),
         };
       default:
         return entry;
@@ -6967,9 +7474,13 @@ function applyGatedInferencePrecursorReadiness(input: {
       `Real output authorizations recorded: ${input.realOutputAuthorizationRegistry.length}.`,
       `Real low-resolution sandbox wrote output: ${input.governedLowResolutionSandbox.real_output_written ? "yes" : "no"}.`,
       `Real output rollback actions recorded: ${input.realOutputRollback.actions.length}.`,
+      `Continuity sequence containment records recorded: ${input.continuitySequenceContainment.length}.`,
+      `Governed micro-sequence frames written: ${input.governedMicroSequenceSandbox.sequence_frame_count}.`,
+      `Continuity preview sequencing stages recorded: ${input.continuityPreviewSequencing.stages.length}.`,
       `Future real inference remains locked behind ${input.futureUnlockConditions.milestone_unlocks_real_inference}.`,
       `Future governed output remains locked behind ${input.futureLowResolutionOutput.milestone_unlocks_governed_output}.`,
       `Future renderer escalation remains locked behind ${input.futureRendererEscalation.milestone_unlocks_renderer_escalation}.`,
+      `Future cinematic continuity remains locked behind ${input.futureCinematicContinuity.milestone_unlocks_cinematic_continuity}.`,
     ]),
     blocked_reasons: uniqueNormalizedStrings([
       ...input.readiness.blocked_reasons,
@@ -6977,6 +7488,7 @@ function applyGatedInferencePrecursorReadiness(input: {
       ...input.frameStageReadiness.checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
       ...input.synthesisValidationLayer.checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
       ...input.outputContainmentValidation.checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
+      ...input.frameToFrameContinuityValidation.checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
     ]),
     milestone_progress: updatedMilestones,
   };
@@ -8405,6 +8917,37 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     authorizationRegistry: realOutputAuthorizationRegistry,
     outputContainmentValidation,
   });
+  const continuitySequenceContainment = buildContinuitySequenceContainmentRegistry({
+    readiness,
+    authorizationRegistry: realOutputAuthorizationRegistry,
+  });
+  const frameToFrameContinuityValidation = buildFrameToFrameContinuityValidation({
+    sequenceContainment: continuitySequenceContainment,
+    governedSandbox: governedLowResolutionSandbox,
+    outputContainmentValidation,
+    bootstrap: dryRuntimeBootstrap,
+    forbiddenExecutionStates,
+  });
+  const governedMicroSequenceSandbox = await executeGovernedMicroSequenceSandbox({
+    root: initialization.repoRoot,
+    sequenceContainment: continuitySequenceContainment,
+    continuityValidation: frameToFrameContinuityValidation,
+  });
+  const continuityPreviewSequencing = buildContinuityPreviewSequencingPath({
+    sequenceContainment: continuitySequenceContainment,
+    microSequenceSandbox: governedMicroSequenceSandbox,
+    continuityValidation: frameToFrameContinuityValidation,
+  });
+  const sequenceRollbackRecovery = buildSequenceRollbackRecoveryLayer({
+    sequenceContainment: continuitySequenceContainment,
+    microSequenceSandbox: governedMicroSequenceSandbox,
+    continuityPreviewSequencing,
+    continuityValidation: frameToFrameContinuityValidation,
+  });
+  const futureCinematicContinuity = buildFutureCinematicContinuityScaffolding({
+    sequenceContainment: continuitySequenceContainment,
+    continuityValidation: frameToFrameContinuityValidation,
+  });
   const readinessWithPrecursor = applyGatedInferencePrecursorReadiness({
     readiness,
     activationAuthorityRegistry,
@@ -8436,11 +8979,17 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     outputContainmentValidation,
     realOutputRollback,
     futureRendererEscalation,
+    continuitySequenceContainment,
+    governedMicroSequenceSandbox,
+    continuityPreviewSequencing,
+    frameToFrameContinuityValidation,
+    sequenceRollbackRecovery,
+    futureCinematicContinuity,
   });
   const trackingUpdate = appendReadinessDeltaTracking({
     record: nextRecord,
     readiness: readinessWithPrecursor,
-    source: "governed-low-resolution-frame-synthesis-sandbox",
+    source: "governed-micro-sequence-continuity-preview",
   });
   await writeProductionMemoryRecord(initialization.productionMemoryPath, {
     ...trackingUpdate.record,
@@ -8475,6 +9024,12 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     output_containment_validation_history: [outputContainmentValidation, ...trackingUpdate.record.output_containment_validation_history].slice(0, 24),
     real_output_rollback_history: [realOutputRollback, ...trackingUpdate.record.real_output_rollback_history].slice(0, 24),
     future_renderer_escalation_history: [futureRendererEscalation, ...trackingUpdate.record.future_renderer_escalation_history].slice(0, 24),
+    continuity_sequence_containment_history: [continuitySequenceContainment, ...trackingUpdate.record.continuity_sequence_containment_history].slice(0, 24),
+    governed_micro_sequence_sandbox_history: [governedMicroSequenceSandbox, ...trackingUpdate.record.governed_micro_sequence_sandbox_history].slice(0, 24),
+    continuity_preview_sequencing_history: [continuityPreviewSequencing, ...trackingUpdate.record.continuity_preview_sequencing_history].slice(0, 24),
+    frame_to_frame_continuity_validation_history: [frameToFrameContinuityValidation, ...trackingUpdate.record.frame_to_frame_continuity_validation_history].slice(0, 24),
+    sequence_rollback_recovery_history: [sequenceRollbackRecovery, ...trackingUpdate.record.sequence_rollback_recovery_history].slice(0, 24),
+    future_cinematic_continuity_history: [futureCinematicContinuity, ...trackingUpdate.record.future_cinematic_continuity_history].slice(0, 24),
   });
   return {
     readiness: readinessWithPrecursor,
@@ -8516,6 +9071,12 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     output_containment_validation: outputContainmentValidation,
     real_output_rollback: realOutputRollback,
     future_renderer_escalation: futureRendererEscalation,
+    continuity_sequence_containment: continuitySequenceContainment,
+    governed_micro_sequence_sandbox: governedMicroSequenceSandbox,
+    continuity_preview_sequencing: continuityPreviewSequencing,
+    frame_to_frame_continuity_validation: frameToFrameContinuityValidation,
+    sequence_rollback_recovery: sequenceRollbackRecovery,
+    future_cinematic_continuity: futureCinematicContinuity,
     execution_enabled: false,
   };
 }
@@ -8530,7 +9091,7 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
   const record = await readCinematicProductionMemory({ root: input?.root });
   const simulation: CinematicSandboxSimulationRecord = {
     simulation_id: `bootstrap-sandbox-${Date.now()}`,
-    sandbox_kind: "governed-low-resolution-frame-synthesis-sandbox",
+    sandbox_kind: "governed-micro-sequence-continuity-preview",
     sequence_id: "controlled-local-bootstrap-planning-only",
     routing_mode: validation.readiness.recommended_routing_mode,
     provider: "LocalFutureProvider",
@@ -8583,6 +9144,12 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
     output_containment_validation: validation.output_containment_validation,
     real_output_rollback: validation.real_output_rollback,
     future_renderer_escalation: validation.future_renderer_escalation,
+    continuity_sequence_containment: validation.continuity_sequence_containment,
+    governed_micro_sequence_sandbox: validation.governed_micro_sequence_sandbox,
+    continuity_preview_sequencing: validation.continuity_preview_sequencing,
+    frame_to_frame_continuity_validation: validation.frame_to_frame_continuity_validation,
+    sequence_rollback_recovery: validation.sequence_rollback_recovery,
+    future_cinematic_continuity: validation.future_cinematic_continuity,
     readiness_tracking_id: validation.readiness_delta.tracking_id,
     hybrid_escalation: null,
     recorded_at: new Date().toISOString(),

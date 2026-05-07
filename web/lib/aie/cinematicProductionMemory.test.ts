@@ -775,7 +775,7 @@ test("controlled local inference bootstrap persists execution boundaries while k
     const afterRecord = await readCinematicProductionMemory({ root: tempRoot });
 
     assert.equal(validation.execution_enabled, false);
-    assert.equal(validation.readiness_delta.source, "governed-low-resolution-frame-synthesis-sandbox");
+    assert.equal(validation.readiness_delta.source, "governed-micro-sequence-continuity-preview");
     assert.equal(validation.dry_runtime_bootstrap.valid, true);
     assert.ok(validation.dry_runtime_bootstrap.checks.some((entry) => entry.check === "runtime-binary-presence" && entry.passed));
     assert.ok(validation.execution_boundary_state.tracked_statuses.includes("simulated"));
@@ -821,14 +821,25 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(validation.output_containment_validation.checks.some((entry) => entry.check === "authorization-validity" && entry.passed));
     assert.ok(validation.real_output_rollback.actions.some((entry) => entry.action === "rollback-authority-enforcement" && entry.triggered));
     assert.equal(validation.future_renderer_escalation.milestone_unlocks_renderer_escalation, "reviewed-governed-renderer-escalation-bridge");
+    assert.ok(validation.continuity_sequence_containment.some((entry) => entry.sequence_id === "sequence-governed-micro-preview-001"));
+    assert.equal(validation.governed_micro_sequence_sandbox.real_sequence_written, true);
+    assert.equal(validation.governed_micro_sequence_sandbox.sequence_frame_count, 3);
+    assert.ok(validation.continuity_preview_sequencing.stages.some((entry) => entry.stage === "bounded_sequence_write" && entry.status === "completed"));
+    assert.ok(validation.frame_to_frame_continuity_validation.checks.some((entry) => entry.check === "continuity-drift-thresholds" && entry.passed));
+    assert.ok(validation.sequence_rollback_recovery.actions.some((entry) => entry.action === "sequence-rollback-cleanup" && entry.triggered));
+    assert.equal(validation.future_cinematic_continuity.milestone_unlocks_cinematic_continuity, "reviewed-governed-cinematic-continuity-bridge");
     const outputFilePath = path.join(tempRoot, validation.governed_low_resolution_sandbox.output_file_path ?? "");
     assert.ok(existsSync(outputFilePath));
     assert.match(await readFile(outputFilePath, "utf8"), /^P3/m);
     const sandboxFiles = await readdir(path.join(tempRoot, ".aie", "governed_low_res_frame_sandbox"));
     assert.equal(sandboxFiles.filter((entry) => entry.endsWith(".ppm")).length, 1);
+    const microSequenceDir = path.join(tempRoot, ".aie", "governed_micro_sequence_sandbox", "sequence-governed-micro-preview-001");
+    const microSequenceFiles = await readdir(microSequenceDir);
+    assert.equal(microSequenceFiles.filter((entry) => entry.endsWith(".ppm")).length, 3);
+    assert.match(await readFile(path.join(microSequenceDir, "governed_preview_sequence_frame_001.ppm"), "utf8"), /^P3/m);
 
     assert.equal(simulation.validation.execution_enabled, false);
-    assert.equal(simulation.simulation.sandbox_kind, "governed-low-resolution-frame-synthesis-sandbox");
+    assert.equal(simulation.simulation.sandbox_kind, "governed-micro-sequence-continuity-preview");
     assert.equal(simulation.simulation.execution_enabled, false);
     assert.ok(simulation.simulation.dry_runtime_bootstrap);
     assert.ok(simulation.simulation.execution_boundary_status);
@@ -866,6 +877,12 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(simulation.simulation.output_containment_validation);
     assert.ok(simulation.simulation.real_output_rollback);
     assert.ok(simulation.simulation.future_renderer_escalation);
+    assert.ok(simulation.simulation.continuity_sequence_containment);
+    assert.ok(simulation.simulation.governed_micro_sequence_sandbox);
+    assert.ok(simulation.simulation.continuity_preview_sequencing);
+    assert.ok(simulation.simulation.frame_to_frame_continuity_validation);
+    assert.ok(simulation.simulation.sequence_rollback_recovery);
+    assert.ok(simulation.simulation.future_cinematic_continuity);
     assert.equal(simulation.simulation.readiness_tracking_id, afterRecord.readiness_delta_tracking_history[0]?.tracking_id ?? null);
     assert.ok(afterRecord.execution_boundary_status_history.length >= 2);
     assert.ok(afterRecord.activation_authority_registry.length > 0);
@@ -898,7 +915,13 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(afterRecord.output_containment_validation_history.length >= 1);
     assert.ok(afterRecord.real_output_rollback_history.length >= 1);
     assert.ok(afterRecord.future_renderer_escalation_history.length >= 1);
-    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "governed-low-resolution-frame-synthesis-sandbox"));
+    assert.ok(afterRecord.continuity_sequence_containment_history.length >= 1);
+    assert.ok(afterRecord.governed_micro_sequence_sandbox_history.length >= 1);
+    assert.ok(afterRecord.continuity_preview_sequencing_history.length >= 1);
+    assert.ok(afterRecord.frame_to_frame_continuity_validation_history.length >= 1);
+    assert.ok(afterRecord.sequence_rollback_recovery_history.length >= 1);
+    assert.ok(afterRecord.future_cinematic_continuity_history.length >= 1);
+    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "governed-micro-sequence-continuity-preview"));
     assert.deepEqual(afterRecord.approval_audit_trail, beforeRecord.approval_audit_trail);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

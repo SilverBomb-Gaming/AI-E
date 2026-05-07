@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:26:31.842Z
+updated_at: 2026-05-07T20:38:37.338Z
 session_id: phase7c-skip-task-session
 status: generated_asset_reuse_log
 tags:
@@ -33,6 +33,9 @@ tags:
 - Keep loader-wan-2.1-t2v-q8 activation simulated-only and governance-bound.
 - Keep loader-ltx-video-img2vid-int8 activation simulated-only and governance-bound.
 - Keep loader-hunyuan-video-13b-planned activation simulated-only and governance-bound.
+- Keep loader-wan-2.1-t2v-q8 inside dry bootstrap boundaries with inference and rendering disabled.
+- Keep loader-ltx-video-img2vid-int8 inside dry bootstrap boundaries with inference and rendering disabled.
+- Keep loader-hunyuan-video-13b-planned inside dry bootstrap boundaries with inference and rendering disabled.
 - Keep loader-wan-2.1-t2v-q8 inside dry bootstrap boundaries with inference and rendering disabled.
 - Keep loader-ltx-video-img2vid-int8 inside dry bootstrap boundaries with inference and rendering disabled.
 - Keep loader-hunyuan-video-13b-planned inside dry bootstrap boundaries with inference and rendering disabled.

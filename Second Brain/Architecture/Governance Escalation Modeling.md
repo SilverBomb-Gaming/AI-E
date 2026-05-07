@@ -1,6 +1,6 @@
 ---
 project_key: babylon-2026
-updated_at: 2026-05-07T20:26:31.842Z
+updated_at: 2026-05-07T20:38:37.338Z
 session_id: phase7c-skip-task-session
 status: generated_governance_escalation_modeling
 tags:
@@ -20,7 +20,7 @@ tags:
 - runtime-risk-escalation: triggered=yes | blockers=No modeled loader path currently resolves to a visible model directory., One or more loader/runtime dependency sets remain incompatible or incomplete.
 - high-vram-escalation: triggered=yes | blockers=loader-hunyuan-video-13b-planned requires 16GB VRAM.
 - offline-mode-escalation: triggered=yes | blockers=Routing remains in offline-planning-mode.
-- continuity-risk-escalation: triggered=no | blockers=none
+- continuity-risk-escalation: triggered=yes | blockers=Continuity readiness remains below the governed threshold.
 - self-sustaining-mode-escalation: triggered=yes | blockers=Self-sustaining generation remains explicitly forbidden., Local execution planning remains manual-only and non-autonomous., No runtime launch, model download, or render job may happen from readiness helpers., Append-only approval and continuity governance must remain unchanged before any future local bridge is considered.
 
 ## Related
