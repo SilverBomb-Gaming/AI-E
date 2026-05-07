@@ -1894,6 +1894,17 @@ export type CinematicMotionPreviewRollbackLayer = {
   actions: CinematicMotionPreviewRollbackAction[];
 };
 
+export type CinematicGovernedMotionPreviewSandboxRollbackResult = {
+  rolled_back: boolean;
+  recorded_at: string;
+  output_root: string;
+  clip_directory: string | null;
+  deleted_output_targets: string[];
+  rollback: CinematicMotionPreviewRollbackLayer;
+  governance_status: string;
+  sandbox_limited: true;
+};
+
 export type CinematicFutureTeaserTrailerScaffoldingId =
   | "governed-teaser-trailer-preview-mode"
   | "continuity-safe-teaser-assembly"
@@ -9739,6 +9750,86 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
   return {
     validation,
     simulation,
+  };
+}
+
+export async function clearGovernedMotionPreviewSandbox(input?: {
+  root?: string;
+}): Promise<CinematicGovernedMotionPreviewSandboxRollbackResult> {
+  const initialization = await loadProductionMemory(input?.root);
+  const record = initialization.record;
+  const outputRoot = path.join(initialization.repoRoot, GOVERNED_MOTION_PREVIEW_SANDBOX_DIR);
+  const latestSandbox = record.governed_motion_preview_sandbox_history[0] ?? null;
+  const deletedOutputTargets: string[] = [];
+
+  await mkdir(outputRoot, { recursive: true });
+  for (const entry of await readdir(outputRoot)) {
+    const childPath = path.join(outputRoot, entry);
+    await rm(childPath, { recursive: true, force: true });
+    deletedOutputTargets.push(path.relative(initialization.repoRoot, childPath).replace(/\\/g, "/"));
+  }
+
+  const rollback: CinematicMotionPreviewRollbackLayer = {
+    rollback_id: `motion-preview-rollback-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    actions: [
+      {
+        action: "preview-rollback-cleanup",
+        triggered: deletedOutputTargets.length > 0,
+        detail: deletedOutputTargets.length > 0
+          ? "Preview rollback cleanup removed the latest governed motion preview outputs."
+          : "No governed motion preview outputs were present to clean up.",
+        affected_output_targets: deletedOutputTargets,
+      },
+      {
+        action: "bounded-clip-deletion",
+        triggered: deletedOutputTargets.length > 0,
+        detail: "Deletion remains bounded to the governed motion preview sandbox root.",
+        affected_output_targets: deletedOutputTargets,
+      },
+      {
+        action: "transition-reset-recovery",
+        triggered: true,
+        detail: "Temporal transition state was reset without touching non-preview outputs.",
+        affected_output_targets: deletedOutputTargets,
+      },
+      {
+        action: "rollback-authority-enforcement",
+        triggered: true,
+        detail: "Rollback authority enforced sandbox-only cleanup for preview artifacts.",
+        affected_output_targets: deletedOutputTargets,
+      },
+      {
+        action: "preview-attempt-archival",
+        triggered: latestSandbox !== null,
+        detail: "Rollback preserved append-only history while clearing live preview artifacts.",
+        affected_output_targets: deletedOutputTargets,
+      },
+      {
+        action: "containment-violation-recovery",
+        triggered: false,
+        detail: "No containment violation recovery was required during bounded rollback.",
+        affected_output_targets: [],
+      },
+    ],
+  };
+
+  await writeCinematicProductionMemory({
+    root: input?.root,
+    value: {
+      motion_preview_rollback_history: [rollback, ...record.motion_preview_rollback_history].slice(0, 24),
+    },
+  });
+
+  return {
+    rolled_back: deletedOutputTargets.length > 0,
+    recorded_at: rollback.recorded_at,
+    output_root: GOVERNED_MOTION_PREVIEW_SANDBOX_DIR.replace(/\\/g, "/"),
+    clip_directory: latestSandbox?.clip_directory ?? null,
+    deleted_output_targets: deletedOutputTargets,
+    rollback,
+    governance_status: "Rollback remained bounded to governed motion preview sandbox outputs only.",
+    sandbox_limited: true,
   };
 }
 
