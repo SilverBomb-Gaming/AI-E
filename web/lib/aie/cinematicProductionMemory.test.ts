@@ -774,7 +774,7 @@ test("controlled local inference bootstrap persists execution boundaries while k
     const afterRecord = await readCinematicProductionMemory({ root: tempRoot });
 
     assert.equal(validation.execution_enabled, false);
-    assert.equal(validation.readiness_delta.source, "controlled-local-inference-bootstrap");
+    assert.equal(validation.readiness_delta.source, "gated-inference-activation-precursor");
     assert.equal(validation.dry_runtime_bootstrap.valid, true);
     assert.ok(validation.dry_runtime_bootstrap.checks.some((entry) => entry.check === "runtime-binary-presence" && entry.passed));
     assert.ok(validation.execution_boundary_state.tracked_statuses.includes("simulated"));
@@ -789,9 +789,15 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(validation.controlled_runtime_profiles.some((entry) => entry.profile_id === "offline_safe"));
     assert.ok(validation.future_inference_activation.dry_model_initialization);
     assert.ok(validation.future_inference_activation.dry_pipeline_binding);
+    assert.ok(validation.activation_authority_registry.length > 0);
+    assert.ok(validation.pre_inference_gate_validation.checks.some((entry) => entry.gate === "execution-boundary-intact"));
+    assert.ok(validation.inference_entry_sequencing.stages.some((entry) => entry.stage === "gated_inference_prepare"));
+    assert.ok(validation.forbidden_execution_states.states.some((entry) => entry.state === "inference_execute"));
+    assert.ok(validation.governance_escalation_modeling.scenarios.some((entry) => entry.escalation === "runtime-risk-escalation"));
+    assert.equal(validation.future_unlock_conditions.milestone_unlocks_real_inference, "reviewed-real-inference-bridge");
 
     assert.equal(simulation.validation.execution_enabled, false);
-    assert.equal(simulation.simulation.sandbox_kind, "controlled-local-inference-bootstrap");
+    assert.equal(simulation.simulation.sandbox_kind, "gated-inference-activation-precursor");
     assert.equal(simulation.simulation.execution_enabled, false);
     assert.ok(simulation.simulation.dry_runtime_bootstrap);
     assert.ok(simulation.simulation.execution_boundary_status);
@@ -799,9 +805,21 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(simulation.simulation.activation_readiness_scoring);
     assert.ok(simulation.simulation.controlled_runtime_profiles);
     assert.ok(simulation.simulation.future_inference_activation);
+    assert.ok(simulation.simulation.activation_authority_registry);
+    assert.ok(simulation.simulation.pre_inference_gate_validation);
+    assert.ok(simulation.simulation.inference_entry_sequencing);
+    assert.ok(simulation.simulation.forbidden_execution_states);
+    assert.ok(simulation.simulation.governance_escalation_modeling);
+    assert.ok(simulation.simulation.future_unlock_conditions);
     assert.equal(simulation.simulation.readiness_tracking_id, afterRecord.readiness_delta_tracking_history[0]?.tracking_id ?? null);
     assert.ok(afterRecord.execution_boundary_status_history.length >= 2);
-    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap"));
+    assert.ok(afterRecord.activation_authority_registry.length > 0);
+    assert.ok(afterRecord.pre_inference_gate_validation_history.length >= 1);
+    assert.ok(afterRecord.inference_entry_sequencing_history.length >= 1);
+    assert.ok(afterRecord.forbidden_execution_state_history.length >= 1);
+    assert.ok(afterRecord.governance_escalation_modeling_history.length >= 1);
+    assert.ok(afterRecord.future_unlock_conditions_history.length >= 1);
+    assert.ok(afterRecord.sandbox_simulations.some((entry) => entry.sandbox_kind === "gated-inference-activation-precursor"));
     assert.deepEqual(afterRecord.approval_audit_trail, beforeRecord.approval_audit_trail);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

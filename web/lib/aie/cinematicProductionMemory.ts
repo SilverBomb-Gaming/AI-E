@@ -503,7 +503,7 @@ export type CinematicGenerationJobHistoryEntry = {
 
 export type CinematicSandboxSimulationRecord = {
   simulation_id: string;
-  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation" | "controlled-local-inference-bootstrap";
+  sandbox_kind: "provider-execution-sandbox" | "local-inference-execution-sandbox" | "local-model-loader-runtime-activation-simulation" | "controlled-local-inference-bootstrap" | "gated-inference-activation-precursor";
   sequence_id: string;
   routing_mode: CinematicProviderRoutingMode;
   provider: CinematicGenerationProvider;
@@ -529,6 +529,12 @@ export type CinematicSandboxSimulationRecord = {
   activation_readiness_scoring?: CinematicActivationReadinessScoring;
   controlled_runtime_profiles?: CinematicControlledRuntimeProfileEvaluation[];
   future_inference_activation?: CinematicFutureInferenceActivationPlan;
+  activation_authority_registry?: CinematicActivationAuthorityRegistryEntry[];
+  pre_inference_gate_validation?: CinematicPreInferenceGateValidation;
+  inference_entry_sequencing?: CinematicInferenceEntrySequencing;
+  forbidden_execution_states?: CinematicForbiddenExecutionStateEnforcement;
+  governance_escalation_modeling?: CinematicGovernanceEscalationModeling;
+  future_unlock_conditions?: CinematicFutureUnlockConditions;
   readiness_tracking_id?: string | null;
   hybrid_escalation?: CinematicHybridEscalationSimulation | null;
   recorded_at: string;
@@ -917,6 +923,142 @@ export type CinematicControlledRuntimeProfileEvaluation = {
   execution_boundary_status: CinematicExecutionBoundaryStatus;
 };
 
+export type CinematicActivationAuthorityScope =
+  | "dry_pipeline_binding"
+  | "gated_inference_prepare"
+  | "gated_runtime_bind"
+  | "gated_scheduler_prepare"
+  | "gated_frame_stage_prepare"
+  | "gated_temporal_stage_prepare"
+  | "gated_render_output_prepare";
+
+export type CinematicActivationAuthorityRegistryEntry = {
+  authority_id: string;
+  activation_scope: CinematicActivationAuthorityScope;
+  allowed_transition: string;
+  forbidden_transition: string;
+  required_approval: string[];
+  governance_dependencies: string[];
+  continuity_dependencies: string[];
+  runtime_dependencies: string[];
+  execution_boundary_requirements: string[];
+};
+
+export type CinematicPreInferenceGateName =
+  | "execution-boundary-intact"
+  | "dry-bootstrap-complete"
+  | "dry-model-initialization-complete"
+  | "dry-scheduler-planning-complete"
+  | "dry-pipeline-binding-complete"
+  | "governance-approval-present"
+  | "continuity-state-available"
+  | "runtime-integrity-acceptable";
+
+export type CinematicPreInferenceGateCheck = {
+  gate: CinematicPreInferenceGateName;
+  passed: boolean;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicPreInferenceGateValidation = {
+  validation_id: string;
+  recorded_at: string;
+  valid: boolean;
+  checks: CinematicPreInferenceGateCheck[];
+  blocked_transitions: string[];
+  next_unlock_condition: string;
+};
+
+export type CinematicInferenceEntrySequenceStage =
+  | "gated_inference_prepare"
+  | "gated_runtime_bind"
+  | "gated_scheduler_prepare"
+  | "gated_frame_stage_prepare"
+  | "gated_temporal_stage_prepare"
+  | "gated_render_output_prepare";
+
+export type CinematicInferenceEntrySequenceState = {
+  stage: CinematicInferenceEntrySequenceStage;
+  order: number;
+  simulated: true;
+  status: "ready" | "blocked";
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicInferenceEntrySequencing = {
+  sequencing_id: string;
+  recorded_at: string;
+  stages: CinematicInferenceEntrySequenceState[];
+  next_stage: CinematicInferenceEntrySequenceStage | null;
+};
+
+export type CinematicForbiddenExecutionState =
+  | "inference_execute"
+  | "frame_generate"
+  | "renderer_activate"
+  | "temporal_render"
+  | "unattended_execution"
+  | "autonomous_retry_loops"
+  | "uncontrolled_runtime_launch";
+
+export type CinematicForbiddenExecutionStateEntry = {
+  state: CinematicForbiddenExecutionState;
+  blocked: true;
+  reason: string;
+};
+
+export type CinematicForbiddenExecutionStateEnforcement = {
+  enforcement_id: string;
+  recorded_at: string;
+  states: CinematicForbiddenExecutionStateEntry[];
+};
+
+export type CinematicGovernanceEscalationKind =
+  | "manual-approval-escalation"
+  | "runtime-risk-escalation"
+  | "high-vram-escalation"
+  | "offline-mode-escalation"
+  | "continuity-risk-escalation"
+  | "self-sustaining-mode-escalation";
+
+export type CinematicGovernanceEscalationScenario = {
+  escalation: CinematicGovernanceEscalationKind;
+  triggered: boolean;
+  detail: string;
+  blockers: string[];
+};
+
+export type CinematicGovernanceEscalationModeling = {
+  escalation_id: string;
+  recorded_at: string;
+  scenarios: CinematicGovernanceEscalationScenario[];
+};
+
+export type CinematicFutureUnlockConditionId =
+  | "dry-inference-warmup"
+  | "dry-frame-synthesis-warmup"
+  | "gated-single-frame-inference"
+  | "gated-low-resolution-output"
+  | "gated-temporal-output"
+  | "governed-renderer-output";
+
+export type CinematicFutureUnlockCondition = {
+  unlock_id: CinematicFutureUnlockConditionId;
+  unlocked: false;
+  prerequisites: string[];
+  execution_states_still_forbidden: CinematicForbiddenExecutionState[];
+  unlocks_real_inference_at: string;
+};
+
+export type CinematicFutureUnlockConditions = {
+  condition_set_id: string;
+  recorded_at: string;
+  conditions: CinematicFutureUnlockCondition[];
+  milestone_unlocks_real_inference: string;
+};
+
 export type CinematicFutureInferenceActivationPlan = {
   dry_model_initialization: boolean;
   dry_vram_reservation: boolean;
@@ -950,15 +1092,18 @@ export type CinematicControlledLocalInferenceBootstrapValidation = {
   readiness: CinematicLocalInferenceReadinessReport;
   readiness_delta: CinematicReadinessDeltaTrackingRecord;
   loader_registry: CinematicLocalModelLoaderRecord[];
-  activation_lifecycle_states: CinematicRuntimeActivationSimulationState[];
-  compatibility_validation: CinematicModelRuntimeCompatibilityValidation;
-  activation_recovery_plan: CinematicActivationFailureRecoveryPlan;
   dry_runtime_bootstrap: CinematicDryRuntimeBootstrapValidation;
-  execution_boundary_status: CinematicExecutionBoundaryState;
+  execution_boundary_state: CinematicExecutionBoundaryState;
   runtime_integrity_validation: CinematicRuntimeIntegrityValidation;
-  activation_readiness_scoring: CinematicActivationReadinessScoring;
+  activation_readiness_scores: CinematicActivationReadinessScore[];
   controlled_runtime_profiles: CinematicControlledRuntimeProfileEvaluation[];
   future_inference_activation: CinematicFutureInferenceActivationPlan;
+  activation_authority_registry: CinematicActivationAuthorityRegistryEntry[];
+  pre_inference_gate_validation: CinematicPreInferenceGateValidation;
+  inference_entry_sequencing: CinematicInferenceEntrySequencing;
+  forbidden_execution_states: CinematicForbiddenExecutionStateEnforcement;
+  governance_escalation_modeling: CinematicGovernanceEscalationModeling;
+  future_unlock_conditions: CinematicFutureUnlockConditions;
   execution_enabled: false;
 };
 
@@ -1397,6 +1542,7 @@ export type CinematicProductionMemoryRecord = {
   local_model_loader_registry: CinematicLocalModelLoaderRecord[];
   local_runtime_capability_registry: CinematicLocalRuntimeCapability[];
   controlled_runtime_profiles: CinematicControlledRuntimeProfile[];
+  activation_authority_registry: CinematicActivationAuthorityRegistryEntry[];
   local_hardware_profiles: CinematicLocalHardwareProfile[];
   local_runtime_readiness_rules: string[];
   local_provider_routing_rules: string[];
@@ -1411,6 +1557,11 @@ export type CinematicProductionMemoryRecord = {
   hybrid_local_cloud_strategies: CinematicHybridLocalCloudStrategy[];
   readiness_delta_tracking_history: CinematicReadinessDeltaTrackingRecord[];
   execution_boundary_status_history: CinematicExecutionBoundaryState[];
+  pre_inference_gate_validation_history: CinematicPreInferenceGateValidation[];
+  inference_entry_sequencing_history: CinematicInferenceEntrySequencing[];
+  forbidden_execution_state_history: CinematicForbiddenExecutionStateEnforcement[];
+  governance_escalation_modeling_history: CinematicGovernanceEscalationModeling[];
+  future_unlock_conditions_history: CinematicFutureUnlockConditions[];
   provider_routing_rules: string[];
   prompt_normalization_rules: string[];
   provider_validation_rules: string[];
@@ -2017,6 +2168,7 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
       governance_notes: ["CPU fallback is planning-only for this layer.", "No inference or rendering may start from the fallback profile."],
     },
   ],
+  activation_authority_registry: [],
   local_runtime_capability_registry: [
     {
       runtime_id: "comfyui-local-video-lane",
@@ -2339,6 +2491,11 @@ const DEFAULT_PRODUCTION_MEMORY_RECORD: CinematicProductionMemoryRecord = {
   ],
   readiness_delta_tracking_history: [],
   execution_boundary_status_history: [],
+  pre_inference_gate_validation_history: [],
+  inference_entry_sequencing_history: [],
+  forbidden_execution_state_history: [],
+  governance_escalation_modeling_history: [],
+  future_unlock_conditions_history: [],
   provider_routing_rules: [
     "Cheap draft routing should prefer Seedance for low-cost storyboard-grade passes.",
     "Premium cinematic routing should prefer Sora when fidelity matters more than cost.",
@@ -2486,6 +2643,7 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     local_model_loader_registry: nextRecord.local_model_loader_registry ?? defaults.local_model_loader_registry,
     local_runtime_capability_registry: nextRecord.local_runtime_capability_registry ?? defaults.local_runtime_capability_registry,
     controlled_runtime_profiles: nextRecord.controlled_runtime_profiles ?? defaults.controlled_runtime_profiles,
+    activation_authority_registry: nextRecord.activation_authority_registry ?? defaults.activation_authority_registry,
     local_hardware_profiles: nextRecord.local_hardware_profiles ?? defaults.local_hardware_profiles,
     local_runtime_readiness_rules: nextRecord.local_runtime_readiness_rules ?? defaults.local_runtime_readiness_rules,
     local_provider_routing_rules: nextRecord.local_provider_routing_rules ?? defaults.local_provider_routing_rules,
@@ -2500,6 +2658,11 @@ function hydrateProductionMemoryRecord(record: Partial<CinematicProductionMemory
     hybrid_local_cloud_strategies: nextRecord.hybrid_local_cloud_strategies ?? defaults.hybrid_local_cloud_strategies,
     readiness_delta_tracking_history: nextRecord.readiness_delta_tracking_history ?? defaults.readiness_delta_tracking_history,
     execution_boundary_status_history: nextRecord.execution_boundary_status_history ?? defaults.execution_boundary_status_history,
+    pre_inference_gate_validation_history: nextRecord.pre_inference_gate_validation_history ?? defaults.pre_inference_gate_validation_history,
+    inference_entry_sequencing_history: nextRecord.inference_entry_sequencing_history ?? defaults.inference_entry_sequencing_history,
+    forbidden_execution_state_history: nextRecord.forbidden_execution_state_history ?? defaults.forbidden_execution_state_history,
+    governance_escalation_modeling_history: nextRecord.governance_escalation_modeling_history ?? defaults.governance_escalation_modeling_history,
+    future_unlock_conditions_history: nextRecord.future_unlock_conditions_history ?? defaults.future_unlock_conditions_history,
     provider_routing_rules: nextRecord.provider_routing_rules ?? defaults.provider_routing_rules,
     prompt_normalization_rules: nextRecord.prompt_normalization_rules ?? defaults.prompt_normalization_rules,
     provider_validation_rules: nextRecord.provider_validation_rules ?? defaults.provider_validation_rules,
@@ -4422,6 +4585,397 @@ function buildFutureInferenceActivationScaffold(input: {
   };
 }
 
+function buildActivationAuthorityRegistry(input: {
+  record: CinematicProductionMemoryRecord;
+  boundary: CinematicExecutionBoundaryState;
+  integrity: CinematicRuntimeIntegrityValidation;
+}): CinematicActivationAuthorityRegistryEntry[] {
+  const sharedGovernance = uniqueNormalizedStrings([
+    ...input.record.local_inference_governance_rules,
+    ...input.boundary.governance_restrictions,
+  ]);
+  const sharedRuntimeDependencies = uniqueNormalizedStrings([
+    ...input.boundary.missing_dependencies,
+    ...input.integrity.missing_dependencies,
+  ]);
+  return [
+    {
+      authority_id: "authority-manual-operator-gate",
+      activation_scope: "gated_inference_prepare",
+      allowed_transition: "dry_pipeline_binding->gated_inference_prepare",
+      forbidden_transition: "gated_inference_prepare->inference_execute",
+      required_approval: ["manual operator approval", "governance review record"],
+      governance_dependencies: sharedGovernance,
+      continuity_dependencies: ["continuity milestone evidence", "sequence continuity review"],
+      runtime_dependencies: sharedRuntimeDependencies,
+      execution_boundary_requirements: ["inference_disabled", "rendering_disabled", "execution_blocked"],
+    },
+    {
+      authority_id: "authority-runtime-integrity-review",
+      activation_scope: "gated_runtime_bind",
+      allowed_transition: "gated_inference_prepare->gated_runtime_bind",
+      forbidden_transition: "gated_runtime_bind->uncontrolled_runtime_launch",
+      required_approval: ["runtime integrity approval", "manual operator approval"],
+      governance_dependencies: ["runtime risk escalation remains advisory only"],
+      continuity_dependencies: ["continuity context remains available during bind review"],
+      runtime_dependencies: uniqueNormalizedStrings(["validated runtime paths", ...sharedRuntimeDependencies]),
+      execution_boundary_requirements: ["simulated", "inference_disabled", "execution_blocked"],
+    },
+    {
+      authority_id: "authority-continuity-governor",
+      activation_scope: "gated_scheduler_prepare",
+      allowed_transition: "gated_runtime_bind->gated_scheduler_prepare",
+      forbidden_transition: "gated_scheduler_prepare->autonomous_retry_loops",
+      required_approval: ["continuity review approval"],
+      governance_dependencies: ["continuity blockers override throughput optimizations"],
+      continuity_dependencies: ["continuity milestone evidence", "continuity-safe sequencing"],
+      runtime_dependencies: ["dry scheduler planning only"],
+      execution_boundary_requirements: ["partially_activated", "inference_disabled", "execution_blocked"],
+    },
+    {
+      authority_id: "authority-render-output-governor",
+      activation_scope: "gated_render_output_prepare",
+      allowed_transition: "gated_temporal_stage_prepare->gated_render_output_prepare",
+      forbidden_transition: "gated_render_output_prepare->renderer_activate",
+      required_approval: ["renderer governance approval", "manual operator approval"],
+      governance_dependencies: ["render packaging stays scaffold-only", "real renderer output remains hard-gated"],
+      continuity_dependencies: ["temporal continuity review", "frame-stage preparation evidence"],
+      runtime_dependencies: ["ffmpeg visibility", ...sharedRuntimeDependencies],
+      execution_boundary_requirements: ["rendering_disabled", "execution_blocked"],
+    },
+  ];
+}
+
+function buildPreInferenceGateValidation(input: {
+  record: CinematicProductionMemoryRecord;
+  readiness: CinematicLocalInferenceReadinessReport;
+  bootstrap: CinematicDryRuntimeBootstrapValidation;
+  boundary: CinematicExecutionBoundaryState;
+  integrity: CinematicRuntimeIntegrityValidation;
+  futureInferenceActivation: CinematicFutureInferenceActivationPlan;
+}): CinematicPreInferenceGateValidation {
+  const continuityProgress = input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation");
+  const governanceApprovalPresent = input.record.generation_budget_policy.manual_approval_required
+    && input.record.local_inference_governance_rules.length > 0
+    && input.record.manual_approval_workflow.length > 0;
+  const checks: CinematicPreInferenceGateCheck[] = [
+    {
+      gate: "execution-boundary-intact",
+      passed: input.boundary.tracked_statuses.includes("inference_disabled") && input.boundary.tracked_statuses.includes("rendering_disabled"),
+      detail: "Execution boundary must keep inference and rendering disabled while precursor preparation is modeled.",
+      blockers: input.boundary.activation_blockers,
+    },
+    {
+      gate: "dry-bootstrap-complete",
+      passed: input.bootstrap.valid,
+      detail: "Dry bootstrap evidence must exist before any pre-inference preparation is considered.",
+      blockers: input.bootstrap.activation_blockers,
+    },
+    {
+      gate: "dry-model-initialization-complete",
+      passed: input.futureInferenceActivation.dry_model_initialization,
+      detail: "Dry model initialization remains scaffolded and non-executing.",
+      blockers: input.futureInferenceActivation.dry_model_initialization ? [] : ["Dry model initialization scaffold is missing."],
+    },
+    {
+      gate: "dry-scheduler-planning-complete",
+      passed: input.futureInferenceActivation.dry_scheduler_initialization,
+      detail: "Dry scheduler planning must be present before gated scheduler preparation can be sequenced.",
+      blockers: input.futureInferenceActivation.dry_scheduler_initialization ? [] : ["Dry scheduler planning scaffold is missing."],
+    },
+    {
+      gate: "dry-pipeline-binding-complete",
+      passed: input.futureInferenceActivation.dry_pipeline_binding,
+      detail: "Dry pipeline binding must remain descriptive only and recorded before pre-inference gating advances.",
+      blockers: input.futureInferenceActivation.dry_pipeline_binding ? [] : ["Dry pipeline binding scaffold is missing."],
+    },
+    {
+      gate: "governance-approval-present",
+      passed: governanceApprovalPresent,
+      detail: "Governance approval metadata must remain present even when no real execution is permitted.",
+      blockers: governanceApprovalPresent ? [] : ["Governance approval metadata is incomplete."],
+    },
+    {
+      gate: "continuity-state-available",
+      passed: Boolean(input.record.gameplay_context.current_sequence) && Boolean(continuityProgress),
+      detail: "Continuity state must stay visible before future inference-entry sequencing is prepared.",
+      blockers: continuityProgress ? [] : ["Continuity milestone evidence is not available."],
+    },
+    {
+      gate: "runtime-integrity-acceptable",
+      passed: input.integrity.valid,
+      detail: "Runtime integrity remains a hard safety gate even for simulated preparation.",
+      blockers: input.integrity.blockers,
+    },
+  ];
+  const blockedTransitions = checks
+    .filter((entry) => !entry.passed)
+    .map((entry) => entry.gate.replace(/-/g, "_"));
+  return {
+    validation_id: `pre-inference-gates-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    valid: checks.every((entry) => entry.passed),
+    checks,
+    blocked_transitions: blockedTransitions,
+    next_unlock_condition: checks.find((entry) => !entry.passed)?.detail ?? "All precursor gates are satisfied, but execution remains hard-gated.",
+  };
+}
+
+function buildInferenceEntrySequencing(input: {
+  gateValidation: CinematicPreInferenceGateValidation;
+}): CinematicInferenceEntrySequencing {
+  const stages: CinematicInferenceEntrySequenceStage[] = [
+    "gated_inference_prepare",
+    "gated_runtime_bind",
+    "gated_scheduler_prepare",
+    "gated_frame_stage_prepare",
+    "gated_temporal_stage_prepare",
+    "gated_render_output_prepare",
+  ];
+  let blocked = !input.gateValidation.valid;
+  const states = stages.map((stage, index) => {
+    const state = {
+      stage,
+      order: index + 1,
+      simulated: true as const,
+      status: blocked ? "blocked" as const : "ready" as const,
+      detail: blocked
+        ? `Stage ${stage} remains simulated-only because pre-inference gates still block advancement.`
+        : `Stage ${stage} is sequenced for future reviewed activation preparation only.`,
+      blockers: blocked ? input.gateValidation.blocked_transitions : [],
+    };
+    blocked = true;
+    return state;
+  });
+  return {
+    sequencing_id: `inference-entry-sequencing-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    stages: states,
+    next_stage: states.find((entry) => entry.status === "ready")?.stage ?? null,
+  };
+}
+
+function buildForbiddenExecutionStateEnforcement(input: {
+  boundary: CinematicExecutionBoundaryState;
+}): CinematicForbiddenExecutionStateEnforcement {
+  const reason = `Execution boundary ${input.boundary.current_status} keeps live execution blocked in this precursor layer.`;
+  return {
+    enforcement_id: `forbidden-execution-states-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    states: [
+      "inference_execute",
+      "frame_generate",
+      "renderer_activate",
+      "temporal_render",
+      "unattended_execution",
+      "autonomous_retry_loops",
+      "uncontrolled_runtime_launch",
+    ].map((state) => ({
+      state,
+      blocked: true as const,
+      reason,
+    })),
+  };
+}
+
+function buildGovernanceEscalationModeling(input: {
+  record: CinematicProductionMemoryRecord;
+  readiness: CinematicLocalInferenceReadinessReport;
+  integrity: CinematicRuntimeIntegrityValidation;
+  gateValidation: CinematicPreInferenceGateValidation;
+  loaderRegistry: CinematicLocalModelLoaderRecord[];
+}): CinematicGovernanceEscalationModeling {
+  const continuityProgress = input.readiness.milestone_progress.find((entry) => entry.milestone === "continuity-preserving-local-generation")?.percentage ?? 0;
+  const offlineMode = input.readiness.recommended_routing_mode === "offline-planning-mode";
+  return {
+    escalation_id: `governance-escalation-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    scenarios: [
+      {
+        escalation: "manual-approval-escalation",
+        triggered: !input.gateValidation.checks.find((entry) => entry.gate === "governance-approval-present")?.passed,
+        detail: "Manual approval escalation remains the first gate before any future reviewed inference bridge can exist.",
+        blockers: input.gateValidation.checks.find((entry) => entry.gate === "governance-approval-present")?.blockers ?? [],
+      },
+      {
+        escalation: "runtime-risk-escalation",
+        triggered: !input.integrity.valid,
+        detail: "Runtime integrity issues escalate to manual review instead of any runtime launch.",
+        blockers: input.integrity.blockers,
+      },
+      {
+        escalation: "high-vram-escalation",
+        triggered: input.loaderRegistry.some((entry) => entry.estimated_vram >= 14),
+        detail: "High-VRAM candidates require an explicit reviewed escalation path before any future bind stage.",
+        blockers: input.loaderRegistry.filter((entry) => entry.estimated_vram >= 14).map((entry) => `${entry.loader_id} requires ${entry.estimated_vram}GB VRAM.`),
+      },
+      {
+        escalation: "offline-mode-escalation",
+        triggered: offlineMode,
+        detail: "Offline-mode escalation preserves non-networked planning when local runtime integrity is not yet acceptable.",
+        blockers: offlineMode ? ["Routing remains in offline-planning-mode."] : [],
+      },
+      {
+        escalation: "continuity-risk-escalation",
+        triggered: continuityProgress < 70,
+        detail: "Continuity risk escalation keeps continuity-safe preparation ahead of throughput or automation goals.",
+        blockers: continuityProgress < 70 ? ["Continuity readiness remains below the governed threshold."] : [],
+      },
+      {
+        escalation: "self-sustaining-mode-escalation",
+        triggered: true,
+        detail: "Self-sustaining mode remains forbidden and always escalates to governance review in this phase.",
+        blockers: ["Self-sustaining generation remains explicitly forbidden.", ...input.record.local_inference_governance_rules],
+      },
+    ],
+  };
+}
+
+function buildFutureUnlockConditions(input: {
+  gateValidation: CinematicPreInferenceGateValidation;
+}): CinematicFutureUnlockConditions {
+  const blockedStates: CinematicForbiddenExecutionState[] = [
+    "inference_execute",
+    "frame_generate",
+    "renderer_activate",
+    "temporal_render",
+    "unattended_execution",
+    "autonomous_retry_loops",
+    "uncontrolled_runtime_launch",
+  ];
+  const milestone = "reviewed-real-inference-bridge";
+  const blockedPrerequisites = input.gateValidation.checks.filter((entry) => !entry.passed).map((entry) => entry.detail);
+  return {
+    condition_set_id: `future-unlock-conditions-${Date.now()}`,
+    recorded_at: new Date().toISOString(),
+    milestone_unlocks_real_inference: milestone,
+    conditions: [
+      {
+        unlock_id: "dry-inference-warmup",
+        unlocked: false,
+        prerequisites: uniqueNormalizedStrings(["pre-inference gate validation must pass", ...blockedPrerequisites]),
+        execution_states_still_forbidden: blockedStates,
+        unlocks_real_inference_at: milestone,
+      },
+      {
+        unlock_id: "dry-frame-synthesis-warmup",
+        unlocked: false,
+        prerequisites: ["dry render packaging scaffold", "runtime integrity approval"],
+        execution_states_still_forbidden: blockedStates,
+        unlocks_real_inference_at: milestone,
+      },
+      {
+        unlock_id: "gated-single-frame-inference",
+        unlocked: false,
+        prerequisites: ["manual operator approval", "single-frame reviewed bridge"],
+        execution_states_still_forbidden: blockedStates,
+        unlocks_real_inference_at: milestone,
+      },
+      {
+        unlock_id: "gated-low-resolution-output",
+        unlocked: false,
+        prerequisites: ["bounded low-resolution review", "runtime bind approval"],
+        execution_states_still_forbidden: blockedStates,
+        unlocks_real_inference_at: milestone,
+      },
+      {
+        unlock_id: "gated-temporal-output",
+        unlocked: false,
+        prerequisites: ["temporal stage approval", "continuity-safe evidence"],
+        execution_states_still_forbidden: blockedStates,
+        unlocks_real_inference_at: milestone,
+      },
+      {
+        unlock_id: "governed-renderer-output",
+        unlocked: false,
+        prerequisites: ["renderer governance approval", "ffmpeg visibility", "manual operator approval"],
+        execution_states_still_forbidden: blockedStates,
+        unlocks_real_inference_at: milestone,
+      },
+    ],
+  };
+}
+
+function applyGatedInferencePrecursorReadiness(input: {
+  readiness: CinematicLocalInferenceReadinessReport;
+  activationAuthorityRegistry: CinematicActivationAuthorityRegistryEntry[];
+  gateValidation: CinematicPreInferenceGateValidation;
+  sequencing: CinematicInferenceEntrySequencing;
+  escalationModeling: CinematicGovernanceEscalationModeling;
+  futureUnlockConditions: CinematicFutureUnlockConditions;
+}): CinematicLocalInferenceReadinessReport {
+  const sequencingCoverage = input.sequencing.stages.length > 0;
+  const unlockCoverage = input.futureUnlockConditions.conditions.length > 0;
+  const triggeredEscalations = input.escalationModeling.scenarios.filter((entry) => entry.triggered).length;
+  const authorityCoverage = input.activationAuthorityRegistry.length > 0;
+  const updatedMilestones = input.readiness.milestone_progress.map((entry) => {
+    const blockers = uniqueNormalizedStrings([
+      ...entry.blockers,
+      ...input.gateValidation.checks.filter((check) => !check.passed).flatMap((check) => check.blockers),
+    ]);
+    switch (entry.milestone) {
+      case "local-inference-readiness":
+        return {
+          ...entry,
+          percentage: clampPercentage(entry.percentage + (authorityCoverage ? 5 : 0) + (sequencingCoverage ? 4 : 0) + (unlockCoverage ? 3 : 0)),
+          blockers,
+        };
+      case "local-runtime-readiness":
+        return {
+          ...entry,
+          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "execution-boundary-intact")?.passed ? 4 : 0) + (triggeredEscalations > 0 ? 2 : 0)),
+          blockers,
+        };
+      case "local-frame-generation-readiness":
+        return {
+          ...entry,
+          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_frame_stage_prepare") ? 4 : 0)),
+          blockers,
+        };
+      case "local-renderer-readiness":
+        return {
+          ...entry,
+          percentage: clampPercentage(entry.percentage + (input.sequencing.stages.some((stage) => stage.stage === "gated_render_output_prepare") ? 3 : 0)),
+          blockers,
+        };
+      case "continuity-preserving-local-generation":
+        return {
+          ...entry,
+          percentage: clampPercentage(entry.percentage + (input.gateValidation.checks.find((check) => check.gate === "continuity-state-available")?.passed ? 4 : 0)),
+          blockers,
+        };
+      case "hybrid-local-cloud-orchestration":
+        return {
+          ...entry,
+          percentage: clampPercentage(entry.percentage + (input.escalationModeling.scenarios.some((scenario) => scenario.escalation === "offline-mode-escalation") ? 3 : 0)),
+          blockers,
+        };
+      case "self-sustaining-generation-readiness":
+        return {
+          ...entry,
+          percentage: clampPercentage(entry.percentage + 2),
+          blockers: uniqueNormalizedStrings([...blockers, "Self-sustaining generation remains forbidden pending a reviewed real-inference bridge."]),
+        };
+      default:
+        return entry;
+    }
+  });
+  return {
+    ...input.readiness,
+    planning_notes: uniqueNormalizedStrings([
+      ...input.readiness.planning_notes,
+      `Activation authority registry entries recorded: ${input.activationAuthorityRegistry.length}.`,
+      `Pre-inference gate validation: ${input.gateValidation.valid ? "passed" : "blocked"}.`,
+      `Future real inference remains locked behind ${input.futureUnlockConditions.milestone_unlocks_real_inference}.`,
+    ]),
+    blocked_reasons: uniqueNormalizedStrings([
+      ...input.readiness.blocked_reasons,
+      ...input.gateValidation.checks.filter((entry) => !entry.passed).map((entry) => entry.detail),
+    ]),
+    milestone_progress: updatedMilestones,
+  };
+}
+
 function buildLocalHardwareEstimate(input: {
   model: CinematicLocalVideoModelProfile;
   runtime: CinematicLocalRuntimeCapability | null;
@@ -5672,17 +6226,60 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     boundary: executionBoundaryState,
     integrity: runtimeIntegrityValidation,
   });
-  const trackingUpdate = appendReadinessDeltaTracking({
+  const activationAuthorityRegistry = buildActivationAuthorityRegistry({
+    record: nextRecord,
+    boundary: executionBoundaryState,
+    integrity: runtimeIntegrityValidation,
+  });
+  const preInferenceGateValidation = buildPreInferenceGateValidation({
     record: nextRecord,
     readiness,
-    source: "controlled-local-inference-bootstrap",
+    bootstrap: dryRuntimeBootstrap,
+    boundary: executionBoundaryState,
+    integrity: runtimeIntegrityValidation,
+    futureInferenceActivation,
+  });
+  const inferenceEntrySequencing = buildInferenceEntrySequencing({
+    gateValidation: preInferenceGateValidation,
+  });
+  const forbiddenExecutionStates = buildForbiddenExecutionStateEnforcement({
+    boundary: executionBoundaryState,
+  });
+  const governanceEscalationModeling = buildGovernanceEscalationModeling({
+    record: nextRecord,
+    readiness,
+    integrity: runtimeIntegrityValidation,
+    gateValidation: preInferenceGateValidation,
+    loaderRegistry,
+  });
+  const futureUnlockConditions = buildFutureUnlockConditions({
+    gateValidation: preInferenceGateValidation,
+  });
+  const readinessWithPrecursor = applyGatedInferencePrecursorReadiness({
+    readiness,
+    activationAuthorityRegistry,
+    gateValidation: preInferenceGateValidation,
+    sequencing: inferenceEntrySequencing,
+    escalationModeling: governanceEscalationModeling,
+    futureUnlockConditions,
+  });
+  const trackingUpdate = appendReadinessDeltaTracking({
+    record: nextRecord,
+    readiness: readinessWithPrecursor,
+    source: "gated-inference-activation-precursor",
   });
   await writeProductionMemoryRecord(initialization.productionMemoryPath, {
     ...trackingUpdate.record,
+    activation_authority_registry: activationAuthorityRegistry,
     execution_boundary_status_history: [executionBoundaryState, ...trackingUpdate.record.execution_boundary_status_history].slice(0, 24),
+    pre_inference_gate_validation_history: [preInferenceGateValidation, ...trackingUpdate.record.pre_inference_gate_validation_history].slice(0, 24),
+    inference_entry_sequencing_history: [inferenceEntrySequencing, ...trackingUpdate.record.inference_entry_sequencing_history].slice(0, 24),
+    forbidden_execution_state_history: [forbiddenExecutionStates, ...trackingUpdate.record.forbidden_execution_state_history].slice(0, 24),
+    governance_escalation_modeling_history: [governanceEscalationModeling, ...trackingUpdate.record.governance_escalation_modeling_history].slice(0, 24),
+    future_unlock_conditions_history: [futureUnlockConditions, ...trackingUpdate.record.future_unlock_conditions_history].slice(0, 24),
   });
   return {
-    readiness,
+    readiness: readinessWithPrecursor,
     readiness_delta: trackingUpdate.tracking,
     loader_registry: loaderRegistry,
     dry_runtime_bootstrap: dryRuntimeBootstrap,
@@ -5691,6 +6288,12 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     activation_readiness_scores: activationReadinessScoring.scores,
     controlled_runtime_profiles: controlledRuntimeProfiles,
     future_inference_activation: futureInferenceActivation,
+    activation_authority_registry: activationAuthorityRegistry,
+    pre_inference_gate_validation: preInferenceGateValidation,
+    inference_entry_sequencing: inferenceEntrySequencing,
+    forbidden_execution_states: forbiddenExecutionStates,
+    governance_escalation_modeling: governanceEscalationModeling,
+    future_unlock_conditions: futureUnlockConditions,
     execution_enabled: false,
   };
 }
@@ -5705,7 +6308,7 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
   const record = await readCinematicProductionMemory({ root: input?.root });
   const simulation: CinematicSandboxSimulationRecord = {
     simulation_id: `bootstrap-sandbox-${Date.now()}`,
-    sandbox_kind: "controlled-local-inference-bootstrap",
+    sandbox_kind: "gated-inference-activation-precursor",
     sequence_id: "controlled-local-bootstrap-planning-only",
     routing_mode: validation.readiness.recommended_routing_mode,
     provider: "LocalFutureProvider",
@@ -5728,6 +6331,12 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
     },
     controlled_runtime_profiles: validation.controlled_runtime_profiles,
     future_inference_activation: validation.future_inference_activation,
+    activation_authority_registry: validation.activation_authority_registry,
+    pre_inference_gate_validation: validation.pre_inference_gate_validation,
+    inference_entry_sequencing: validation.inference_entry_sequencing,
+    forbidden_execution_states: validation.forbidden_execution_states,
+    governance_escalation_modeling: validation.governance_escalation_modeling,
+    future_unlock_conditions: validation.future_unlock_conditions,
     readiness_tracking_id: validation.readiness_delta.tracking_id,
     hybrid_escalation: null,
     recorded_at: new Date().toISOString(),

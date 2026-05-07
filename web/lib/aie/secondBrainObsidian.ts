@@ -2574,7 +2574,7 @@ function buildUpdatedReadinessProgressNote(input: {
 
 function latestControlledBootstrapSimulation(production: CinematicProductionMemoryRecord): CinematicProductionMemoryRecord["sandbox_simulations"][number] | null {
   return [...production.sandbox_simulations]
-    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap")
+    .filter((entry) => entry.sandbox_kind === "controlled-local-inference-bootstrap" || entry.sandbox_kind === "gated-inference-activation-precursor")
     .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at))[0] ?? null;
 }
 
@@ -2829,6 +2829,234 @@ function buildFutureInferenceActivationNote(input: {
         toLink("Dry Runtime Bootstrap"),
         toLink("Execution Boundary Status"),
         toLink("Controlled Runtime Profiles"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildActivationAuthorityRegistryNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const registry = latestBootstrap?.activation_authority_registry ?? production.activation_authority_registry;
+  return {
+    title: "Activation Authority Registry",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_activation_authority_registry",
+      tags: ["second-brain", "activation-authority", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Authority Entries",
+      registry.length > 0
+        ? asBulletList(registry.map((entry) => `${entry.authority_id}: ${entry.activation_scope} | allow=${entry.allowed_transition} | forbid=${entry.forbidden_transition}`))
+        : "- No activation authority registry recorded yet.",
+      "",
+      "## Required Approvals",
+      registry.length > 0
+        ? asBulletList(registry.flatMap((entry) => entry.required_approval.map((approval) => `${entry.authority_id}: ${approval}`)))
+        : "- No activation approvals recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Pre-Inference Gate Validation"),
+        toLink("Inference Entry Sequencing"),
+        toLink("Future Unlock Conditions"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildPreInferenceGateValidationNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const validation = latestBootstrap?.pre_inference_gate_validation ?? production.pre_inference_gate_validation_history[0] ?? null;
+  return {
+    title: "Pre-Inference Gate Validation",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_pre_inference_gate_validation",
+      tags: ["second-brain", "pre-inference-gates", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Gate Summary",
+      validation
+        ? asBulletList([
+          `Valid: ${validation.valid ? "yes" : "no"}`,
+          `Next unlock condition: ${validation.next_unlock_condition}`,
+          `Blocked transitions: ${validation.blocked_transitions.join(", ") || "none"}`,
+        ])
+        : "- No pre-inference gate validation recorded yet.",
+      "",
+      "## Gate Checks",
+      validation?.checks?.length
+        ? asBulletList(validation.checks.map((entry) => `${entry.gate}: passed=${entry.passed ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No pre-inference gate checks recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Activation Authority Registry"),
+        toLink("Forbidden Execution States"),
+        toLink("Future Unlock Conditions"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildInferenceEntrySequencingNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const sequencing = latestBootstrap?.inference_entry_sequencing ?? production.inference_entry_sequencing_history[0] ?? null;
+  return {
+    title: "Inference Entry Sequencing",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_inference_entry_sequencing",
+      tags: ["second-brain", "inference-sequencing", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Sequencing Summary",
+      sequencing
+        ? asBulletList([
+          `Next stage: ${sequencing.next_stage ?? "none"}`,
+          `Recorded at: ${sequencing.recorded_at}`,
+        ])
+        : "- No inference entry sequencing recorded yet.",
+      "",
+      "## Sequenced Stages",
+      sequencing?.stages?.length
+        ? asBulletList(sequencing.stages.map((entry) => `${entry.order}. ${entry.stage}: status=${entry.status} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No inference-entry stages recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Activation Authority Registry"),
+        toLink("Pre-Inference Gate Validation"),
+        toLink("Governance Escalation Modeling"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildForbiddenExecutionStatesNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const enforcement = latestBootstrap?.forbidden_execution_states ?? production.forbidden_execution_state_history[0] ?? null;
+  return {
+    title: "Forbidden Execution States",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_forbidden_execution_states",
+      tags: ["second-brain", "forbidden-states", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Forbidden States",
+      enforcement?.states?.length
+        ? asBulletList(enforcement.states.map((entry) => `${entry.state}: blocked=yes | reason=${entry.reason}`))
+        : "- No forbidden execution states recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Pre-Inference Gate Validation"),
+        toLink("Governance Escalation Modeling"),
+        toLink("Future Unlock Conditions"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildGovernanceEscalationModelingNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const escalation = latestBootstrap?.governance_escalation_modeling ?? production.governance_escalation_modeling_history[0] ?? null;
+  return {
+    title: "Governance Escalation Modeling",
+    directory: "Architecture",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_governance_escalation_modeling",
+      tags: ["second-brain", "governance-escalation", "runtime-risk", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Escalation Scenarios",
+      escalation?.scenarios?.length
+        ? asBulletList(escalation.scenarios.map((entry) => `${entry.escalation}: triggered=${entry.triggered ? "yes" : "no"} | blockers=${entry.blockers.join(", ") || "none"}`))
+        : "- No governance escalation modeling recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Inference Entry Sequencing"),
+        toLink("Forbidden Execution States"),
+        toLink("Future Unlock Conditions"),
+      ]),
+    ].join("\n"),
+  };
+}
+
+function buildFutureUnlockConditionsNote(input: {
+  productionMemory: CinematicProductionMemoryRecord;
+  latestSessionId: string;
+}): ObsidianExportNote {
+  const production = input.productionMemory;
+  const latestBootstrap = latestControlledBootstrapSimulation(production);
+  const unlockConditions = latestBootstrap?.future_unlock_conditions ?? production.future_unlock_conditions_history[0] ?? null;
+  return {
+    title: "Future Unlock Conditions",
+    directory: "Strategy",
+    metadata: {
+      project_key: production.project_key,
+      updated_at: production.updated_at,
+      session_id: input.latestSessionId,
+      status: "generated_future_unlock_conditions",
+      tags: ["second-brain", "future-unlocks", "governance", "cinematic", "obsidian-export"],
+    },
+    body: [
+      "## Unlock Summary",
+      unlockConditions
+        ? asBulletList([
+          `Milestone unlocking real inference: ${unlockConditions.milestone_unlocks_real_inference}`,
+          `Condition count: ${unlockConditions.conditions.length}`,
+        ])
+        : "- No future unlock conditions recorded yet.",
+      "",
+      "## Unlock Conditions",
+      unlockConditions?.conditions?.length
+        ? asBulletList(unlockConditions.conditions.map((entry) => `${entry.unlock_id}: unlocked=no | prerequisites=${entry.prerequisites.join(", ")}`))
+        : "- No unlock conditions recorded yet.",
+      "",
+      "## Related",
+      asBulletList([
+        toLink("Activation Authority Registry"),
+        toLink("Pre-Inference Gate Validation"),
+        toLink("Inference Entry Sequencing"),
       ]),
     ].join("\n"),
   };
@@ -3326,6 +3554,12 @@ export async function exportSecondBrainToObsidian(input?: {
     buildActivationReadinessScoringNote({ productionMemory, latestSessionId }),
     buildControlledRuntimeProfilesNote({ productionMemory, latestSessionId }),
     buildFutureInferenceActivationNote({ productionMemory, latestSessionId }),
+    buildActivationAuthorityRegistryNote({ productionMemory, latestSessionId }),
+    buildPreInferenceGateValidationNote({ productionMemory, latestSessionId }),
+    buildInferenceEntrySequencingNote({ productionMemory, latestSessionId }),
+    buildForbiddenExecutionStatesNote({ productionMemory, latestSessionId }),
+    buildGovernanceEscalationModelingNote({ productionMemory, latestSessionId }),
+    buildFutureUnlockConditionsNote({ productionMemory, latestSessionId }),
     buildCinematicExecutionLifecycleNote({ productionMemory, latestSessionId }),
     buildContinuityReviewNotesNote({ productionMemory, latestSessionId }),
     buildRetryPlanningRulesNote({ productionMemory, latestSessionId }),
