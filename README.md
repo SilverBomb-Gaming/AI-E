@@ -2,6 +2,34 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## Governed Cinematic Shot Engine
+
+AI-E now includes the first governed cinematic shot-engine layer inside the bounded preview sandbox.
+
+Current Phase 1 capabilities:
+
+- deterministic governed camera rig with persistent camera state, bounded smoothing, bounded acceleration, and rollback-safe snapshots
+- bounded shot-state engine for `STATIC_ESTABLISHING`, `SLOW_ORBIT`, `TARGET_TRACK`, `REVEAL_ARC`, `LOW_ANGLE_HERO`, and `WIDE_ENVIRONMENT`
+- target-aware framing heuristics that score visibility, clipping, composition balance, and continuity-safe centering
+- deterministic orbitals with bounded radius, bounded speed, and easing-only interpolation
+- camera continuity governance that can reject a bad transition and restore the prior shot snapshot deterministically
+- operator preview diagnostics for active shot type, orbital radius, framing score, visibility score, camera continuity score, transition score, and rollback restoration state
+
+Current operator surface:
+
+- governed camera choreography is surfaced through `/operator/preview`
+- motion preview cards now show shot type, orbit size, framing, continuity, transition summaries, and camera-state overlays
+- prerequisite and motion-preview summaries now include shot engine and camera governance rollups
+
+Governance preserved:
+
+- rollback remains explicit and sandbox-limited
+- manual approval remains required
+- preview duration remains bounded to the current governed limits
+- continuity validation remains enforced before and during motion preview generation
+- low-resolution governed preview restrictions remain in place
+- autonomous continuation and long-form cinematic rendering remain blocked
+
 ## Autonomous Session Loop
 
 The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.

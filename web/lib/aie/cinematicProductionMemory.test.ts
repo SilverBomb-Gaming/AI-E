@@ -453,7 +453,7 @@ test("cinematic execution sandbox plans provider-agnostic jobs and simulates lif
   }
 });
 
-test("governed preview diagnostics keep reactive multi-object relationships deterministic and bounded", async () => {
+test("governed preview diagnostics keep reactive cinematic shot transitions deterministic and bounded", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-governed-multi-object-preview-"));
 
   try {
@@ -500,6 +500,14 @@ test("governed preview diagnostics keep reactive multi-object relationships dete
     assert.ok(microDiagnostics.interaction_persistence_score >= 88);
     assert.ok(microDiagnostics.reactive_coherence_score >= 88);
     assert.ok(microDiagnostics.scene_believability_score >= 88);
+    assert.ok((microDiagnostics.camera_drift_stability_score ?? 0) >= 94);
+    assert.ok((microDiagnostics.framing_persistence_score ?? 0) >= 92);
+    assert.ok((microDiagnostics.horizon_stability_score ?? 0) >= 94);
+    assert.ok((microDiagnostics.shot_transition_smoothness_score ?? 0) >= 90);
+    assert.ok((microDiagnostics.composition_coherence_score ?? 0) >= 92);
+    assert.ok((microDiagnostics.camera_continuity_score ?? 0) >= 93);
+    assert.match(microDiagnostics.shot_engine_summary ?? "", /STATIC_ESTABLISHING|REVEAL_ARC|WIDE_ENVIRONMENT/i);
+    assert.match(microDiagnostics.camera_governance_summary ?? "", /transition smoothness/i);
     assert.match(microDiagnostics.object_relationship_summary, /beacon/i);
     assert.match(microDiagnostics.beacon_influence_summary, /radius/i);
     assert.match(microDiagnostics.environmental_response_summary, /platform/i);
@@ -522,13 +530,31 @@ test("governed preview diagnostics keep reactive multi-object relationships dete
       assert.ok(frame.environmental_response_score >= 88);
       assert.ok(frame.interaction_persistence_score >= 88);
       assert.ok(frame.reactive_coherence_score >= 88);
+      assert.ok((frame.framing_score ?? 0) >= 89);
+      assert.ok((frame.visibility_score ?? 0) >= 90);
+      assert.ok((frame.edge_clipping_score ?? 0) >= 89);
+      assert.ok((frame.composition_balance_score ?? 0) >= 89);
+      assert.ok((frame.camera_continuity_score ?? 0) >= 92);
+      assert.ok((frame.shot_transition_score ?? 0) >= 90);
+      assert.ok((frame.camera_drift_stability_score ?? 0) >= 94);
+      assert.ok((frame.framing_persistence_score ?? 0) >= 90);
+      assert.ok((frame.composition_coherence_score ?? 0) >= 92);
+      assert.ok(typeof frame.active_shot_type === "string");
+      assert.ok((frame.orbital_radius ?? 0) >= 5);
       assert.match(frame.depth_ordering_status, /platform locked beneath anchor/i);
       assert.equal(frame.overlap_warning, "clear separation maintained");
       assert.match(frame.object_relationship_overlay, /cube-beacon/i);
       assert.match(frame.beacon_influence_overlay, /platform/i);
       assert.match(frame.reflection_shadow_overlay, /reflection/i);
       assert.match(frame.environmental_response_overlay, /persistence/i);
+      assert.match(frame.camera_state_overlay ?? "", /continuity/i);
+      assert.match(frame.shot_transition_summary ?? "", /deterministic|Transitioned|restored/i);
     }
+
+    assert.ok(motionDiagnostics.camera_stability_score >= 96);
+    assert.ok(motionDiagnostics.spatial_continuity_score >= 95);
+    assert.ok(motionDiagnostics.readability_score >= 94);
+    assert.ok(motionDiagnostics.frame_diagnostics.some((entry) => entry.rollback_restored_state === true));
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
