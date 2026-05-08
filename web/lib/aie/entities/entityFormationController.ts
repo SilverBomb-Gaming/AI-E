@@ -29,6 +29,13 @@ export type GovernedFormationControllerInput = {
   width: number;
   height: number;
   formationEmphasis?: number;
+  beaconClearancePreference?: number;
+  groupReadabilityPreference?: number;
+  compositionBalancePreference?: number;
+  reactionEnergyPreference?: number;
+  formationCompressionPreference?: number;
+  movementCarryoverPreference?: number;
+  formationExpansionPreference?: number;
   chamberCenterX: number;
   horizonY: number;
   platformY: number;
@@ -80,7 +87,14 @@ export function buildGovernedFormationPlan(input: GovernedFormationControllerInp
   const cubeBeaconCenterY = (input.cubeAnchorY + input.beaconY) / 2;
   const choreographyPhase = input.frameIndex * 0.42;
   const emphasis = input.formationEmphasis ?? 0;
-  const orbitRadiusX = input.width * (0.17 + emphasis * 0.08);
+  const beaconClearancePreference = input.beaconClearancePreference ?? 0;
+  const groupReadabilityPreference = input.groupReadabilityPreference ?? 0;
+  const compositionBalancePreference = input.compositionBalancePreference ?? 0;
+  const reactionEnergyPreference = input.reactionEnergyPreference ?? 0;
+  const formationCompressionPreference = input.formationCompressionPreference ?? 0;
+  const movementCarryoverPreference = input.movementCarryoverPreference ?? 0;
+  const formationExpansionPreference = input.formationExpansionPreference ?? 0;
+  const orbitRadiusX = input.width * (0.17 + emphasis * 0.08 + reactionEnergyPreference * 0.015 + formationExpansionPreference * 0.014 - formationCompressionPreference * 0.01);
   const orbitRadiusY = input.height * 0.06;
 
   if (formationType === "DUAL_ORBIT") {
@@ -109,12 +123,15 @@ export function buildGovernedFormationPlan(input: GovernedFormationControllerInp
   }
 
   if (formationType === "STAGGERED_PASS") {
-    const foregroundRight = { x: input.chamberCenterX + input.width * (0.24 + emphasis * 0.05), y: input.horizonY - 26 };
+    const foregroundRight = {
+      x: input.chamberCenterX + input.width * (0.24 + emphasis * 0.05 + groupReadabilityPreference * 0.03 + formationExpansionPreference * 0.02),
+      y: input.horizonY - (26 + reactionEnergyPreference * 2 + movementCarryoverPreference * 1.5),
+    };
     const backgroundLeft = {
       x: input.frameIndex === 2 && input.mode === "motion-preview"
-        ? input.chamberCenterX + input.width * 0.12
-        : input.chamberCenterX - input.width * (0.23 + emphasis * 0.04),
-      y: input.horizonY - 50,
+        ? input.chamberCenterX + input.width * (0.14 + beaconClearancePreference * 0.04)
+        : input.chamberCenterX - input.width * (0.23 + emphasis * 0.04 + beaconClearancePreference * 0.04),
+      y: input.horizonY - (50 + groupReadabilityPreference * 5 + movementCarryoverPreference * 1.2 - formationCompressionPreference * 4),
     };
     return buildPlanFromPositions(formationType, [foregroundRight, backgroundLeft], [0, Math.PI], [5, -7], choreographyPhase);
   }
@@ -122,9 +139,18 @@ export function buildGovernedFormationPlan(input: GovernedFormationControllerInp
   return buildPlanFromPositions(
     "BEACON_TRIANGULATION",
     [
-      { x: input.beaconX - input.width * (0.18 + emphasis * 0.04), y: input.horizonY - 46 },
-      { x: input.beaconX + input.width * (0.18 + emphasis * 0.04), y: input.horizonY - 46 },
-      { x: input.chamberCenterX, y: input.horizonY + 6 + emphasis * 6 },
+      {
+        x: input.beaconX - input.width * (0.18 + emphasis * 0.04 + beaconClearancePreference * 0.06),
+        y: input.horizonY - (46 + groupReadabilityPreference * 3 + movementCarryoverPreference * 1.2),
+      },
+      {
+        x: input.beaconX + input.width * (0.18 + emphasis * 0.04 + beaconClearancePreference * 0.06),
+        y: input.horizonY - (46 + groupReadabilityPreference * 3 + movementCarryoverPreference * 1.2),
+      },
+      {
+        x: input.chamberCenterX,
+        y: input.horizonY + 6 + emphasis * 6 - compositionBalancePreference * 4 - reactionEnergyPreference * 3 - movementCarryoverPreference * 2,
+      },
     ],
     [0, Math.PI, Math.PI / 2],
     [-4, 4, 0],

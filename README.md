@@ -107,6 +107,69 @@ Remaining blocked cinematic escalations:
 - direct event control over camera position remains blocked
 - future cinematic escalation beyond bounded preview remains scaffold-only until explicitly unlocked
 
+## Governed Cinematic Focus Flow
+
+AI-E now guides viewer attention across the bounded cinematic phrase with preview-local focus flow that remains deterministic, rollback-safe, and camera-advisory only.
+
+Current Phase 1 progress:
+
+- deterministic subject priority now follows `ANTICIPATION`, `BEACON_REVEAL`, `DRONE_RESPONSE`, `AFTERMATH_HOLD`, and `SETTLE` inside the same two-second motion preview window
+- focus-flow transitions preserve beacon reveal dominance, readable drone response, aftermath balance, and final full-scene settle without creating new beats or granting camera authority
+- bounded focus-flow hints now inform reveal protection, group readability, composition balance, and environment response while keeping camera, formation, and staging governance authoritative
+- focus rollback now restores the prior focus-flow snapshot and surfaces rejected focus transitions alongside existing staging, formation, pose, and camera rollback reporting
+
+Governance preserved:
+
+- sandbox containment, manual approval, continuity validation, and bounded preview duration remain unchanged
+- low-resolution preview restrictions remain enforced
+- camera authority remains with the governed rig; focus flow can only advise
+- no persistence of focus state is allowed across preview runs
+
+## Governed Cinematic Tension Curves
+
+AI-E now shapes a governed escalation and release arc inside the same bounded preview phrase by layering deterministic tension curves on top of staging and focus flow without creating a new authority path.
+
+Current Phase 1 progress:
+
+- deterministic tension phases now follow `LOW_BUILD`, `PEAK_REVEAL`, `ESCALATION`, `CONTROLLED_DECAY`, and `RESOLUTION` from `ANTICIPATION` through `SETTLE`
+- reveal peaks preserve beacon pressure while controlled decay stabilizes aftermath frames instead of allowing abrupt emotional collapse
+- bounded tension hints now advise camera framing, formation compression, reaction energy, and environment response while camera, formation, and staging governance remain authoritative
+- tension rollback now restores the prior tension snapshot and surfaces rejected tension transitions alongside focus, staging, formation, pose, and camera rollback reporting
+
+Governance preserved:
+
+- sandbox containment, manual approval, continuity validation, and bounded preview duration remain unchanged
+- low-resolution preview restrictions remain enforced
+- tension shaping remains preview-local and advisory-only
+- no persistence of tension state is allowed across preview runs
+
+## Governed Cinematic Momentum Flow
+
+AI-E now preserves directional cinematic energy across the same bounded preview phrase by layering deterministic momentum flow on top of staging, focus flow, and tension curves without creating a new authority path.
+
+Current Phase 1 progress:
+
+- deterministic momentum phases now follow `MOMENTUM_BUILD`, `REVEAL_PROPAGATION`, `REACTION_CARRYOVER`, `DECAY_INERTIA`, and `STABILIZATION` from `ANTICIPATION` through `SETTLE`
+- reveal pressure now propagates into coordinated drone response so the phrase reads as one carried motion arc instead of isolated tension beats
+- bounded momentum hints now advise camera framing continuity, formation carryover, and environment propagation while camera, formation, staging, focus, and tension governance remain authoritative
+- momentum rollback now restores the prior momentum snapshot and surfaces rejected momentum transitions alongside staging, focus, tension, formation, pose, and camera rollback reporting
+
+Governance preserved:
+
+- sandbox containment, manual approval, continuity validation, and bounded preview duration remain unchanged
+- low-resolution preview restrictions remain enforced
+- momentum shaping remains preview-local and advisory-only
+- no persistence of momentum state is allowed across preview runs
+
+Remaining blocked cinematic escalations:
+
+- humanoid character continuity, faces, and dialogue remain blocked
+- narrative autonomy and autonomous continuation remain blocked
+- long-form rendering remains blocked
+- any focus persistence beyond the current preview run remains blocked
+- any tension persistence beyond the current preview run remains blocked
+- any momentum persistence beyond the current preview run remains blocked
+
 ## Autonomous Session Loop
 
 The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.

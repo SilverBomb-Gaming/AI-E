@@ -41,7 +41,19 @@ export type GovernedCameraRigFrameInput = {
   focusX?: number;
   focusY?: number;
   focusRadius?: number;
+  focusSubjectPriority?: number;
   revealPreference?: number;
+  revealProtectionPreference?: number;
+  groupReadabilityPreference?: number;
+  escalationFramingPreference?: number;
+  propagationFramingPreference?: number;
+  revealCarryoverPreference?: number;
+  decayStabilizationPreference?: number;
+  inertiaStabilizationPreference?: number;
+  settleCompositionPreference?: number;
+  settleRecoveryPreference?: number;
+  pressureReadabilityPriority?: number;
+  pacingContinuityPreference?: number;
   compositionPriority?: number;
   chamberCenterX?: number;
   chamberCenterY?: number;
@@ -66,7 +78,7 @@ export type GovernedCameraRigFrameResult = {
 
 function selectShotType(input: GovernedCameraRigFrameInput): ShotType {
   const microShotPlan: ShotType[] = ["WIDE_ENVIRONMENT", "REVEAL_ARC", "STATIC_ESTABLISHING"];
-  const motionShotPlan: ShotType[] = ["STATIC_ESTABLISHING", "SLOW_ORBIT", "TARGET_TRACK", "LOW_ANGLE_HERO"];
+  const motionShotPlan: ShotType[] = ["STATIC_ESTABLISHING", "TARGET_TRACK", "SLOW_ORBIT", "LOW_ANGLE_HERO", "STATIC_ESTABLISHING"];
   const plan = input.mode === "motion-preview" ? motionShotPlan : microShotPlan;
   return plan[Math.min(plan.length - 1, input.frameIndex)]!;
 }
@@ -123,17 +135,17 @@ export function computeGovernedCameraRigFrame(input: GovernedCameraRigFrameInput
 
   const weightedTargetX = (
     input.anchorX * 0.34
-    + input.beaconX * (0.16 + (input.revealPreference ?? 0.5) * 0.08)
-    + (input.entityX ?? input.anchorX) * 0.18
-    + (input.focusX ?? input.entityX ?? input.anchorX) * 0.2
-    + (input.chamberCenterX ?? input.width * 0.5) * (0.12 + (input.compositionPriority ?? 0.7) * 0.04)
+    + input.beaconX * (0.12 + (input.revealPreference ?? 0.5) * 0.06 + (input.revealProtectionPreference ?? 0.5) * 0.05 + (input.escalationFramingPreference ?? 0.5) * 0.02 + (input.propagationFramingPreference ?? 0.5) * 0.02 + (input.revealCarryoverPreference ?? 0.5) * 0.02)
+    + (input.entityX ?? input.anchorX) * (0.15 + (input.groupReadabilityPreference ?? 0.5) * 0.05 + (input.pressureReadabilityPriority ?? 0.5) * 0.03 + (input.pacingContinuityPreference ?? 0.5) * 0.02)
+    + (input.focusX ?? input.entityX ?? input.anchorX) * (0.2 + (input.focusSubjectPriority ?? 0.5) * 0.08)
+    + (input.chamberCenterX ?? input.width * 0.5) * (0.12 + (input.compositionPriority ?? 0.7) * 0.05 + (input.settleCompositionPreference ?? 0.5) * 0.03 + (input.settleRecoveryPreference ?? 0.5) * 0.02)
   ) / input.width;
   const weightedTargetY = (
     input.anchorY * 0.34
-    + input.beaconY * (0.13 + (input.revealPreference ?? 0.5) * 0.07)
-    + (input.entityY ?? input.anchorY) * 0.2
-    + (input.focusY ?? input.entityY ?? input.anchorY) * 0.18
-    + (input.chamberCenterY ?? input.height * 0.56) * (0.15 + (input.compositionPriority ?? 0.7) * 0.03)
+    + input.beaconY * (0.11 + (input.revealPreference ?? 0.5) * 0.05 + (input.revealProtectionPreference ?? 0.5) * 0.04 + (input.escalationFramingPreference ?? 0.5) * 0.02 + (input.propagationFramingPreference ?? 0.5) * 0.02 + (input.revealCarryoverPreference ?? 0.5) * 0.02)
+    + (input.entityY ?? input.anchorY) * (0.18 + (input.groupReadabilityPreference ?? 0.5) * 0.04 + (input.pressureReadabilityPriority ?? 0.5) * 0.02 + (input.pacingContinuityPreference ?? 0.5) * 0.02)
+    + (input.focusY ?? input.entityY ?? input.anchorY) * (0.19 + (input.focusSubjectPriority ?? 0.5) * 0.06)
+    + (input.chamberCenterY ?? input.height * 0.56) * (0.15 + (input.compositionPriority ?? 0.7) * 0.04 + (input.decayStabilizationPreference ?? 0.5) * 0.02 + (input.inertiaStabilizationPreference ?? 0.5) * 0.02 + (input.settleRecoveryPreference ?? 0.5) * 0.02)
   ) / input.height;
   const desiredTarget: Vec3 = {
     x: weightedTargetX - 0.5,
