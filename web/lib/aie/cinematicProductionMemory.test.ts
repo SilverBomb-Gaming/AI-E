@@ -507,15 +507,25 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
     assert.ok((microDiagnostics.composition_coherence_score ?? 0) >= 92);
     assert.ok((microDiagnostics.camera_continuity_score ?? 0) >= 93);
     assert.equal(microDiagnostics.active_entity_type, "SEGMENTED_DRONE");
-    assert.ok((microDiagnostics.joint_count ?? 0) >= 6);
+    assert.ok((microDiagnostics.entity_count ?? 0) >= 2);
+    assert.ok((microDiagnostics.entity_count ?? 0) <= 3);
+    assert.ok((microDiagnostics.joint_count ?? 0) >= (microDiagnostics.entity_count ?? 0) * 6);
     assert.ok((microDiagnostics.max_chain_depth ?? 0) >= 2);
     assert.ok((microDiagnostics.joint_continuity_score ?? 0) >= 95);
     assert.ok((microDiagnostics.pose_stability_score ?? 0) >= 95);
     assert.ok((microDiagnostics.silhouette_readability_score ?? 0) >= 90);
     assert.ok((microDiagnostics.entity_spatial_persistence_score ?? 0) >= 95);
     assert.ok((microDiagnostics.entity_camera_framing_compatibility_score ?? 0) >= 92);
+    assert.ok((microDiagnostics.entity_separation_score ?? 0) >= 95);
+    assert.ok((microDiagnostics.formation_stability_score ?? 0) >= 95);
+    assert.ok((microDiagnostics.multi_entity_silhouette_score ?? 0) >= 90);
+    assert.ok((microDiagnostics.choreography_continuity_score ?? 0) >= 95);
+    assert.ok((microDiagnostics.group_spatial_persistence_score ?? 0) >= 95);
     assert.match(microDiagnostics.articulated_entity_summary ?? "", /Segmented drone/i);
     assert.match(microDiagnostics.pose_governance_summary ?? "", /rollback governance/i);
+    assert.match(microDiagnostics.multi_entity_choreography_summary ?? "", /formation|drones|choreography/i);
+    assert.match(microDiagnostics.spacing_governance_summary ?? "", /spacing|separation/i);
+    assert.ok(microDiagnostics.entity_ids?.every((entry) => /governed-segmented-drone-00[1-3]/.test(entry)) ?? false);
     assert.match(microDiagnostics.shot_engine_summary ?? "", /STATIC_ESTABLISHING|REVEAL_ARC|WIDE_ENVIRONMENT/i);
     assert.match(microDiagnostics.camera_governance_summary ?? "", /transition smoothness/i);
     assert.match(microDiagnostics.object_relationship_summary, /beacon/i);
@@ -524,6 +534,7 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
     assert.match(microDiagnostics.reflection_shadow_summary, /shadow/i);
     assert.match(microDiagnostics.continuity_anchor_visualization, /platform/i);
 
+    let sawFormationRollback = false;
     for (const frame of motionDiagnostics.frame_diagnostics) {
       assert.ok(frame.cube_to_beacon_distance >= 40);
       assert.ok(frame.spacing_drift <= 3);
@@ -550,13 +561,22 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
       assert.ok((frame.framing_persistence_score ?? 0) >= 90);
       assert.ok((frame.composition_coherence_score ?? 0) >= 92);
       assert.equal(frame.active_entity_type, "SEGMENTED_DRONE");
-      assert.ok((frame.joint_count ?? 0) >= 6);
+      assert.ok((frame.entity_count ?? 0) >= 2);
+      assert.ok((frame.entity_count ?? 0) <= 3);
+      assert.ok((frame.joint_count ?? 0) >= (frame.entity_count ?? 0) * 6);
       assert.ok((frame.max_chain_depth ?? 0) >= 2);
       assert.ok((frame.joint_continuity_score ?? 0) >= 95);
       assert.ok((frame.pose_stability_score ?? 0) >= 95);
       assert.ok((frame.silhouette_readability_score ?? 0) >= 90);
       assert.ok((frame.entity_spatial_persistence_score ?? 0) >= 95);
       assert.ok((frame.entity_camera_framing_compatibility_score ?? 0) >= 92);
+      assert.ok((frame.entity_separation_score ?? 0) >= 95);
+      assert.ok((frame.formation_stability_score ?? 0) >= 95);
+      assert.ok((frame.multi_entity_silhouette_score ?? 0) >= 90);
+      assert.ok((frame.choreography_continuity_score ?? 0) >= 95);
+      assert.ok((frame.group_spatial_persistence_score ?? 0) >= 95);
+      assert.ok((frame.entity_ids?.length ?? 0) === frame.entity_count);
+      assert.ok(frame.entity_ids?.every((entry) => /governed-segmented-drone-00[1-3]/.test(entry)) ?? false);
       assert.ok(typeof frame.active_shot_type === "string");
       assert.ok((frame.orbital_radius ?? 0) >= 5);
       assert.match(frame.depth_ordering_status, /platform locked beneath anchor/i);
@@ -567,14 +587,25 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
       assert.match(frame.environmental_response_overlay, /persistence/i);
       assert.match(frame.camera_state_overlay ?? "", /continuity/i);
       assert.match(frame.shot_transition_summary ?? "", /deterministic|Transitioned|restored/i);
-      assert.match(frame.articulated_entity_overlay ?? "", /SEGMENTED_DRONE/i);
+      assert.match(frame.articulated_entity_overlay ?? "", /formation|pose/i);
+      assert.match(frame.multi_entity_overlay ?? "", /formation|spacing|group/i);
+      sawFormationRollback ||= frame.rollback_restored_formation === true;
     }
 
     assert.ok(motionDiagnostics.camera_stability_score >= 96);
     assert.ok(motionDiagnostics.spatial_continuity_score >= 95);
     assert.ok(motionDiagnostics.readability_score >= 94);
+    assert.ok((motionDiagnostics.entity_count ?? 0) >= 2);
+    assert.ok((motionDiagnostics.entity_count ?? 0) <= 3);
+    assert.ok((motionDiagnostics.entity_separation_score ?? 0) >= 95);
+    assert.ok((motionDiagnostics.formation_stability_score ?? 0) >= 95);
+    assert.ok((motionDiagnostics.multi_entity_silhouette_score ?? 0) >= 90);
+    assert.ok((motionDiagnostics.choreography_continuity_score ?? 0) >= 95);
+    assert.ok((motionDiagnostics.group_spatial_persistence_score ?? 0) >= 95);
     assert.ok(motionDiagnostics.frame_diagnostics.some((entry) => entry.rollback_restored_state === true));
     assert.ok(motionDiagnostics.frame_diagnostics.some((entry) => entry.rollback_restored_pose === true));
+    assert.ok(sawFormationRollback);
+    assert.ok((motionDiagnostics.rejected_formation_transition_count ?? 0) >= 1);
     assert.equal(motionDiagnostics.rollback_integrity_status, "PASS");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

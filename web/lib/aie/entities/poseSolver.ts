@@ -30,6 +30,12 @@ export type GovernedArticulatedEntityInput = {
   beaconY: number;
   cameraCenterX: number;
   cameraCenterY: number;
+  entityId?: string;
+  jointPhaseOffset?: number;
+  orientationBias?: number;
+  rootTargetX?: number;
+  rootTargetY?: number;
+  injectInvalidPoseTransition?: boolean;
   previousSnapshot?: ArticulatedEntitySnapshot | null;
 };
 
@@ -41,8 +47,8 @@ export type GovernedArticulatedEntityResult = {
 };
 
 function buildRootPosition(input: GovernedArticulatedEntityInput, previousState: ArticulatedEntityState | null): { position: Vec3; velocity: Vec3 } {
-  const targetX = input.chamberCenterX + 54 + Math.sin(input.frameIndex * 0.24) * 6;
-  const targetY = input.horizonY - 36 + Math.sin(input.frameIndex * 0.4) * 5;
+  const targetX = input.rootTargetX ?? (input.chamberCenterX + 54 + Math.sin(input.frameIndex * 0.24) * 6);
+  const targetY = input.rootTargetY ?? (input.horizonY - 36 + Math.sin(input.frameIndex * 0.4) * 5);
   const previousPosition = previousState?.rootPosition ?? { x: targetX, y: targetY, z: 0 };
   const nextPosition = {
     x: previousPosition.x + clamp(targetX - previousPosition.x, -GOVERNED_MAX_ROOT_STEP, GOVERNED_MAX_ROOT_STEP),
@@ -76,12 +82,18 @@ function desiredJointAngle(id: string, frameIndex: number): number {
   }
 }
 
-function solveJointStates(frameIndex: number, previousJoints: JointState[] | null): JointState[] {
+function solveJointStates(
+  frameIndex: number,
+  previousJoints: JointState[] | null,
+  jointPhaseOffset: number,
+  injectInvalidPoseTransition: boolean,
+): JointState[] {
   const previousMap = new Map((previousJoints ?? []).map((joint) => [joint.id, joint]));
   return resolveJointHierarchy(createSegmentedDroneJointState()).map((joint) => {
     const previous = previousMap.get(joint.id);
-    let desired = desiredJointAngle(joint.id, frameIndex);
-    if (frameIndex === 3 && joint.id === "left_arm_tip") {
+    const phasedFrameIndex = frameIndex + jointPhaseOffset;
+    let desired = desiredJointAngle(joint.id, phasedFrameIndex);
+    if (injectInvalidPoseTransition && joint.id === "left_arm_tip") {
       desired = 62;
     }
     const baselineAngle = previous?.localAngle ?? desired;
@@ -168,14 +180,18 @@ function evaluatePose(input: GovernedArticulatedEntityInput, state: ArticulatedE
 export function computeGovernedArticulatedEntityFrame(input: GovernedArticulatedEntityInput): GovernedArticulatedEntityResult {
   const previousSnapshot = input.previousSnapshot ?? null;
   const previousState = previousSnapshot?.state ?? null;
+  const entityId = input.entityId ?? "governed-segmented-drone-001";
+  const jointPhaseOffset = input.jointPhaseOffset ?? 0;
+  const orientationBias = input.orientationBias ?? 0;
+  const injectInvalidPoseTransition = input.injectInvalidPoseTransition ?? input.frameIndex === 3;
   const { position, velocity } = buildRootPosition(input, previousState);
-  const joints = solveJointStates(input.frameIndex, previousState?.joints ?? null);
+  const joints = solveJointStates(input.frameIndex, previousState?.joints ?? null, jointPhaseOffset, injectInvalidPoseTransition);
   const candidateState: ArticulatedEntityState = {
-    id: "governed-segmented-drone-001",
+    id: entityId,
     entityType: "SEGMENTED_DRONE",
     rootPosition: position,
     rootVelocity: velocity,
-    orientation: -2 + Math.sin(input.frameIndex * 0.18) * 2,
+    orientation: -2 + Math.sin((input.frameIndex + jointPhaseOffset) * 0.18) * 2 + orientationBias,
     joints,
     poseContinuityScore: 100,
     silhouetteReadabilityScore: 100,

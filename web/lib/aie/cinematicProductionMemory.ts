@@ -7,10 +7,13 @@ import { PNG } from "pngjs";
 import { computeGovernedCameraRigFrame } from "./camera/governedCameraRig";
 import type { GovernedCameraSnapshot, ShotType } from "./camera/cameraState";
 import {
+  buildGovernedFormationPlan,
   buildSegmentedDroneRenderModel,
-  computeGovernedArticulatedEntityFrame,
+  computeGovernedMultiEntitySceneFrame,
   summarizeArticulatedEntityDiagnostics,
-  type ArticulatedEntitySnapshot,
+  summarizeMultiEntityDiagnostics,
+  type FormationType,
+  type MultiEntitySceneSnapshot,
 } from "./entities/governedArticulatedEntity";
 import { resolveRepoRoot, resolveRepoRootSync } from "./repoContext";
 
@@ -1732,7 +1735,11 @@ export type CinematicGovernedPreviewQualityIndicatorId =
   | "lighting-stability"
   | "preview-readability"
   | "scene-composition"
-  | "scene-believability";
+  | "scene-believability"
+  | "entity-separation"
+  | "formation-stability"
+  | "multi-entity-silhouette"
+  | "group-spatial-persistence";
 
 export type CinematicGovernedPreviewQualityIndicator = {
   id: CinematicGovernedPreviewQualityIndicatorId;
@@ -1747,11 +1754,14 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   object_kind: "cube" | "sphere";
   active_shot_type?: ShotType;
   active_entity_type?: "SEGMENTED_DRONE";
+  active_formation_type?: FormationType;
   anchor_x: number;
   anchor_y: number;
   beacon_x: number;
   beacon_y: number;
   platform_y: number;
+  entity_count?: number;
+  entity_ids?: string[];
   joint_count?: number;
   max_chain_depth?: number;
   joint_continuity_score?: number;
@@ -1760,6 +1770,12 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   entity_spatial_persistence_score?: number;
   entity_camera_framing_compatibility_score?: number;
   rejected_pose_transition_count?: number;
+  entity_separation_score?: number;
+  formation_stability_score?: number;
+  multi_entity_silhouette_score?: number;
+  choreography_continuity_score?: number;
+  group_spatial_persistence_score?: number;
+  rejected_formation_transition_count?: number;
   orbital_radius?: number;
   framing_score?: number;
   visibility_score?: number;
@@ -1773,6 +1789,7 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   composition_coherence_score?: number;
   rollback_restored_state?: boolean;
   rollback_restored_pose?: boolean;
+  rollback_restored_formation?: boolean;
   cube_to_beacon_distance: number;
   spacing_drift: number;
   beacon_influence_strength: number;
@@ -1798,6 +1815,7 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   shot_transition_summary?: string;
   camera_state_overlay?: string;
   articulated_entity_overlay?: string;
+  multi_entity_overlay?: string;
   rotation_degrees: number;
   camera_center_offset_x: number;
   camera_center_offset_y: number;
@@ -1833,7 +1851,12 @@ export type CinematicGovernedPreviewDiagnostics = {
   camera_governance_summary?: string;
   articulated_entity_summary?: string;
   pose_governance_summary?: string;
+  multi_entity_choreography_summary?: string;
+  spacing_governance_summary?: string;
   active_entity_type?: "SEGMENTED_DRONE";
+  active_formation_type?: FormationType;
+  entity_count?: number;
+  entity_ids?: string[];
   joint_count?: number;
   max_chain_depth?: number;
   joint_continuity_score?: number;
@@ -1842,6 +1865,13 @@ export type CinematicGovernedPreviewDiagnostics = {
   entity_spatial_persistence_score?: number;
   entity_camera_framing_compatibility_score?: number;
   rejected_pose_transition_count?: number;
+  entity_separation_score?: number;
+  formation_stability_score?: number;
+  multi_entity_silhouette_score?: number;
+  choreography_continuity_score?: number;
+  group_spatial_persistence_score?: number;
+  rollback_restored_formation?: boolean;
+  rejected_formation_transition_count?: number;
   rollback_integrity_status?: "PASS" | "WATCH";
   frame_coherence_score: number;
   motion_smoothness_score: number;
@@ -7560,7 +7590,7 @@ type GovernedRenderedFrame = {
   ppmContent: string;
   diagnostic: CinematicGovernedPreviewFrameDiagnostic;
   cameraSnapshot: GovernedCameraSnapshot;
-  articulatedEntitySnapshot: ArticulatedEntitySnapshot;
+  multiEntitySnapshot: MultiEntitySceneSnapshot;
 };
 
 type GovernedRgbBuffer = {
@@ -7863,6 +7893,23 @@ function summarizeGovernedPreviewDiagnostics(input: {
     rejectedPoseTransitionCount: entry.rejected_pose_transition_count ?? 0,
     overlay: entry.articulated_entity_overlay ?? "",
   })));
+  const multiEntityDiagnostics = input.frameDiagnostics.filter((entry) => typeof entry.entity_count === "number" && (entry.entity_count ?? 0) >= 2 && entry.active_formation_type);
+  const multiEntitySummary = summarizeMultiEntityDiagnostics(multiEntityDiagnostics.map((entry) => ({
+    activeFormationType: entry.active_formation_type ?? "DUAL_ORBIT",
+    entityCount: entry.entity_count ?? 0,
+    entityIds: entry.entity_ids ?? [],
+    rollbackRestoredPose: entry.rollback_restored_pose ?? false,
+    rejectedPoseTransitionCount: entry.rejected_pose_transition_count ?? 0,
+    entitySeparationScore: entry.entity_separation_score ?? 0,
+    formationStabilityScore: entry.formation_stability_score ?? 0,
+    multiEntitySilhouetteScore: entry.multi_entity_silhouette_score ?? 0,
+    choreographyContinuityScore: entry.choreography_continuity_score ?? 0,
+    groupSpatialPersistenceScore: entry.group_spatial_persistence_score ?? 0,
+    interactionPersistenceScore: entry.interaction_persistence_score,
+    rollbackRestoredFormation: entry.rollback_restored_formation ?? false,
+    rejectedFormationTransitionCount: entry.rejected_formation_transition_count ?? 0,
+    overlay: entry.multi_entity_overlay ?? "",
+  })));
   const continuityQualityIndicators = [
     buildGovernedPreviewIndicator({
       id: "object-fidelity",
@@ -8014,13 +8061,39 @@ function summarizeGovernedPreviewDiagnostics(input: {
       score: sceneBelievabilityScore,
       summary: "Reactive lighting, bounded shadowing, and environmental response integrate the primitives into one continuity-safe chamber scene.",
     }),
+    buildGovernedPreviewIndicator({
+      id: "entity-separation",
+      label: "Entity Separation",
+      score: multiEntitySummary.entitySeparationScore,
+      summary: `Segmented drones maintain ${multiEntitySummary.entitySeparationScore}/100 spacing separation while staying readable as a coordinated group.`,
+    }),
+    buildGovernedPreviewIndicator({
+      id: "formation-stability",
+      label: "Formation Stability",
+      score: multiEntitySummary.formationStabilityScore,
+      summary: `Formation ${multiEntitySummary.activeFormationType ?? "DUAL_ORBIT"} stays deterministic with ${multiEntitySummary.formationStabilityScore}/100 staging stability.`,
+    }),
+    buildGovernedPreviewIndicator({
+      id: "multi-entity-silhouette",
+      label: "Multi-Entity Silhouette",
+      score: multiEntitySummary.multiEntitySilhouetteScore,
+      summary: "Multiple drones preserve separate readable silhouettes instead of collapsing into one merged mechanical shape.",
+    }),
+    buildGovernedPreviewIndicator({
+      id: "group-spatial-persistence",
+      label: "Group Spatial Persistence",
+      score: multiEntitySummary.groupSpatialPersistenceScore,
+      summary: `Group center and spacing remain continuity-safe with ${multiEntitySummary.groupSpatialPersistenceScore}/100 spatial persistence.`,
+    }),
   ];
 
   return {
-    recognizable_object: "anchored cube with secondary sphere beacon and locked floor marker",
+    recognizable_object: multiEntityDiagnostics.length > 0
+      ? "anchored cube with secondary sphere beacon, locked floor marker, and coordinated segmented drone group"
+      : "anchored cube with secondary sphere beacon and locked floor marker",
     object_relationship_summary: input.mode === "motion-preview"
-      ? `Cube anchor, orbiting beacon, and floor marker remain readable with ${maxSpacingDrift.toFixed(2)}px spacing drift, stable foreground-to-background ordering, and deterministic beacon glow falloff.`
-      : `Cube anchor, staged beacon, and floor marker remain bounded with ${maxSpacingDrift.toFixed(2)}px spacing drift while reactive light cues stay continuity-safe across the prerequisite sequence.`,
+      ? `Cube anchor, orbiting beacon, floor marker, and ${multiEntitySummary.entityCount || 0} segmented drones remain readable with ${maxSpacingDrift.toFixed(2)}px spacing drift, deterministic group choreography, and stable subject-group framing.`
+      : `Cube anchor, staged beacon, floor marker, and ${multiEntitySummary.entityCount || 0} segmented drones remain bounded with ${maxSpacingDrift.toFixed(2)}px spacing drift while governed formation staging stays continuity-safe across the prerequisite sequence.`,
     environment_profile: "sci-fi chamber with grounded floor plane, rear aperture, bounded fog layers, and stable wall gradients",
     lighting_profile: "key light, cool rim light, beacon-driven reactive fill, bounded floor reflection, and continuity-safe shadow approximation",
     camera_profile: input.mode === "motion-preview"
@@ -8036,7 +8109,12 @@ function summarizeGovernedPreviewDiagnostics(input: {
     camera_governance_summary: `Camera continuity ${cameraContinuityScore}/100, framing persistence ${framingPersistenceScore}/100, horizon stability ${horizonStabilityScore}/100, and transition smoothness ${shotTransitionSmoothnessScore}/100 remain inside governed thresholds.`,
     articulated_entity_summary: articulatedSummary.articulatedEntitySummary,
     pose_governance_summary: articulatedSummary.poseGovernanceSummary,
+    multi_entity_choreography_summary: multiEntityDiagnostics.length > 0 ? multiEntitySummary.multiEntityChoreographySummary : undefined,
+    spacing_governance_summary: multiEntityDiagnostics.length > 0 ? multiEntitySummary.spacingGovernanceSummary : undefined,
     active_entity_type: articulatedDiagnostics.length > 0 ? "SEGMENTED_DRONE" : undefined,
+    active_formation_type: multiEntityDiagnostics.length > 0 ? multiEntitySummary.activeFormationType : undefined,
+    entity_count: multiEntityDiagnostics.length > 0 ? multiEntitySummary.entityCount : undefined,
+    entity_ids: multiEntityDiagnostics.length > 0 ? (multiEntityDiagnostics[multiEntityDiagnostics.length - 1]?.entity_ids ?? []) : undefined,
     joint_count: articulatedDiagnostics[0]?.joint_count,
     max_chain_depth: articulatedSummary.maxChainDepth,
     joint_continuity_score: articulatedSummary.jointContinuityScore,
@@ -8045,7 +8123,14 @@ function summarizeGovernedPreviewDiagnostics(input: {
     entity_spatial_persistence_score: articulatedSummary.entitySpatialPersistenceScore,
     entity_camera_framing_compatibility_score: articulatedSummary.entityCameraFramingCompatibilityScore,
     rejected_pose_transition_count: articulatedSummary.rejectedPoseTransitionCount,
-    rollback_integrity_status: articulatedSummary.rollbackIntegrityStatus,
+    entity_separation_score: multiEntityDiagnostics.length > 0 ? multiEntitySummary.entitySeparationScore : undefined,
+    formation_stability_score: multiEntityDiagnostics.length > 0 ? multiEntitySummary.formationStabilityScore : undefined,
+    multi_entity_silhouette_score: multiEntityDiagnostics.length > 0 ? multiEntitySummary.multiEntitySilhouetteScore : undefined,
+    choreography_continuity_score: multiEntityDiagnostics.length > 0 ? multiEntitySummary.choreographyContinuityScore : undefined,
+    group_spatial_persistence_score: multiEntityDiagnostics.length > 0 ? multiEntitySummary.groupSpatialPersistenceScore : undefined,
+    rollback_restored_formation: multiEntityDiagnostics.length > 0 ? multiEntitySummary.rollbackRestoredFormation : undefined,
+    rejected_formation_transition_count: multiEntityDiagnostics.length > 0 ? multiEntitySummary.rejectedFormationTransitionCount : undefined,
+    rollback_integrity_status: multiEntityDiagnostics.length > 0 ? multiEntitySummary.rollbackIntegrityStatus : articulatedSummary.rollbackIntegrityStatus,
     frame_coherence_score: frameCoherenceScore,
     motion_smoothness_score: motionSmoothnessScore,
     environment_coherence_score: environmentCoherenceScore,
@@ -8092,7 +8177,7 @@ function renderGovernedPrimitiveScene(input: {
   height: number;
   mode: GovernedPrimitiveSceneMode;
   previousCameraSnapshot?: GovernedCameraSnapshot | null;
-  previousArticulatedEntitySnapshot?: ArticulatedEntitySnapshot | null;
+  previousMultiEntitySnapshot?: MultiEntitySceneSnapshot | null;
 }): GovernedRenderedFrame {
   const buffer = createRgbBuffer(input.width, input.height);
   fillRgbBuffer(buffer, 6, 9, 18);
@@ -8107,6 +8192,20 @@ function renderGovernedPrimitiveScene(input: {
   const baseBeaconCenterY = baseAnchorY + Math.sin(baseOrbitAngle) * baseOrbitRadius;
   const baseOverlapGap = Math.hypot(baseBeaconCenterX - baseAnchorX, baseBeaconCenterY - baseAnchorY) - (baseObjectSize / 2 + baseBeaconRadius);
   const basePlatformY = baseAnchorY + baseObjectSize * 0.64;
+  const formationPlan = buildGovernedFormationPlan({
+    frameIndex: input.frameIndex,
+    totalFrames: input.totalFrames,
+    mode: input.mode,
+    width: input.width,
+    height: input.height,
+    chamberCenterX: input.width * 0.5,
+    horizonY: input.height * 0.68,
+    platformY: basePlatformY,
+    cubeAnchorX: baseAnchorX,
+    cubeAnchorY: baseAnchorY,
+    beaconX: baseBeaconCenterX,
+    beaconY: baseBeaconCenterY,
+  });
   const rigFrame = computeGovernedCameraRigFrame({
     frameIndex: input.frameIndex,
     totalFrames: input.totalFrames,
@@ -8122,9 +8221,9 @@ function renderGovernedPrimitiveScene(input: {
     objectSize: baseObjectSize,
     beaconRadius: baseBeaconRadius,
     overlapGap: baseOverlapGap,
-    entityX: input.width * 0.7,
-    entityY: input.height * 0.54,
-    entityRadius: input.width * 0.12,
+    entityX: formationPlan.cameraHint.groupCenterX,
+    entityY: formationPlan.cameraHint.groupCenterY,
+    entityRadius: formationPlan.cameraHint.groupRadius,
     chamberCenterX: input.width * 0.5,
     chamberCenterY: input.height * 0.56,
     previousSnapshot: input.previousCameraSnapshot,
@@ -8157,9 +8256,10 @@ function renderGovernedPrimitiveScene(input: {
   const chamberApertureBottom = horizonY - input.height * 0.07;
   const chamberApertureHalfWidth = input.width * 0.14;
   const chamberCenterX = input.width * 0.5 + cameraDriftX * 0.35;
-  const articulatedEntity = computeGovernedArticulatedEntityFrame({
+  const multiEntityScene = computeGovernedMultiEntitySceneFrame({
     frameIndex: input.frameIndex,
     totalFrames: input.totalFrames,
+    mode: input.mode,
     width: input.width,
     height: input.height,
     chamberCenterX,
@@ -8171,8 +8271,9 @@ function renderGovernedPrimitiveScene(input: {
     beaconY: baseBeaconCenterY - cameraDriftY * 0.74,
     cameraCenterX: input.width * 0.5,
     cameraCenterY: input.height * 0.56,
-    previousSnapshot: input.previousArticulatedEntitySnapshot,
+    previousSnapshot: input.previousMultiEntitySnapshot,
   });
+  const articulatedSummary = summarizeArticulatedEntityDiagnostics(multiEntityScene.entitySnapshots.map((entry) => entry.diagnostics));
 
   drawFilledPolygon(buffer, {
     points: [
@@ -8363,13 +8464,6 @@ function renderGovernedPrimitiveScene(input: {
   const beaconInfluenceOverlay = `beacon influence ${(beaconInfluenceStrength * 100).toFixed(0)}% • radius ${reactiveLightRadius.toFixed(1)}px • platform ${platformIlluminationScore}/100`;
   const reflectionShadowOverlay = `reflection ${floorReflectionScore}/100 • shadow ${shadowStabilityScore}/100 • continuity ${reflectionContinuityScore}/100`;
   const environmentalResponseOverlay = `env ${environmentalResponseScore}/100 • persistence ${interactionPersistenceScore}/100 • reactive ${reactiveCoherenceScore}/100`;
-  const droneRenderModel = buildSegmentedDroneRenderModel({
-    rootX: articulatedEntity.state.rootPosition.x,
-    rootY: articulatedEntity.state.rootPosition.y,
-    worldTransforms: articulatedEntity.worldTransforms,
-    beaconInfluenceStrength,
-  });
-
   drawFilledCircle(buffer, {
     centerX: anchorX + input.width * 0.015,
     centerY: horizonY + input.height * 0.05,
@@ -8438,32 +8532,41 @@ function renderGovernedPrimitiveScene(input: {
   drawFilledPolygon(buffer, { points: topFace, red: 138, green: 178, blue: 224 });
   drawFilledPolygon(buffer, { points: sideFace, red: 70, green: 114, blue: 164 });
   drawFilledPolygon(buffer, { points: frontFace, red: 104, green: 154, blue: 214 });
-  for (const polygon of droneRenderModel.body) {
-    drawFilledPolygon(buffer, polygon);
-  }
-  for (const segment of droneRenderModel.segments) {
-    drawLine(buffer, segment);
-  }
-  for (const joint of droneRenderModel.joints) {
-    drawFilledCircle(buffer, {
-      centerX: joint.centerX,
-      centerY: joint.centerY,
-      radius: joint.radius,
-      colorAt: () => ({ red: joint.red, green: joint.green, blue: joint.blue, alpha: joint.alpha ?? 1 }),
+  for (const [entityIndex, entitySnapshot] of multiEntityScene.entitySnapshots.entries()) {
+    const droneRenderModel = buildSegmentedDroneRenderModel({
+      rootX: entitySnapshot.state.rootPosition.x,
+      rootY: entitySnapshot.state.rootPosition.y,
+      worldTransforms: entitySnapshot.worldTransforms,
+      beaconInfluenceStrength,
+      variantIndex: entityIndex,
     });
-  }
-  for (const beacon of droneRenderModel.beacon) {
-    drawFilledCircle(buffer, {
-      centerX: beacon.centerX,
-      centerY: beacon.centerY,
-      radius: beacon.radius,
-      colorAt: (distance) => ({
-        red: beacon.red,
-        green: beacon.green,
-        blue: beacon.blue,
-        alpha: Math.max(0, (beacon.alpha ?? 1) - distance / Math.max(1, beacon.radius) * (beacon.alpha ?? 1)),
-      }),
-    });
+    for (const polygon of droneRenderModel.body) {
+      drawFilledPolygon(buffer, polygon);
+    }
+    for (const segment of droneRenderModel.segments) {
+      drawLine(buffer, segment);
+    }
+    for (const joint of droneRenderModel.joints) {
+      drawFilledCircle(buffer, {
+        centerX: joint.centerX,
+        centerY: joint.centerY,
+        radius: joint.radius,
+        colorAt: () => ({ red: joint.red, green: joint.green, blue: joint.blue, alpha: joint.alpha ?? 1 }),
+      });
+    }
+    for (const beacon of droneRenderModel.beacon) {
+      drawFilledCircle(buffer, {
+        centerX: beacon.centerX,
+        centerY: beacon.centerY,
+        radius: beacon.radius,
+        colorAt: (distance) => ({
+          red: beacon.red,
+          green: beacon.green,
+          blue: beacon.blue,
+          alpha: Math.max(0, (beacon.alpha ?? 1) - distance / Math.max(1, beacon.radius) * (beacon.alpha ?? 1)),
+        }),
+      });
+    }
   }
 
   const reactiveFrontGlow = [
@@ -8590,20 +8693,29 @@ function renderGovernedPrimitiveScene(input: {
       frame_index: input.frameIndex + 1,
       object_kind: "cube",
       active_shot_type: rigFrame.activeShotType,
-      active_entity_type: articulatedEntity.diagnostics.activeEntityType,
+      active_entity_type: multiEntityScene.entitySnapshots.length > 0 ? "SEGMENTED_DRONE" : undefined,
+      active_formation_type: multiEntityScene.diagnostics.activeFormationType,
       anchor_x: Number(anchorX.toFixed(2)),
       anchor_y: Number(anchorY.toFixed(2)),
       beacon_x: Number(beaconCenterX.toFixed(2)),
       beacon_y: Number(beaconCenterY.toFixed(2)),
       platform_y: Number(platformY.toFixed(2)),
-      joint_count: articulatedEntity.diagnostics.jointCount,
-      max_chain_depth: articulatedEntity.diagnostics.maxChainDepth,
-      joint_continuity_score: articulatedEntity.diagnostics.jointContinuityScore,
-      pose_stability_score: articulatedEntity.diagnostics.poseStabilityScore,
-      silhouette_readability_score: articulatedEntity.diagnostics.silhouetteReadabilityScore,
-      entity_spatial_persistence_score: articulatedEntity.diagnostics.entitySpatialPersistenceScore,
-      entity_camera_framing_compatibility_score: articulatedEntity.diagnostics.entityCameraFramingCompatibilityScore,
-      rejected_pose_transition_count: articulatedEntity.diagnostics.rejectedPoseTransitionCount,
+      entity_count: multiEntityScene.diagnostics.entityCount,
+      entity_ids: multiEntityScene.diagnostics.entityIds,
+      joint_count: multiEntityScene.entitySnapshots.reduce((sum, entry) => sum + entry.diagnostics.jointCount, 0),
+      max_chain_depth: articulatedSummary.maxChainDepth,
+      joint_continuity_score: articulatedSummary.jointContinuityScore,
+      pose_stability_score: articulatedSummary.poseStabilityScore,
+      silhouette_readability_score: Math.max(articulatedSummary.silhouetteReadabilityScore, multiEntityScene.diagnostics.multiEntitySilhouetteScore),
+      entity_spatial_persistence_score: articulatedSummary.entitySpatialPersistenceScore,
+      entity_camera_framing_compatibility_score: articulatedSummary.entityCameraFramingCompatibilityScore,
+      rejected_pose_transition_count: multiEntityScene.diagnostics.rejectedPoseTransitionCount,
+      entity_separation_score: multiEntityScene.diagnostics.entitySeparationScore,
+      formation_stability_score: multiEntityScene.diagnostics.formationStabilityScore,
+      multi_entity_silhouette_score: multiEntityScene.diagnostics.multiEntitySilhouetteScore,
+      choreography_continuity_score: multiEntityScene.diagnostics.choreographyContinuityScore,
+      group_spatial_persistence_score: multiEntityScene.diagnostics.groupSpatialPersistenceScore,
+      rejected_formation_transition_count: multiEntityScene.diagnostics.rejectedFormationTransitionCount,
       orbital_radius: Number((rigFrame.orbitalParameters.radius * input.width).toFixed(2)),
       framing_score: rigFrame.framingState.framingScore,
       visibility_score: rigFrame.framingState.visibilityScore,
@@ -8616,7 +8728,8 @@ function renderGovernedPrimitiveScene(input: {
       framing_persistence_score: rigFrame.framingPersistenceScore,
       composition_coherence_score: rigFrame.compositionCoherenceScore,
       rollback_restored_state: rigFrame.rollbackRestoredState,
-      rollback_restored_pose: articulatedEntity.diagnostics.rollbackRestoredPose,
+      rollback_restored_pose: multiEntityScene.diagnostics.rollbackRestoredPose,
+      rollback_restored_formation: multiEntityScene.diagnostics.rollbackRestoredFormation,
       cube_to_beacon_distance: Number(cubeToBeaconDistance.toFixed(2)),
       spacing_drift: Number(spacingDrift.toFixed(2)),
       beacon_influence_strength: Number(beaconInfluenceStrength.toFixed(2)),
@@ -8641,7 +8754,8 @@ function renderGovernedPrimitiveScene(input: {
       environmental_response_overlay: environmentalResponseOverlay,
       shot_transition_summary: rigFrame.shotTransitionSummary,
       camera_state_overlay: `${rigFrame.activeShotType} • orbit ${(rigFrame.orbitalParameters.radius * input.width).toFixed(1)}px • continuity ${rigFrame.cameraContinuityScore}/100`,
-      articulated_entity_overlay: articulatedEntity.diagnostics.overlay,
+      articulated_entity_overlay: `${multiEntityScene.diagnostics.overlay} • pose ${articulatedSummary.poseStabilityScore}/100`,
+      multi_entity_overlay: multiEntityScene.diagnostics.overlay,
       rotation_degrees: Number(rotationDegrees.toFixed(2)),
       camera_center_offset_x: Number(cameraCenterOffsetX.toFixed(2)),
       camera_center_offset_y: Number(cameraCenterOffsetY.toFixed(2)),
@@ -8661,7 +8775,7 @@ function renderGovernedPrimitiveScene(input: {
       scene_readability_overlay: sceneReadabilityOverlay,
     },
     cameraSnapshot: rigFrame.snapshot,
-    articulatedEntitySnapshot: articulatedEntity.snapshot,
+    multiEntitySnapshot: multiEntityScene.snapshot,
   };
 }
 
@@ -8768,7 +8882,7 @@ async function executeGovernedMicroSequenceSandbox(input: {
   const realSequenceWritten = input.continuityValidation.valid;
   const frameDiagnostics: CinematicGovernedPreviewFrameDiagnostic[] = [];
   let previousCameraSnapshot: GovernedCameraSnapshot | null = null;
-  let previousArticulatedEntitySnapshot: ArticulatedEntitySnapshot | null = null;
+  let previousMultiEntitySnapshot: MultiEntitySceneSnapshot | null = null;
   let gifPreviewPath: string | null = null;
   if (realSequenceWritten) {
     const gifFrames: PortablePixmap[] = [];
@@ -8781,7 +8895,7 @@ async function executeGovernedMicroSequenceSandbox(input: {
         height: GOVERNED_PREVIEW_DISPLAY_HEIGHT,
         mode: "micro-sequence",
         previousCameraSnapshot,
-        previousArticulatedEntitySnapshot,
+        previousMultiEntitySnapshot,
       });
       const artifacts = await writeGovernedBrowserPreviewArtifacts({
         absoluteDirectory: absoluteSequenceDirectory,
@@ -8793,7 +8907,7 @@ async function executeGovernedMicroSequenceSandbox(input: {
       gifFrames.push(artifacts.image);
       frameDiagnostics.push(artifacts.diagnostic);
       previousCameraSnapshot = renderedFrame.cameraSnapshot;
-      previousArticulatedEntitySnapshot = renderedFrame.articulatedEntitySnapshot;
+      previousMultiEntitySnapshot = renderedFrame.multiEntitySnapshot;
     }
 
     if ((input.packageGifPreview ?? true) && gifFrames.length > 1) {
@@ -9127,7 +9241,7 @@ async function executeGovernedMotionPreviewSandbox(input: {
   const previewClipWritten = input.temporalTransitionValidation.valid;
   const frameDiagnostics: CinematicGovernedPreviewFrameDiagnostic[] = [];
   let previousCameraSnapshot: GovernedCameraSnapshot | null = null;
-  let previousArticulatedEntitySnapshot: ArticulatedEntitySnapshot | null = null;
+  let previousMultiEntitySnapshot: MultiEntitySceneSnapshot | null = null;
   let gifPreviewPath: string | null = null;
   if (previewClipWritten) {
     const gifFrames: PortablePixmap[] = [];
@@ -9140,7 +9254,7 @@ async function executeGovernedMotionPreviewSandbox(input: {
         height: GOVERNED_PREVIEW_DISPLAY_HEIGHT,
         mode: "motion-preview",
         previousCameraSnapshot,
-        previousArticulatedEntitySnapshot,
+        previousMultiEntitySnapshot,
       });
       const artifacts = await writeGovernedBrowserPreviewArtifacts({
         absoluteDirectory: absoluteClipDirectory,
@@ -9152,7 +9266,7 @@ async function executeGovernedMotionPreviewSandbox(input: {
       gifFrames.push(artifacts.image);
       frameDiagnostics.push(artifacts.diagnostic);
       previousCameraSnapshot = renderedFrame.cameraSnapshot;
-      previousArticulatedEntitySnapshot = renderedFrame.articulatedEntitySnapshot;
+      previousMultiEntitySnapshot = renderedFrame.multiEntitySnapshot;
     }
 
     if ((input.packageGifPreview ?? true) && gifFrames.length > 1) {

@@ -14,15 +14,17 @@ export function buildSegmentedDroneRenderModel(input: {
   rootY: number;
   worldTransforms: JointWorldTransform[];
   beaconInfluenceStrength: number;
+  variantIndex?: number;
 }): SegmentedDroneRenderModel {
   const beaconMount = input.worldTransforms.find((joint) => joint.id === "beacon_mount");
+  const variantIndex = input.variantIndex ?? 0;
   return {
     body: [
       {
         points: buildBodyPolygon(input.rootX, input.rootY),
-        red: 92,
-        green: 148,
-        blue: 210,
+        red: 92 - variantIndex * 8,
+        green: 148 + variantIndex * 6,
+        blue: 210 + variantIndex * 5,
         alpha: 0.92,
       },
       {
@@ -33,7 +35,7 @@ export function buildSegmentedDroneRenderModel(input: {
           { x: input.rootX - 8, y: input.rootY + 4 },
         ],
         red: 176,
-        green: 216,
+        green: 216 + variantIndex * 4,
         blue: 255,
         alpha: 0.36,
       },
@@ -45,8 +47,8 @@ export function buildSegmentedDroneRenderModel(input: {
         startY: joint.start.y,
         endX: joint.end.x,
         endY: joint.end.y,
-        red: joint.id === "beacon_mount" ? 130 : 126,
-        green: joint.id === "beacon_mount" ? 196 : 182,
+        red: joint.id === "beacon_mount" ? 130 + variantIndex * 3 : 126 - variantIndex * 4,
+        green: joint.id === "beacon_mount" ? 196 + variantIndex * 4 : 182 + variantIndex * 6,
         blue: 255,
         alpha: 0.86,
       })),
@@ -54,7 +56,7 @@ export function buildSegmentedDroneRenderModel(input: {
       centerX: joint.start.x,
       centerY: joint.start.y,
       radius: joint.id === "drone_root" ? 5 : 4,
-      red: 188,
+      red: 188 - variantIndex * 3,
       green: 228,
       blue: 255,
       alpha: 0.78,
@@ -64,8 +66,8 @@ export function buildSegmentedDroneRenderModel(input: {
         centerX: beaconMount.end.x,
         centerY: beaconMount.end.y,
         radius: 8,
-        red: 74,
-        green: 136,
+        red: 74 + variantIndex * 4,
+        green: 136 + variantIndex * 3,
         blue: 234,
         alpha: 0.24 + input.beaconInfluenceStrength * 0.08,
       },

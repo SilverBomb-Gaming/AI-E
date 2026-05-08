@@ -52,6 +52,34 @@ Current governance preserved:
 - cinematic escalation beyond bounded preview remains blocked
 - humanoids, faces, dialogue, long-form rendering, and autonomous continuation remain blocked
 
+## Governed Multi-Entity Cinematic Choreography
+
+AI-E now extends the same bounded preview pipeline from one governed segmented drone to a governed multi-entity choreography layer inside the existing chamber scene.
+
+Current Phase 1 progress:
+
+- deterministic multi-entity registry with stable governed IDs for 2-3 segmented drones in the existing cube-and-beacon chamber setup
+- formation capability for `DUAL_ORBIT`, `MIRRORED_SENTRIES`, `STAGGERED_PASS`, and bounded `BEACON_TRIANGULATION`
+- explicit spacing governance that scores entity separation, formation stability, multi-entity silhouette readability, choreography continuity, and group spatial persistence
+- multi-subject camera targeting through bounded group-center hints while keeping camera authority in the governed rig
+- deterministic choreography rollback that rejects invalid formation transitions and restores the prior multi-entity snapshot without widening preview duration or governance scope
+- operator overlay support for active formation, entity count, spacing scores, choreography continuity, rejected formation transitions, and rollback-restored-formation reporting
+
+Governance preserved:
+
+- deterministic replay, spatial continuity, camera readability, and visible entity separation remain explicit review targets
+- rollback remains explicit, sandbox-limited, and operator-visible
+- manual approval remains required
+- preview duration remains bounded to the current governed limits
+- sandbox containment remains unchanged
+
+Remaining blocked cinematic escalations:
+
+- humanoids, faces, and dialogue remain blocked
+- long-form rendering remains blocked
+- autonomous continuation remains blocked
+- any bypass of rollback, manual approval, bounded preview duration, or deterministic governance remains blocked
+
 ## Autonomous Session Loop
 
 The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.
