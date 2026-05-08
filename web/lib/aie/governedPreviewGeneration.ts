@@ -2,6 +2,7 @@ import {
   clearGovernedMotionPreviewSandbox,
   readCinematicProductionMemory,
   simulateCinematicControlledLocalInferenceBootstrap,
+  type CinematicGovernedPreviewDiagnostics,
   type CinematicFrameToFrameContinuityValidation,
   type CinematicGovernedMicroSequenceSandbox,
   type CinematicControlledLocalInferenceBootstrapResult,
@@ -24,6 +25,7 @@ export type GovernedPreviewExecutionResult = {
   manifest_file_path: string | null;
   rollback_status: string;
   rollback_enabled: true;
+  preview_diagnostics: CinematicGovernedPreviewDiagnostics | null;
   continuity_validation: {
     valid: boolean;
     blockers: string[];
@@ -46,6 +48,7 @@ export type GovernedPreviewPrerequisiteState = {
   sandbox_path: string | null;
   sandbox_output_root: string | null;
   generated_frame_references: string[];
+  preview_diagnostics: CinematicGovernedPreviewDiagnostics | null;
   continuity_validation: {
     valid: boolean;
     blockers: string[];
@@ -64,6 +67,7 @@ export type GovernedPreviewMicroSequenceResult = {
   generated_frame_references: string[];
   rollback_status: string;
   rollback_enabled: true;
+  preview_diagnostics: CinematicGovernedPreviewDiagnostics | null;
   continuity_validation: {
     valid: boolean;
     blockers: string[];
@@ -107,7 +111,7 @@ function resolveDependencies(overrides?: Partial<GovernedPreviewDependencies>): 
 }
 
 function buildPrerequisiteState(input?: {
-  governedMicroSequenceSandbox?: Pick<CinematicGovernedMicroSequenceSandbox, "sequence_directory" | "output_root" | "output_file_paths" | "real_sequence_written"> | null;
+  governedMicroSequenceSandbox?: Pick<CinematicGovernedMicroSequenceSandbox, "sequence_directory" | "output_root" | "output_file_paths" | "real_sequence_written" | "preview_diagnostics"> | null;
   continuityValidation?: Pick<CinematicFrameToFrameContinuityValidation, "valid" | "blocked_transitions" | "next_unlock_condition"> | null;
 }): GovernedPreviewPrerequisiteState {
   const sandbox = input?.governedMicroSequenceSandbox ?? null;
@@ -122,6 +126,7 @@ function buildPrerequisiteState(input?: {
     sandbox_path: sandbox?.sequence_directory ?? null,
     sandbox_output_root: sandbox?.output_root ?? null,
     generated_frame_references: sandbox?.output_file_paths ?? [],
+    preview_diagnostics: sandbox?.preview_diagnostics ?? null,
     continuity_validation: {
       valid: continuityValid,
       blockers: continuityValidation?.blocked_transitions ?? (motionPreviewReady ? [] : ["micro-sequence-prerequisite"]),
@@ -164,6 +169,7 @@ export async function executeGovernedPreviewMicroSequenceRequest(
       generated_frame_references: prerequisiteState.generated_frame_references,
       rollback_status: "Rollback remains limited to governed sandbox outputs.",
       rollback_enabled: true,
+      preview_diagnostics: prerequisiteState.preview_diagnostics,
       continuity_validation: prerequisiteState.continuity_validation,
       preview_cleanup_targets: [],
       live_workspace_blocked_output: true,
@@ -200,6 +206,7 @@ export async function executeGovernedPreviewMicroSequenceRequest(
       .map((entry) => entry.detail)
       .join(" "),
     rollback_enabled: true,
+    preview_diagnostics: simulation.validation.governed_micro_sequence_sandbox.preview_diagnostics,
     continuity_validation: prerequisiteState.continuity_validation,
     preview_cleanup_targets: cleanup.deleted_output_targets,
     live_workspace_blocked_output: true,
@@ -230,6 +237,7 @@ export async function executeGovernedPreviewRequest(
       manifest_file_path: null,
       rollback_status: "Rollback is available once bounded sandbox output exists.",
       rollback_enabled: true,
+      preview_diagnostics: null,
       continuity_validation: {
         valid: false,
         blockers: [...request.blockers],
@@ -258,6 +266,7 @@ export async function executeGovernedPreviewRequest(
       manifest_file_path: null,
       rollback_status: "Rollback is available once bounded sandbox output exists.",
       rollback_enabled: true,
+      preview_diagnostics: null,
       continuity_validation: prerequisiteState.continuity_validation,
       execution_ledger_state: {
         ledger_id: null,
@@ -304,6 +313,7 @@ export async function executeGovernedPreviewRequest(
       .map((entry) => entry.detail)
       .join(" "),
     rollback_enabled: true,
+    preview_diagnostics: previewSandbox.preview_diagnostics,
     continuity_validation: {
       valid: continuityValidation.valid,
       blockers: [...continuityValidation.blocked_transitions],

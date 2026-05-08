@@ -9,10 +9,57 @@ import {
 } from "./governedPreviewGeneration";
 import { compileGovernedPreviewRequest } from "./governedPreviewGenerationContract";
 
+function buildPreviewDiagnosticsMock(frameCount: number) {
+  return {
+    recognizable_object: "anchored cube primitive",
+    environment_profile: "dark-room sci-fi chamber with bounded fog gradient",
+    lighting_profile: "single directional key with stable rim lighting",
+    frame_coherence_score: 90,
+    motion_smoothness_score: 89,
+    lighting_stability_score: 94,
+    readability_score: 90,
+    object_fidelity_score: 92,
+    scene_composition_score: 91,
+    continuity_quality_indicators: [
+      {
+        id: "object-fidelity",
+        label: "Object Fidelity",
+        score: 92,
+        status: "stable",
+        summary: "Stable primitive silhouette.",
+      },
+    ],
+    artifact_diagnostics: ["Sandboxed primitive renderer only."],
+    frame_diagnostics: Array.from({ length: frameCount }, (_, index) => ({
+      frame_index: index + 1,
+      object_kind: "cube",
+      anchor_x: 128,
+      anchor_y: 144,
+      rotation_degrees: -12 + index * 7,
+      silhouette_score: 92,
+      readability_score: 90,
+      lighting_stability_score: 94,
+      coherence_anchor_strength: 91,
+      environment_profile: "dark-room sci-fi chamber",
+    })),
+  };
+}
+
+function buildProductionMemoryMock(input: {
+  governed_micro_sequence_sandbox_history: unknown[];
+  frame_to_frame_continuity_validation_history: unknown[];
+}) {
+  return input as never;
+}
+
+function buildRollbackMock(input: unknown) {
+  return input as never;
+}
+
 test("readGovernedPreviewPrerequisiteState reports missing micro-sequence prerequisite when no history exists", async () => {
   const prerequisiteState = await readGovernedPreviewPrerequisiteState({
     deps: {
-      readProductionMemory: async () => ({
+      readProductionMemory: async () => buildProductionMemoryMock({
         governed_micro_sequence_sandbox_history: [],
         frame_to_frame_continuity_validation_history: [],
       }),
@@ -22,6 +69,7 @@ test("readGovernedPreviewPrerequisiteState reports missing micro-sequence prereq
   assert.equal(prerequisiteState.micro_sequence_exists, false);
   assert.equal(prerequisiteState.motion_preview_ready, false);
   assert.equal(prerequisiteState.next_step_action, "generate-micro-sequence-first");
+  assert.equal(prerequisiteState.preview_diagnostics, null);
   assert.match(prerequisiteState.continuity_validation.summary, /Generate the governed micro-sequence continuity preview first/i);
 });
 
@@ -111,7 +159,7 @@ test("executeGovernedPreviewRequest returns sandbox outputs and does not call pr
       providerCall: () => {
         providerCallCount += 1;
       },
-      readProductionMemory: async () => ({
+      readProductionMemory: async () => buildProductionMemoryMock({
         governed_micro_sequence_sandbox_history: [
           {
             sequence_directory: ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001",
@@ -120,6 +168,7 @@ test("executeGovernedPreviewRequest returns sandbox outputs and does not call pr
               ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001/governed_preview_sequence_frame_001.ppm",
             ],
             real_sequence_written: true,
+            preview_diagnostics: buildPreviewDiagnosticsMock(3),
           },
         ],
         frame_to_frame_continuity_validation_history: [
@@ -134,6 +183,20 @@ test("executeGovernedPreviewRequest returns sandbox outputs and does not call pr
         simulateCallCount += 1;
         return {
           validation: {
+            governed_micro_sequence_sandbox: {
+              sequence_directory: ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001",
+              output_root: ".aie/governed_micro_sequence_sandbox",
+              output_file_paths: [
+                ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001/governed_preview_sequence_frame_001.ppm",
+              ],
+              real_sequence_written: true,
+              preview_diagnostics: buildPreviewDiagnosticsMock(3),
+            },
+            frame_to_frame_continuity_validation: {
+              valid: true,
+              blocked_transitions: [],
+              next_unlock_condition: "Micro-sequence continuity preview is validated within bounded temporal scope.",
+            },
             governed_motion_preview_sandbox: {
               clip_directory: ".aie/governed_motion_preview_sandbox/clip-governed-motion-preview-001",
               output_root: ".aie/governed_motion_preview_sandbox",
@@ -142,6 +205,7 @@ test("executeGovernedPreviewRequest returns sandbox outputs and does not call pr
                 ".aie/governed_motion_preview_sandbox/clip-governed-motion-preview-001/governed_motion_preview_frame_002.ppm",
               ],
               manifest_file_path: ".aie/governed_motion_preview_sandbox/clip-governed-motion-preview-001/governed_motion_preview_manifest.json",
+              preview_diagnostics: buildPreviewDiagnosticsMock(2),
               preview_clip_written: true,
             },
             temporal_transition_validation: {
@@ -177,6 +241,8 @@ test("executeGovernedPreviewRequest returns sandbox outputs and does not call pr
   assert.equal(result.generated_preview_references.length, 3);
   assert.equal(result.execution_ledger_state.attempt_count, 1);
   assert.equal(result.live_workspace_blocked_output, false);
+  assert.equal(result.preview_diagnostics?.frame_coherence_score, 90);
+  assert.equal(result.prerequisite_state.preview_diagnostics?.object_fidelity_score, 92);
 });
 
 test("executeGovernedPreviewRequest blocks when the governed micro-sequence prerequisite is missing", async () => {
@@ -195,7 +261,7 @@ test("executeGovernedPreviewRequest blocks when the governed micro-sequence prer
 
   const result = await executeGovernedPreviewRequest(request, {
     deps: {
-      readProductionMemory: async () => ({
+      readProductionMemory: async () => buildProductionMemoryMock({
         governed_micro_sequence_sandbox_history: [],
         frame_to_frame_continuity_validation_history: [],
       }),
@@ -239,6 +305,7 @@ test("executeGovernedPreviewMicroSequenceRequest returns micro-sequence frame re
               ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001/governed_preview_sequence_frame_003.ppm",
             ],
             real_sequence_written: true,
+            preview_diagnostics: buildPreviewDiagnosticsMock(3),
           },
           frame_to_frame_continuity_validation: {
             valid: true,
@@ -250,7 +317,7 @@ test("executeGovernedPreviewMicroSequenceRequest returns micro-sequence frame re
           simulation_id: "simulation-002",
         },
       } as never),
-      clearPreviewSandbox: async () => ({
+      clearPreviewSandbox: async () => buildRollbackMock({
         rolled_back: true,
         recorded_at: "2026-05-07T00:00:00.000Z",
         output_root: ".aie/governed_motion_preview_sandbox",
@@ -259,6 +326,8 @@ test("executeGovernedPreviewMicroSequenceRequest returns micro-sequence frame re
           ".aie/governed_motion_preview_sandbox/clip-governed-motion-preview-001/governed_motion_preview_manifest.json",
         ],
         rollback: {
+          rollback_id: "rollback-001",
+          recorded_at: "2026-05-07T00:00:00.000Z",
           actions: [
             {
               triggered: true,
@@ -280,12 +349,14 @@ test("executeGovernedPreviewMicroSequenceRequest returns micro-sequence frame re
   assert.equal(result.continuity_validation.valid, true);
   assert.equal(result.prerequisite_state.motion_preview_ready, true);
   assert.equal(result.preview_cleanup_targets.length, 1);
+  assert.equal(result.preview_diagnostics?.object_fidelity_score, 92);
+  assert.equal(result.preview_diagnostics?.frame_diagnostics.length, 3);
 });
 
 test("rollbackGovernedPreviewSandbox stays bounded to preview sandbox outputs", async () => {
   const result = await rollbackGovernedPreviewSandbox({
     deps: {
-      clearPreviewSandbox: async () => ({
+      clearPreviewSandbox: async () => buildRollbackMock({
         rolled_back: true,
         recorded_at: "2026-05-07T00:00:00.000Z",
         output_root: ".aie/governed_motion_preview_sandbox",
@@ -295,6 +366,8 @@ test("rollbackGovernedPreviewSandbox stays bounded to preview sandbox outputs", 
           ".aie/governed_motion_preview_sandbox/clip-governed-motion-preview-001/governed_motion_preview_manifest.json",
         ],
         rollback: {
+          rollback_id: "rollback-002",
+          recorded_at: "2026-05-07T00:00:00.000Z",
           actions: [
             {
               triggered: true,

@@ -10,6 +10,11 @@ import {
   type GovernedPreviewRequest,
 } from "@/lib/aie/governedPreviewGenerationContract";
 import type {
+  CinematicGovernedPreviewDiagnostics,
+  CinematicGovernedPreviewFrameDiagnostic,
+  CinematicGovernedPreviewQualityIndicator,
+} from "@/lib/aie/cinematicProductionMemory";
+import type {
   GovernedPreviewExecutionResult,
   GovernedPreviewMicroSequenceResult,
   GovernedPreviewPrerequisiteState,
@@ -36,6 +41,7 @@ type PreviewGalleryCard = {
   assetPath: string;
   assetUrl: string;
   frameIndex: number | null;
+  diagnostic: CinematicGovernedPreviewFrameDiagnostic | null;
 };
 
 function buildSandboxAssetUrl(assetPath: string): string {
@@ -47,7 +53,16 @@ function extractFrameIndex(assetPath: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-function buildGalleryCards(assetPaths: string[], source: PreviewGalleryCard["source"]): PreviewGalleryCard[] {
+function buildFrameDiagnosticMap(diagnostics: CinematicGovernedPreviewDiagnostics | null | undefined): Map<number, CinematicGovernedPreviewFrameDiagnostic> {
+  return new Map((diagnostics?.frame_diagnostics ?? []).map((entry) => [entry.frame_index, entry]));
+}
+
+function buildGalleryCards(
+  assetPaths: string[],
+  source: PreviewGalleryCard["source"],
+  diagnostics?: CinematicGovernedPreviewDiagnostics | null,
+): PreviewGalleryCard[] {
+  const diagnosticMap = buildFrameDiagnosticMap(diagnostics);
   return assetPaths
     .filter((assetPath) => assetPath.endsWith(".png") || assetPath.endsWith(".gif"))
     .map((assetPath) => {
@@ -69,8 +84,53 @@ function buildGalleryCards(assetPaths: string[], source: PreviewGalleryCard["sou
         assetPath,
         assetUrl: buildSandboxAssetUrl(assetPath),
         frameIndex,
+        diagnostic: frameIndex !== null ? (diagnosticMap.get(frameIndex) ?? null) : null,
       };
     });
+}
+
+function indicatorTone(score: number): "ok" | "warn" | "blocked" {
+  if (score >= 88) {
+    return "ok";
+  }
+  if (score >= 76) {
+    return "warn";
+  }
+  return "blocked";
+}
+
+function DiagnosticIndicatorCard({ indicator }: { indicator: CinematicGovernedPreviewQualityIndicator }) {
+  return (
+    <article className="rounded-[1.25rem] border border-ink/10 bg-white/90 p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-ink">{indicator.label}</p>
+        <StatusPill label={`${indicator.score}/100`} tone={indicatorTone(indicator.score)} />
+      </div>
+      <p className="mt-3 text-sm leading-7 body-muted">{indicator.summary}</p>
+    </article>
+  );
+}
+
+function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPreviewDiagnostics }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {diagnostics.continuity_quality_indicators.map((indicator) => (
+          <DiagnosticIndicatorCard key={indicator.id} indicator={indicator} />
+        ))}
+      </div>
+      <div className="rounded-[1.25rem] border border-ink/10 bg-white/90 p-4 text-sm leading-7 body-muted">
+        <p><strong className="text-ink">Recognizable object:</strong> {diagnostics.recognizable_object}</p>
+        <p><strong className="text-ink">Environment:</strong> {diagnostics.environment_profile}</p>
+        <p><strong className="text-ink">Lighting:</strong> {diagnostics.lighting_profile}</p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {diagnostics.artifact_diagnostics.map((entry) => (
+          <div key={entry} className="rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3 text-sm leading-7 body-muted">{entry}</div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function FieldLabel({ children }: { children: string }) {
@@ -254,8 +314,9 @@ export function PreviewGenerationClient() {
   const latestMicroSequenceFrameReferences = microSequence?.generated_frame_references.length
     ? microSequence.generated_frame_references
     : (prerequisiteState?.generated_frame_references ?? []);
-  const microSequenceGalleryCards = buildGalleryCards(latestMicroSequenceFrameReferences, "micro-sequence");
-  const previewGalleryCards = buildGalleryCards(execution?.generated_preview_references ?? [], "motion-preview");
+  const activeDiagnostics = execution?.preview_diagnostics ?? microSequence?.preview_diagnostics ?? prerequisiteState?.preview_diagnostics ?? null;
+  const microSequenceGalleryCards = buildGalleryCards(latestMicroSequenceFrameReferences, "micro-sequence", microSequence?.preview_diagnostics ?? prerequisiteState?.preview_diagnostics);
+  const previewGalleryCards = buildGalleryCards(execution?.generated_preview_references ?? [], "motion-preview", execution?.preview_diagnostics);
   const motionPreviewFrameCards = previewGalleryCards.filter((entry) => entry.format === "png");
   const comparisonCards = motionPreviewFrameCards.length >= 2
     ? [motionPreviewFrameCards[0], motionPreviewFrameCards[motionPreviewFrameCards.length - 1]]
@@ -454,6 +515,7 @@ export function PreviewGenerationClient() {
                   <p><strong className="text-ink">Motion preview ready:</strong> {prerequisiteState.motion_preview_ready ? "yes" : "no"}</p>
                   <p><strong className="text-ink">Continuity validation:</strong> {prerequisiteState.continuity_validation.valid ? "passed" : "blocked"}</p>
                   <p><strong className="text-ink">Continuity summary:</strong> {prerequisiteState.continuity_validation.summary}</p>
+                  {prerequisiteState.preview_diagnostics ? <p><strong className="text-ink">Frame coherence:</strong> {prerequisiteState.preview_diagnostics.frame_coherence_score}/100</p> : null}
                 </article>
               ) : null}
               {showGenerateMicroSequenceCta ? (
@@ -480,6 +542,7 @@ export function PreviewGenerationClient() {
                   <p><strong className="text-ink">Live workspace blocked output:</strong> {execution.live_workspace_blocked_output ? "yes" : "no"}</p>
                   <p><strong className="text-ink">Continuity validation:</strong> {execution.continuity_validation.valid ? "passed" : "blocked"}</p>
                   <p><strong className="text-ink">Continuity summary:</strong> {execution.continuity_validation.summary}</p>
+                  {execution.preview_diagnostics ? <p><strong className="text-ink">Motion smoothness:</strong> {execution.preview_diagnostics.motion_smoothness_score}/100</p> : null}
                 </article>
               ) : null}
               {microSequence ? (
@@ -488,6 +551,7 @@ export function PreviewGenerationClient() {
                   <p><strong className="text-ink">Sandbox root:</strong> {microSequence.sandbox_output_root ?? "not created"}</p>
                   <p><strong className="text-ink">Continuity validation:</strong> {microSequence.continuity_validation.valid ? "passed" : "blocked"}</p>
                   <p><strong className="text-ink">Continuity summary:</strong> {microSequence.continuity_validation.summary}</p>
+                  {microSequence.preview_diagnostics ? <p><strong className="text-ink">Object fidelity:</strong> {microSequence.preview_diagnostics.object_fidelity_score}/100</p> : null}
                   <p><strong className="text-ink">Preview cleanup after prerequisite run:</strong> {microSequence.rollback_status || "No preview cleanup actions were required."}</p>
                 </article>
               ) : null}
@@ -511,11 +575,19 @@ export function PreviewGenerationClient() {
                   {microSequenceGalleryCards.map((card) => (
                     <article key={card.id} className="overflow-hidden rounded-[1.25rem] border border-ink/10 bg-white/90 shadow-sm">
                       <div className="aspect-square bg-mist/50">
-                        <Image src={card.assetUrl} alt={card.label} width={256} height={256} unoptimized className="h-full w-full object-contain" />
+                        <div className="relative h-full w-full">
+                          <Image src={card.assetUrl} alt={card.label} width={256} height={256} unoptimized className="h-full w-full object-contain" />
+                          {card.diagnostic ? (
+                            <div className="absolute left-3 top-3 rounded-full bg-ink/75 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white">
+                              {card.diagnostic.object_kind} • {Math.round(card.diagnostic.rotation_degrees)}deg
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="space-y-2 p-4">
                         <p className="text-sm font-semibold text-ink">{card.label}</p>
                         <p className="text-xs uppercase tracking-[0.18em] text-slate">{card.format} • {card.source}</p>
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Silhouette {card.diagnostic.silhouette_score}/100 • Readability {card.diagnostic.readability_score}/100</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
                         <div className="flex flex-wrap gap-2">
                           <a href={card.assetUrl} target="_blank" rel="noreferrer" className="rounded-full border border-ocean/20 bg-ocean px-3 py-1.5 text-xs font-semibold text-white">Open</a>
@@ -539,11 +611,19 @@ export function PreviewGenerationClient() {
                   {previewGalleryCards.map((card) => (
                     <article key={card.id} className="overflow-hidden rounded-[1.25rem] border border-ink/10 bg-white/90 shadow-sm">
                       <div className="aspect-square bg-mist/50">
-                        <Image src={card.assetUrl} alt={card.label} width={256} height={256} unoptimized className="h-full w-full object-contain" />
+                        <div className="relative h-full w-full">
+                          <Image src={card.assetUrl} alt={card.label} width={256} height={256} unoptimized className="h-full w-full object-contain" />
+                          {card.diagnostic ? (
+                            <div className="absolute left-3 top-3 rounded-full bg-ink/75 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white">
+                              {card.diagnostic.object_kind} • {Math.round(card.diagnostic.rotation_degrees)}deg
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="space-y-2 p-4">
                         <p className="text-sm font-semibold text-ink">{card.label}</p>
                         <p className="text-xs uppercase tracking-[0.18em] text-slate">{card.format} • {card.source}</p>
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Coherence {card.diagnostic.coherence_anchor_strength}/100 • Lighting {card.diagnostic.lighting_stability_score}/100</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
                         <div className="flex flex-wrap gap-2">
                           <a href={card.assetUrl} target="_blank" rel="noreferrer" className="rounded-full border border-ocean/20 bg-ocean px-3 py-1.5 text-xs font-semibold text-white">Open</a>
@@ -584,6 +664,15 @@ export function PreviewGenerationClient() {
         </section>
 
         <section className="mt-6 grid gap-6 lg:grid-cols-1">
+          {activeDiagnostics ? (
+            <article className="glass-card rounded-[2rem] p-6 shadow-float lg:col-span-3">
+              <p className="section-label">Governed Diagnostics</p>
+              <div className="mt-5">
+                <DiagnosticsOverview diagnostics={activeDiagnostics} />
+              </div>
+            </article>
+          ) : null}
+
           <article className="glass-card rounded-[2rem] p-6 shadow-float">
             <p className="section-label">Blockers And Rollback</p>
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">

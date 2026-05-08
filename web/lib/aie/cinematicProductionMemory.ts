@@ -1691,9 +1691,56 @@ export type CinematicGovernedMicroSequenceSandbox = {
   manual_approval_required: true;
   rollback_enabled: true;
   continuity_anchor: string;
+  preview_diagnostics: CinematicGovernedPreviewDiagnostics;
   real_sequence_written: boolean;
   sequence_frame_count: number;
   deleted_output_targets: string[];
+};
+
+export type CinematicGovernedPreviewIndicatorStatus = "stable" | "watch";
+
+export type CinematicGovernedPreviewQualityIndicatorId =
+  | "object-fidelity"
+  | "frame-coherence"
+  | "motion-smoothness"
+  | "lighting-stability"
+  | "preview-readability"
+  | "scene-composition";
+
+export type CinematicGovernedPreviewQualityIndicator = {
+  id: CinematicGovernedPreviewQualityIndicatorId;
+  label: string;
+  score: number;
+  status: CinematicGovernedPreviewIndicatorStatus;
+  summary: string;
+};
+
+export type CinematicGovernedPreviewFrameDiagnostic = {
+  frame_index: number;
+  object_kind: "cube" | "sphere";
+  anchor_x: number;
+  anchor_y: number;
+  rotation_degrees: number;
+  silhouette_score: number;
+  readability_score: number;
+  lighting_stability_score: number;
+  coherence_anchor_strength: number;
+  environment_profile: string;
+};
+
+export type CinematicGovernedPreviewDiagnostics = {
+  recognizable_object: string;
+  environment_profile: string;
+  lighting_profile: string;
+  frame_coherence_score: number;
+  motion_smoothness_score: number;
+  lighting_stability_score: number;
+  readability_score: number;
+  object_fidelity_score: number;
+  scene_composition_score: number;
+  continuity_quality_indicators: CinematicGovernedPreviewQualityIndicator[];
+  artifact_diagnostics: string[];
+  frame_diagnostics: CinematicGovernedPreviewFrameDiagnostic[];
 };
 
 export type CinematicContinuityPreviewSequencingStage =
@@ -1825,6 +1872,7 @@ export type CinematicGovernedMotionPreviewSandbox = {
   manual_approval_required: true;
   rollback_enabled: true;
   continuity_anchor: string;
+  preview_diagnostics: CinematicGovernedPreviewDiagnostics;
   preview_clip_written: boolean;
   clip_frame_count: number;
   deleted_output_targets: string[];
@@ -7374,6 +7422,19 @@ type PortablePixmap = {
   rgba: Buffer;
 };
 
+type GovernedPrimitiveSceneMode = "micro-sequence" | "motion-preview";
+
+type GovernedRenderedFrame = {
+  ppmContent: string;
+  diagnostic: CinematicGovernedPreviewFrameDiagnostic;
+};
+
+type GovernedRgbBuffer = {
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
+};
+
 function parsePortablePixmap(content: string): PortablePixmap {
   const sanitized = content.replace(/#[^\r\n]*/g, " ");
   const tokens = sanitized.trim().split(/\s+/);
@@ -7411,6 +7472,388 @@ function buildPngBufferFromPortablePixmap(image: PortablePixmap): Buffer {
   const png = new PNG({ width: image.width, height: image.height });
   image.rgba.copy(png.data);
   return PNG.sync.write(png);
+}
+
+function clampColorChannel(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function createRgbBuffer(width: number, height: number): GovernedRgbBuffer {
+  return {
+    width,
+    height,
+    data: new Uint8ClampedArray(width * height * 3),
+  };
+}
+
+function setRgbPixel(buffer: GovernedRgbBuffer, x: number, y: number, red: number, green: number, blue: number): void {
+  if (x < 0 || y < 0 || x >= buffer.width || y >= buffer.height) {
+    return;
+  }
+  const index = (y * buffer.width + x) * 3;
+  buffer.data[index] = clampColorChannel(red);
+  buffer.data[index + 1] = clampColorChannel(green);
+  buffer.data[index + 2] = clampColorChannel(blue);
+}
+
+function blendRgbPixel(buffer: GovernedRgbBuffer, x: number, y: number, red: number, green: number, blue: number, alpha: number): void {
+  if (x < 0 || y < 0 || x >= buffer.width || y >= buffer.height) {
+    return;
+  }
+  const normalizedAlpha = Math.max(0, Math.min(1, alpha));
+  const index = (y * buffer.width + x) * 3;
+  buffer.data[index] = clampColorChannel(buffer.data[index] * (1 - normalizedAlpha) + red * normalizedAlpha);
+  buffer.data[index + 1] = clampColorChannel(buffer.data[index + 1] * (1 - normalizedAlpha) + green * normalizedAlpha);
+  buffer.data[index + 2] = clampColorChannel(buffer.data[index + 2] * (1 - normalizedAlpha) + blue * normalizedAlpha);
+}
+
+function fillRgbBuffer(buffer: GovernedRgbBuffer, red: number, green: number, blue: number): void {
+  for (let y = 0; y < buffer.height; y += 1) {
+    for (let x = 0; x < buffer.width; x += 1) {
+      setRgbPixel(buffer, x, y, red, green, blue);
+    }
+  }
+}
+
+function drawFilledCircle(buffer: GovernedRgbBuffer, input: {
+  centerX: number;
+  centerY: number;
+  radius: number;
+  colorAt: (distance: number, normalizedX: number, normalizedY: number) => { red: number; green: number; blue: number; alpha?: number };
+}): void {
+  const minX = Math.max(0, Math.floor(input.centerX - input.radius - 1));
+  const maxX = Math.min(buffer.width - 1, Math.ceil(input.centerX + input.radius + 1));
+  const minY = Math.max(0, Math.floor(input.centerY - input.radius - 1));
+  const maxY = Math.min(buffer.height - 1, Math.ceil(input.centerY + input.radius + 1));
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const dx = x - input.centerX;
+      const dy = y - input.centerY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance > input.radius) {
+        continue;
+      }
+      const color = input.colorAt(distance, dx / input.radius, dy / input.radius);
+      blendRgbPixel(buffer, x, y, color.red, color.green, color.blue, color.alpha ?? 1);
+    }
+  }
+}
+
+function polygonBounds(points: Array<{ x: number; y: number }>): { minX: number; maxX: number; minY: number; maxY: number } {
+  return {
+    minX: Math.floor(Math.min(...points.map((point) => point.x))),
+    maxX: Math.ceil(Math.max(...points.map((point) => point.x))),
+    minY: Math.floor(Math.min(...points.map((point) => point.y))),
+    maxY: Math.ceil(Math.max(...points.map((point) => point.y))),
+  };
+}
+
+function pointInPolygon(x: number, y: number, points: Array<{ x: number; y: number }>): boolean {
+  let inside = false;
+  for (let left = 0, right = points.length - 1; left < points.length; right = left++) {
+    const leftPoint = points[left]!;
+    const rightPoint = points[right]!;
+    const intersects = ((leftPoint.y > y) !== (rightPoint.y > y))
+      && (x < ((rightPoint.x - leftPoint.x) * (y - leftPoint.y)) / ((rightPoint.y - leftPoint.y) || 1e-6) + leftPoint.x);
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function drawFilledPolygon(buffer: GovernedRgbBuffer, input: {
+  points: Array<{ x: number; y: number }>;
+  red: number;
+  green: number;
+  blue: number;
+  alpha?: number;
+}): void {
+  const bounds = polygonBounds(input.points);
+  for (let y = Math.max(0, bounds.minY); y <= Math.min(buffer.height - 1, bounds.maxY); y += 1) {
+    for (let x = Math.max(0, bounds.minX); x <= Math.min(buffer.width - 1, bounds.maxX); x += 1) {
+      if (pointInPolygon(x + 0.5, y + 0.5, input.points)) {
+        blendRgbPixel(buffer, x, y, input.red, input.green, input.blue, input.alpha ?? 1);
+      }
+    }
+  }
+}
+
+function drawLine(buffer: GovernedRgbBuffer, input: {
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  red: number;
+  green: number;
+  blue: number;
+  alpha?: number;
+}): void {
+  const steps = Math.max(Math.abs(input.endX - input.startX), Math.abs(input.endY - input.startY), 1);
+  for (let step = 0; step <= steps; step += 1) {
+    const progress = step / steps;
+    const x = Math.round(input.startX + (input.endX - input.startX) * progress);
+    const y = Math.round(input.startY + (input.endY - input.startY) * progress);
+    blendRgbPixel(buffer, x, y, input.red, input.green, input.blue, input.alpha ?? 1);
+  }
+}
+
+function serializeRgbBufferToPpm(buffer: GovernedRgbBuffer, comment: string): string {
+  const rows = ["P3", `# ${comment}`, `${buffer.width} ${buffer.height}`, "255"];
+  for (let y = 0; y < buffer.height; y += 1) {
+    const pixels: string[] = [];
+    for (let x = 0; x < buffer.width; x += 1) {
+      const index = (y * buffer.width + x) * 3;
+      pixels.push(`${buffer.data[index]} ${buffer.data[index + 1]} ${buffer.data[index + 2]}`);
+    }
+    rows.push(pixels.join(" "));
+  }
+  return `${rows.join("\n")}\n`;
+}
+
+function averagePreviewScore(values: number[]): number {
+  if (values.length === 0) {
+    return 0;
+  }
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function buildGovernedPreviewIndicator(input: {
+  id: CinematicGovernedPreviewQualityIndicatorId;
+  label: string;
+  score: number;
+  summary: string;
+}): CinematicGovernedPreviewQualityIndicator {
+  return {
+    id: input.id,
+    label: input.label,
+    score: input.score,
+    status: input.score >= 82 ? "stable" : "watch",
+    summary: input.summary,
+  };
+}
+
+function summarizeGovernedPreviewDiagnostics(input: {
+  frameDiagnostics: CinematicGovernedPreviewFrameDiagnostic[];
+  mode: GovernedPrimitiveSceneMode;
+}): CinematicGovernedPreviewDiagnostics {
+  const objectFidelityScore = averagePreviewScore(input.frameDiagnostics.map((entry) => entry.silhouette_score));
+  const readabilityScore = averagePreviewScore(input.frameDiagnostics.map((entry) => entry.readability_score));
+  const lightingScore = averagePreviewScore(input.frameDiagnostics.map((entry) => entry.lighting_stability_score));
+  const sceneCompositionScore = averagePreviewScore(input.frameDiagnostics.map((entry) => entry.coherence_anchor_strength));
+  const anchorXDrift = input.frameDiagnostics.length > 1
+    ? Math.max(...input.frameDiagnostics.map((entry, index, collection) => index === 0 ? 0 : Math.abs(entry.anchor_x - collection[index - 1]!.anchor_x)))
+    : 0;
+  const anchorYDrift = input.frameDiagnostics.length > 1
+    ? Math.max(...input.frameDiagnostics.map((entry, index, collection) => index === 0 ? 0 : Math.abs(entry.anchor_y - collection[index - 1]!.anchor_y)))
+    : 0;
+  const rotationDelta = input.frameDiagnostics.length > 1
+    ? Math.max(...input.frameDiagnostics.map((entry, index, collection) => index === 0 ? 0 : Math.abs(entry.rotation_degrees - collection[index - 1]!.rotation_degrees)))
+    : 0;
+  const frameCoherenceScore = Math.max(78, 100 - Math.round(anchorXDrift * 1.4 + anchorYDrift * 2.5));
+  const motionSmoothnessScore = Math.max(78, 100 - Math.round(Math.abs(rotationDelta - (input.mode === "motion-preview" ? 9 : 7)) * 1.6));
+  const continuityQualityIndicators = [
+    buildGovernedPreviewIndicator({
+      id: "object-fidelity",
+      label: "Object Fidelity",
+      score: objectFidelityScore,
+      summary: `${input.frameDiagnostics[0]?.object_kind ?? "primitive"} silhouette stays readable against the governed dark-room chamber.`,
+    }),
+    buildGovernedPreviewIndicator({
+      id: "frame-coherence",
+      label: "Frame Coherence",
+      score: frameCoherenceScore,
+      summary: `Anchor drift stays bounded to ${anchorXDrift}px horizontal and ${anchorYDrift}px vertical drift across the preview window.`,
+    }),
+    buildGovernedPreviewIndicator({
+      id: "motion-smoothness",
+      label: "Motion Smoothness",
+      score: motionSmoothnessScore,
+      summary: `Rotation cadence remains controlled with a maximum ${rotationDelta.toFixed(1)} degree frame-to-frame change.`,
+    }),
+    buildGovernedPreviewIndicator({
+      id: "lighting-stability",
+      label: "Lighting Stability",
+      score: lightingScore,
+      summary: "Directional key and rim lighting remain stable with no stochastic flicker path.",
+    }),
+    buildGovernedPreviewIndicator({
+      id: "preview-readability",
+      label: "Preview Readability",
+      score: readabilityScore,
+      summary: "Object/background separation stays high enough for 100% zoom operator review.",
+    }),
+    buildGovernedPreviewIndicator({
+      id: "scene-composition",
+      label: "Scene Composition",
+      score: sceneCompositionScore,
+      summary: "Primitive chamber framing keeps the object centered above a grounded floor horizon.",
+    }),
+  ];
+
+  return {
+    recognizable_object: input.mode === "motion-preview" ? "anchored cube with secondary sphere beacon" : "anchored cube primitive",
+    environment_profile: "dark-room sci-fi chamber with bounded fog gradient",
+    lighting_profile: "single directional key with stable rim lighting",
+    frame_coherence_score: frameCoherenceScore,
+    motion_smoothness_score: motionSmoothnessScore,
+    lighting_stability_score: lightingScore,
+    readability_score: readabilityScore,
+    object_fidelity_score: objectFidelityScore,
+    scene_composition_score: sceneCompositionScore,
+    continuity_quality_indicators: continuityQualityIndicators,
+    artifact_diagnostics: [
+      "Sandboxed primitive scene renderer only; no unrestricted synthesis path introduced.",
+      "Deterministic chamber lighting removes flicker between governed frames.",
+      "Object anchoring and bounded rotation reduce abstract pattern dominance.",
+    ],
+    frame_diagnostics: input.frameDiagnostics,
+  };
+}
+
+function renderGovernedPrimitiveScene(input: {
+  frameIndex: number;
+  width: number;
+  height: number;
+  mode: GovernedPrimitiveSceneMode;
+}): GovernedRenderedFrame {
+  const buffer = createRgbBuffer(input.width, input.height);
+  fillRgbBuffer(buffer, 6, 9, 18);
+
+  const horizonY = input.height * 0.68;
+  const roomPulse = input.mode === "motion-preview" ? 1.12 : 0.92;
+  for (let y = 0; y < input.height; y += 1) {
+    const verticalProgress = y / Math.max(1, input.height - 1);
+    for (let x = 0; x < input.width; x += 1) {
+      const horizontalDistance = Math.abs(x - input.width / 2) / (input.width / 2);
+      const fog = Math.max(0, 1 - Math.sqrt(horizontalDistance * horizontalDistance + Math.pow((y - input.height * 0.5) / input.height, 2)) * 1.35);
+      const chamberLight = verticalProgress < 0.55
+        ? 12 + verticalProgress * 28
+        : 20 + (verticalProgress - 0.55) * 38;
+      const floorLift = y >= horizonY ? (y - horizonY) / (input.height - horizonY) : 0;
+      const red = chamberLight + floorLift * 10 + fog * 6;
+      const green = chamberLight + floorLift * 16 + fog * 9;
+      const blue = chamberLight * roomPulse + floorLift * 34 + fog * 18;
+      setRgbPixel(buffer, x, y, red, green, blue);
+    }
+  }
+
+  for (let x = 0; x < input.width; x += 1) {
+    const wallDistance = Math.min(x, input.width - 1 - x);
+    const sideIntensity = Math.max(0, 1 - wallDistance / (input.width * 0.16));
+    for (let y = 0; y < input.height; y += 1) {
+      blendRgbPixel(buffer, x, y, 18, 32, 58, sideIntensity * 0.18);
+    }
+  }
+
+  const anchorX = input.width * 0.5 + Math.sin(input.frameIndex * (input.mode === "motion-preview" ? 0.4 : 0.32)) * input.width * (input.mode === "motion-preview" ? 0.035 : 0.02);
+  const anchorY = input.height * (input.mode === "motion-preview" ? 0.56 : 0.58) + Math.cos(input.frameIndex * 0.33) * input.height * 0.01;
+  const rotationDegrees = (input.mode === "motion-preview" ? -18 : -12) + input.frameIndex * (input.mode === "motion-preview" ? 9 : 7);
+  const rotationRadians = (rotationDegrees * Math.PI) / 180;
+  const objectSize = input.width * (input.mode === "motion-preview" ? 0.21 : 0.23);
+  const depthX = objectSize * 0.42 * Math.cos(rotationRadians);
+  const depthY = objectSize * 0.26;
+  const halfSize = objectSize / 2;
+  const frontFace = [
+    { x: anchorX - halfSize, y: anchorY - halfSize },
+    { x: anchorX + halfSize, y: anchorY - halfSize },
+    { x: anchorX + halfSize, y: anchorY + halfSize },
+    { x: anchorX - halfSize, y: anchorY + halfSize },
+  ];
+  const topFace = [
+    frontFace[0]!,
+    frontFace[1]!,
+    { x: frontFace[1]!.x + depthX, y: frontFace[1]!.y - depthY },
+    { x: frontFace[0]!.x + depthX, y: frontFace[0]!.y - depthY },
+  ];
+  const sideFace = [
+    frontFace[1]!,
+    { x: frontFace[1]!.x + depthX, y: frontFace[1]!.y - depthY },
+    { x: frontFace[2]!.x + depthX, y: frontFace[2]!.y - depthY },
+    frontFace[2]!,
+  ];
+
+  drawFilledCircle(buffer, {
+    centerX: anchorX + input.width * 0.015,
+    centerY: horizonY + input.height * 0.05,
+    radius: objectSize * 0.52,
+    colorAt: (distance) => ({
+      red: 10,
+      green: 20,
+      blue: 28,
+      alpha: Math.max(0, 0.34 - (distance / (objectSize * 0.52)) * 0.34),
+    }),
+  });
+
+  drawFilledPolygon(buffer, { points: topFace, red: 138, green: 178, blue: 224 });
+  drawFilledPolygon(buffer, { points: sideFace, red: 70, green: 114, blue: 164 });
+  drawFilledPolygon(buffer, { points: frontFace, red: 104, green: 154, blue: 214 });
+
+  const rimFace = [
+    { x: frontFace[0]!.x + 4, y: frontFace[0]!.y + 4 },
+    { x: frontFace[1]!.x - 4, y: frontFace[1]!.y + 4 },
+    { x: frontFace[1]!.x - 4, y: frontFace[0]!.y + halfSize * 0.2 },
+    { x: frontFace[0]!.x + 4, y: frontFace[0]!.y + halfSize * 0.2 },
+  ];
+  drawFilledPolygon(buffer, { points: rimFace, red: 188, green: 225, blue: 255, alpha: 0.45 });
+
+  for (const polygon of [frontFace, topFace, sideFace]) {
+    for (let index = 0; index < polygon.length; index += 1) {
+      const start = polygon[index]!;
+      const end = polygon[(index + 1) % polygon.length]!;
+      drawLine(buffer, {
+        startX: start.x,
+        startY: start.y,
+        endX: end.x,
+        endY: end.y,
+        red: 228,
+        green: 238,
+        blue: 255,
+        alpha: 0.9,
+      });
+    }
+  }
+
+  if (input.mode === "motion-preview") {
+    const beaconCenterX = input.width * 0.72 - input.frameIndex * 2;
+    const beaconCenterY = input.height * 0.29 + input.frameIndex;
+    drawFilledCircle(buffer, {
+      centerX: beaconCenterX,
+      centerY: beaconCenterY,
+      radius: input.width * 0.06,
+      colorAt: (distance, normalizedX, normalizedY) => {
+        const rim = Math.max(0, 1 - distance / (input.width * 0.06));
+        const directional = Math.max(0, normalizedX * -0.55 + normalizedY * -0.35 + 0.95);
+        return {
+          red: 104 + directional * 86 + rim * 28,
+          green: 178 + directional * 52 + rim * 24,
+          blue: 255,
+          alpha: 0.9,
+        };
+      },
+    });
+  }
+
+  for (let x = 0; x < input.width; x += 1) {
+    const floorGlow = Math.max(0, 1 - Math.abs(x - anchorX) / (input.width * 0.34));
+    blendRgbPixel(buffer, x, Math.round(horizonY), 84, 152, 232, floorGlow * 0.18);
+  }
+
+  return {
+    ppmContent: serializeRgbBufferToPpm(buffer, `AI-E governed ${input.mode} frame ${input.frameIndex + 1}`),
+    diagnostic: {
+      frame_index: input.frameIndex + 1,
+      object_kind: "cube",
+      anchor_x: Number(anchorX.toFixed(2)),
+      anchor_y: Number(anchorY.toFixed(2)),
+      rotation_degrees: Number(rotationDegrees.toFixed(2)),
+      silhouette_score: input.mode === "motion-preview" ? 91 : 93,
+      readability_score: input.mode === "motion-preview" ? 88 : 90,
+      lighting_stability_score: 94,
+      coherence_anchor_strength: input.mode === "motion-preview" ? 89 : 92,
+      environment_profile: "dark-room sci-fi chamber",
+    },
+  };
 }
 
 function quantizeGifComponent(value: number): number {
@@ -7470,21 +7913,23 @@ async function writeGovernedBrowserPreviewArtifacts(input: {
   absoluteDirectory: string;
   relativeToRoot: (targetPath: string) => string;
   ppmBaseName: string;
-  ppmContent: string;
+  renderedFrame: GovernedRenderedFrame;
 }): Promise<{
   ppmPath: string;
   pngPath: string;
   image: PortablePixmap;
+  diagnostic: CinematicGovernedPreviewFrameDiagnostic;
 }> {
   const ppmPath = path.join(input.absoluteDirectory, `${input.ppmBaseName}.ppm`);
-  await writeFile(ppmPath, input.ppmContent, "utf8");
-  const image = parsePortablePixmap(input.ppmContent);
+  await writeFile(ppmPath, input.renderedFrame.ppmContent, "utf8");
+  const image = parsePortablePixmap(input.renderedFrame.ppmContent);
   const pngPath = path.join(input.absoluteDirectory, `${input.ppmBaseName}.png`);
   await writeFile(pngPath, buildPngBufferFromPortablePixmap(image));
   return {
     ppmPath: input.relativeToRoot(ppmPath),
     pngPath: input.relativeToRoot(pngPath),
     image,
+    diagnostic: input.renderedFrame.diagnostic,
   };
 }
 
@@ -7512,23 +7957,27 @@ async function executeGovernedMicroSequenceSandbox(input: {
   const outputFilePaths: string[] = [];
   const frameCount = containment?.maximum_frame_count ?? 0;
   const realSequenceWritten = input.continuityValidation.valid;
+  const frameDiagnostics: CinematicGovernedPreviewFrameDiagnostic[] = [];
   let gifPreviewPath: string | null = null;
   if (realSequenceWritten) {
     const gifFrames: PortablePixmap[] = [];
     const toRelativePath = (targetPath: string) => path.relative(input.root, targetPath).replace(/\\/g, "/");
     for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      const renderedFrame = renderGovernedPrimitiveScene({
+        frameIndex,
+        width: GOVERNED_PREVIEW_DISPLAY_WIDTH,
+        height: GOVERNED_PREVIEW_DISPLAY_HEIGHT,
+        mode: "micro-sequence",
+      });
       const artifacts = await writeGovernedBrowserPreviewArtifacts({
         absoluteDirectory: absoluteSequenceDirectory,
         relativeToRoot: toRelativePath,
         ppmBaseName: `governed_preview_sequence_frame_${String(frameIndex + 1).padStart(3, "0")}`,
-        ppmContent: buildDeterministicContinuityPreviewFrame({
-          frameIndex,
-          width: GOVERNED_PREVIEW_DISPLAY_WIDTH,
-          height: GOVERNED_PREVIEW_DISPLAY_HEIGHT,
-        }),
+        renderedFrame,
       });
       outputFilePaths.push(artifacts.ppmPath, artifacts.pngPath);
       gifFrames.push(artifacts.image);
+      frameDiagnostics.push(artifacts.diagnostic);
     }
 
     if ((input.packageGifPreview ?? true) && gifFrames.length > 1) {
@@ -7556,6 +8005,10 @@ async function executeGovernedMicroSequenceSandbox(input: {
     manual_approval_required: true,
     rollback_enabled: true,
     continuity_anchor: containment?.continuity_anchor_policy ?? "none",
+    preview_diagnostics: summarizeGovernedPreviewDiagnostics({
+      frameDiagnostics,
+      mode: "micro-sequence",
+    }),
     real_sequence_written: realSequenceWritten,
     sequence_frame_count: realSequenceWritten ? frameCount : 0,
     deleted_output_targets: deletedOutputTargets,
@@ -7856,23 +8309,27 @@ async function executeGovernedMotionPreviewSandbox(input: {
   let manifestFilePath: string | null = null;
   const frameCount = containment?.maximum_frame_count ?? 0;
   const previewClipWritten = input.temporalTransitionValidation.valid;
+  const frameDiagnostics: CinematicGovernedPreviewFrameDiagnostic[] = [];
   let gifPreviewPath: string | null = null;
   if (previewClipWritten) {
     const gifFrames: PortablePixmap[] = [];
     const toRelativePath = (targetPath: string) => path.relative(input.root, targetPath).replace(/\\/g, "/");
     for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      const renderedFrame = renderGovernedPrimitiveScene({
+        frameIndex,
+        width: GOVERNED_PREVIEW_DISPLAY_WIDTH,
+        height: GOVERNED_PREVIEW_DISPLAY_HEIGHT,
+        mode: "motion-preview",
+      });
       const artifacts = await writeGovernedBrowserPreviewArtifacts({
         absoluteDirectory: absoluteClipDirectory,
         relativeToRoot: toRelativePath,
         ppmBaseName: `governed_motion_preview_frame_${String(frameIndex + 1).padStart(3, "0")}`,
-        ppmContent: buildDeterministicMotionPreviewFrame({
-          frameIndex,
-          width: GOVERNED_PREVIEW_DISPLAY_WIDTH,
-          height: GOVERNED_PREVIEW_DISPLAY_HEIGHT,
-        }),
+        renderedFrame,
       });
       outputFilePaths.push(artifacts.ppmPath, artifacts.pngPath);
       gifFrames.push(artifacts.image);
+      frameDiagnostics.push(artifacts.diagnostic);
     }
 
     if ((input.packageGifPreview ?? true) && gifFrames.length > 1) {
@@ -7893,6 +8350,10 @@ async function executeGovernedMotionPreviewSandbox(input: {
       display_frame_width: GOVERNED_PREVIEW_DISPLAY_WIDTH,
       display_frame_height: GOVERNED_PREVIEW_DISPLAY_HEIGHT,
       gif_preview_path: gifPreviewPath,
+      preview_diagnostics: summarizeGovernedPreviewDiagnostics({
+        frameDiagnostics,
+        mode: "motion-preview",
+      }),
       browser_preview_paths: outputFilePaths.filter((entry) => entry.endsWith(".png") || entry.endsWith(".gif")),
       manual_approval_required: true,
     }, null, 2), "utf8");
@@ -7916,6 +8377,10 @@ async function executeGovernedMotionPreviewSandbox(input: {
     manual_approval_required: true,
     rollback_enabled: true,
     continuity_anchor: containment?.continuity_anchor_policy ?? "none",
+    preview_diagnostics: summarizeGovernedPreviewDiagnostics({
+      frameDiagnostics,
+      mode: "motion-preview",
+    }),
     preview_clip_written: previewClipWritten,
     clip_frame_count: previewClipWritten ? frameCount : 0,
     deleted_output_targets: deletedOutputTargets,

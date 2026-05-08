@@ -824,6 +824,9 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(validation.continuity_sequence_containment.some((entry) => entry.sequence_id === "sequence-governed-micro-preview-001"));
     assert.equal(validation.governed_micro_sequence_sandbox.real_sequence_written, true);
     assert.equal(validation.governed_micro_sequence_sandbox.sequence_frame_count, 3);
+    assert.ok(validation.governed_micro_sequence_sandbox.preview_diagnostics.object_fidelity_score >= 88);
+    assert.ok(validation.governed_micro_sequence_sandbox.preview_diagnostics.readability_score >= 86);
+    assert.equal(validation.governed_micro_sequence_sandbox.preview_diagnostics.frame_diagnostics.length, 3);
     assert.ok(validation.continuity_preview_sequencing.stages.some((entry) => entry.stage === "bounded_sequence_write" && entry.status === "completed"));
     assert.ok(validation.frame_to_frame_continuity_validation.checks.some((entry) => entry.check === "continuity-drift-thresholds" && entry.passed));
     assert.ok(validation.sequence_rollback_recovery.actions.some((entry) => entry.action === "sequence-rollback-cleanup" && entry.triggered));
@@ -831,6 +834,9 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.ok(validation.motion_preview_containment.some((entry) => entry.clip_id === "clip-governed-motion-preview-001"));
     assert.equal(validation.governed_motion_preview_sandbox.preview_clip_written, true);
     assert.equal(validation.governed_motion_preview_sandbox.clip_frame_count, 4);
+    assert.ok(validation.governed_motion_preview_sandbox.preview_diagnostics.frame_coherence_score >= 82);
+    assert.ok(validation.governed_motion_preview_sandbox.preview_diagnostics.motion_smoothness_score >= 82);
+    assert.equal(validation.governed_motion_preview_sandbox.preview_diagnostics.frame_diagnostics.length, 4);
     assert.ok(validation.motion_preview_sequencing.stages.some((entry) => entry.stage === "low_fps_clip_write" && entry.status === "completed"));
     assert.ok(validation.temporal_transition_validation.checks.some((entry) => entry.check === "transition-drift-thresholds" && entry.passed));
     assert.ok(validation.motion_preview_rollback.actions.some((entry) => entry.action === "preview-rollback-cleanup" && entry.triggered));
