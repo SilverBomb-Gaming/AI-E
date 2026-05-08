@@ -35,6 +35,11 @@ export type GovernedCameraRigFrameInput = {
   objectSize: number;
   beaconRadius: number;
   overlapGap: number;
+  entityX?: number;
+  entityY?: number;
+  entityRadius?: number;
+  chamberCenterX?: number;
+  chamberCenterY?: number;
   previousSnapshot?: GovernedCameraSnapshot | null;
 };
 
@@ -111,9 +116,21 @@ export function computeGovernedCameraRigFrame(input: GovernedCameraRigFrameInput
   const previousFraming = previousSnapshot?.framingState;
   const previousTarget = previousState?.target ?? { x: 0, y: 0, z: 0 };
 
+  const weightedTargetX = (
+    input.anchorX * 0.44
+    + input.beaconX * 0.18
+    + (input.entityX ?? input.anchorX) * 0.24
+    + (input.chamberCenterX ?? input.width * 0.5) * 0.14
+  ) / input.width;
+  const weightedTargetY = (
+    input.anchorY * 0.42
+    + input.beaconY * 0.14
+    + (input.entityY ?? input.anchorY) * 0.28
+    + (input.chamberCenterY ?? input.height * 0.56) * 0.16
+  ) / input.height;
   const desiredTarget: Vec3 = {
-    x: (input.anchorX / input.width) - 0.5,
-    y: (input.anchorY / input.height) - 0.5,
+    x: weightedTargetX - 0.5,
+    y: weightedTargetY - 0.5,
     z: 0,
   };
   const desiredPosition = buildDesiredCameraPosition(input, candidateShotType, orbitalParameters);

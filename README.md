@@ -30,6 +30,28 @@ Governance preserved:
 - low-resolution governed preview restrictions remain in place
 - autonomous continuation and long-form cinematic rendering remain blocked
 
+## Governed Articulated Entity Simulation
+
+AI-E now also includes the first governed articulated mechanical-entity layer inside the same bounded preview sandbox.
+
+Current Phase 1 capabilities:
+
+- dedicated articulated entity state and deterministic joint hierarchy for a non-humanoid segmented drone
+- deterministic pose solver with bounded hover bob, bounded arm sweeps, bounded beacon tilt, and replay-safe frame stepping
+- primitive segmented drone rendering with a readable chassis, articulated arms, and beacon node integrated into the existing chamber scene
+- explicit pose continuity governance that rejects invalid transitions and restores the prior articulated snapshot deterministically
+- articulated diagnostics for joint continuity, pose stability, silhouette readability, entity spatial persistence, framing compatibility, and rejected pose counts
+- operator-visible pose overlays and rollback-restored-pose reporting alongside the existing shot-engine camera overlays
+
+Current governance preserved:
+
+- articulated simulation remains sandboxed and low-resolution only
+- rollback remains explicit, deterministic, and operator-visible
+- manual approval remains required
+- preview duration remains bounded to the current governed limits
+- cinematic escalation beyond bounded preview remains blocked
+- humanoids, faces, dialogue, long-form rendering, and autonomous continuation remain blocked
+
 ## Autonomous Session Loop
 
 The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.
