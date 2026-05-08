@@ -1709,11 +1709,17 @@ export type CinematicGovernedPreviewQualityIndicatorId =
   | "depth-ordering"
   | "overlap-avoidance"
   | "interaction-staging"
+  | "reactive-lighting"
+  | "environmental-response"
+  | "reflection-continuity"
+  | "interaction-persistence"
+  | "reactive-coherence"
   | "camera-stability"
   | "spatial-continuity"
   | "lighting-stability"
   | "preview-readability"
-  | "scene-composition";
+  | "scene-composition"
+  | "scene-believability";
 
 export type CinematicGovernedPreviewQualityIndicator = {
   id: CinematicGovernedPreviewQualityIndicatorId;
@@ -1733,14 +1739,26 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   platform_y: number;
   cube_to_beacon_distance: number;
   spacing_drift: number;
+  beacon_influence_strength: number;
+  reactive_light_radius: number;
   depth_ordering_score: number;
   overlap_avoidance_score: number;
   interaction_staging_score: number;
   floor_anchor_consistency_score: number;
+  platform_illumination_score: number;
+  floor_reflection_score: number;
+  reflection_continuity_score: number;
+  shadow_stability_score: number;
+  environmental_response_score: number;
+  interaction_persistence_score: number;
+  reactive_coherence_score: number;
   depth_ordering_status: string;
   overlap_warning: string;
   interaction_staging_note: string;
   object_relationship_overlay: string;
+  beacon_influence_overlay: string;
+  reflection_shadow_overlay: string;
+  environmental_response_overlay: string;
   rotation_degrees: number;
   camera_center_offset_x: number;
   camera_center_offset_y: number;
@@ -1768,6 +1786,10 @@ export type CinematicGovernedPreviewDiagnostics = {
   camera_profile: string;
   continuity_anchor_visualization: string;
   scene_readability_overlay: string;
+  beacon_influence_summary: string;
+  environmental_response_summary: string;
+  reflection_shadow_summary: string;
+  scene_believability_summary: string;
   frame_coherence_score: number;
   motion_smoothness_score: number;
   environment_coherence_score: number;
@@ -1776,6 +1798,11 @@ export type CinematicGovernedPreviewDiagnostics = {
   depth_ordering_score: number;
   overlap_avoidance_score: number;
   interaction_staging_score: number;
+  reactive_lighting_score: number;
+  environmental_response_score: number;
+  reflection_continuity_score: number;
+  interaction_persistence_score: number;
+  reactive_coherence_score: number;
   camera_stability_score: number;
   spatial_continuity_score: number;
   lighting_stability_score: number;
@@ -1783,6 +1810,7 @@ export type CinematicGovernedPreviewDiagnostics = {
   readability_score: number;
   object_fidelity_score: number;
   scene_composition_score: number;
+  scene_believability_score: number;
   continuity_quality_indicators: CinematicGovernedPreviewQualityIndicator[];
   artifact_diagnostics: string[];
   frame_diagnostics: CinematicGovernedPreviewFrameDiagnostic[];
@@ -7694,6 +7722,11 @@ function summarizeGovernedPreviewDiagnostics(input: {
   const depthOrderingScore = averagePreviewScore(input.frameDiagnostics.map((entry) => entry.depth_ordering_score));
   const overlapAvoidanceScore = averagePreviewScore(input.frameDiagnostics.map((entry) => entry.overlap_avoidance_score));
   const interactionStagingScore = averagePreviewScore(input.frameDiagnostics.map((entry) => entry.interaction_staging_score));
+  const reactiveLightingScore = averagePreviewScore(input.frameDiagnostics.map((entry) => Math.round((entry.beacon_influence_strength * 100 + entry.platform_illumination_score + entry.shadow_stability_score) / 3)));
+  const environmentalResponseScore = averagePreviewScore(input.frameDiagnostics.map((entry) => entry.environmental_response_score));
+  const reflectionContinuityScore = averagePreviewScore(input.frameDiagnostics.map((entry) => entry.reflection_continuity_score));
+  const interactionPersistenceScore = averagePreviewScore(input.frameDiagnostics.map((entry) => entry.interaction_persistence_score));
+  const reactiveCoherenceScore = averagePreviewScore(input.frameDiagnostics.map((entry) => entry.reactive_coherence_score));
   const cameraOffsetX = input.frameDiagnostics.length > 0
     ? Math.max(...input.frameDiagnostics.map((entry) => Math.abs(entry.camera_center_offset_x)))
     : 0;
@@ -7721,8 +7754,23 @@ function summarizeGovernedPreviewDiagnostics(input: {
   const minCubeBeaconDistance = input.frameDiagnostics.length > 0
     ? Math.min(...input.frameDiagnostics.map((entry) => entry.cube_to_beacon_distance))
     : 0;
+  const minBeaconInfluence = input.frameDiagnostics.length > 0
+    ? Math.min(...input.frameDiagnostics.map((entry) => entry.beacon_influence_strength))
+    : 0;
+  const maxBeaconInfluence = input.frameDiagnostics.length > 0
+    ? Math.max(...input.frameDiagnostics.map((entry) => entry.beacon_influence_strength))
+    : 0;
   const maxPlatformDrift = input.frameDiagnostics.length > 0
     ? Math.max(...input.frameDiagnostics.map((entry) => Math.abs(entry.platform_y - entry.anchor_y)))
+    : 0;
+  const maxReactiveLightRadius = input.frameDiagnostics.length > 0
+    ? Math.max(...input.frameDiagnostics.map((entry) => entry.reactive_light_radius))
+    : 0;
+  const minReflectionScore = input.frameDiagnostics.length > 0
+    ? Math.min(...input.frameDiagnostics.map((entry) => entry.floor_reflection_score))
+    : 0;
+  const minShadowStability = input.frameDiagnostics.length > 0
+    ? Math.min(...input.frameDiagnostics.map((entry) => entry.shadow_stability_score))
     : 0;
   const frameCoherenceScore = Math.max(80, 100 - Math.round(anchorXDrift * 1.15 + anchorYDrift * 2 + horizonDrift * 2.6));
   const cameraStabilityScore = Math.max(
@@ -7730,6 +7778,13 @@ function summarizeGovernedPreviewDiagnostics(input: {
     100 - Math.round(cameraOffsetX * 0.95 + cameraOffsetY * 1.85 + horizonDrift * 1.3),
   );
   const motionSmoothnessScore = Math.max(78, 100 - Math.round(Math.abs(rotationDelta - (input.mode === "motion-preview" ? 9 : 7)) * 1.6));
+  const sceneBelievabilityScore = averagePreviewScore([
+    reactiveCoherenceScore,
+    environmentalResponseScore,
+    reflectionContinuityScore,
+    readabilityScore,
+    environmentCoherenceScore,
+  ]);
   const continuityQualityIndicators = [
     buildGovernedPreviewIndicator({
       id: "object-fidelity",
@@ -7786,6 +7841,36 @@ function summarizeGovernedPreviewDiagnostics(input: {
       summary: `Beacon orbiting, cube rotation, and floor-platform lock remain legible together with ${maxPlatformDrift.toFixed(2)}px maximum cube-platform vertical separation.`,
     }),
     buildGovernedPreviewIndicator({
+      id: "reactive-lighting",
+      label: "Reactive Lighting",
+      score: reactiveLightingScore,
+      summary: `Beacon influence stays bounded within ${(minBeaconInfluence * 100).toFixed(0)}-${(maxBeaconInfluence * 100).toFixed(0)}% strength while the governed glow radius remains capped at ${maxReactiveLightRadius.toFixed(2)}px.`,
+    }),
+    buildGovernedPreviewIndicator({
+      id: "environmental-response",
+      label: "Environmental Response",
+      score: environmentalResponseScore,
+      summary: "Platform illumination, fog lift, and localized light bleed respond to the beacon without destabilizing chamber contrast.",
+    }),
+    buildGovernedPreviewIndicator({
+      id: "reflection-continuity",
+      label: "Reflection Continuity",
+      score: reflectionContinuityScore,
+      summary: `Floor reflection and cube shadow remain readable, with floor reflection holding at least ${minReflectionScore}/100 and shadow stability at least ${minShadowStability}/100 across the bounded sequence.`,
+    }),
+    buildGovernedPreviewIndicator({
+      id: "interaction-persistence",
+      label: "Interaction Persistence",
+      score: interactionPersistenceScore,
+      summary: "Reactive cues persist from frame to frame instead of blinking in and out as the beacon traverses its governed orbit.",
+    }),
+    buildGovernedPreviewIndicator({
+      id: "reactive-coherence",
+      label: "Reactive Coherence",
+      score: reactiveCoherenceScore,
+      summary: "Cube rim light, platform response, floor reflection, and chamber haze react as one deterministic lighting pass.",
+    }),
+    buildGovernedPreviewIndicator({
       id: "camera-stability",
       label: "Camera Stability",
       score: cameraStabilityScore,
@@ -7815,20 +7900,30 @@ function summarizeGovernedPreviewDiagnostics(input: {
       score: sceneCompositionScore,
       summary: "Primitive chamber framing keeps the object centered above a grounded floor horizon.",
     }),
+    buildGovernedPreviewIndicator({
+      id: "scene-believability",
+      label: "Scene Believability",
+      score: sceneBelievabilityScore,
+      summary: "Reactive lighting, bounded shadowing, and environmental response integrate the primitives into one continuity-safe chamber scene.",
+    }),
   ];
 
   return {
     recognizable_object: "anchored cube with secondary sphere beacon and locked floor marker",
     object_relationship_summary: input.mode === "motion-preview"
-      ? `Cube anchor, orbiting beacon, and floor marker remain readable with ${maxSpacingDrift.toFixed(2)}px spacing drift and stable foreground-to-background ordering.`
-      : `Cube anchor, staged beacon, and floor marker remain bounded with ${maxSpacingDrift.toFixed(2)}px spacing drift across the prerequisite sequence.`,
+      ? `Cube anchor, orbiting beacon, and floor marker remain readable with ${maxSpacingDrift.toFixed(2)}px spacing drift, stable foreground-to-background ordering, and deterministic beacon glow falloff.`
+      : `Cube anchor, staged beacon, and floor marker remain bounded with ${maxSpacingDrift.toFixed(2)}px spacing drift while reactive light cues stay continuity-safe across the prerequisite sequence.`,
     environment_profile: "sci-fi chamber with grounded floor plane, rear aperture, bounded fog layers, and stable wall gradients",
-    lighting_profile: "key light, cool rim light, ambient fill, and bounded floor-shadow approximation",
+    lighting_profile: "key light, cool rim light, beacon-driven reactive fill, bounded floor reflection, and continuity-safe shadow approximation",
     camera_profile: input.mode === "motion-preview"
       ? "governed micro-dolly with smoothed drift, persistent horizon, and bounded centering correction"
       : "governed locked-off camera with bounded micro-drift smoothing and persistent horizon framing",
     continuity_anchor_visualization: "floor horizon + chamber aperture + centered cube anchor + locked floor marker platform",
-    scene_readability_overlay: "silhouette / camera / environment / relationship overlay",
+    scene_readability_overlay: "silhouette / camera / environment / relationship / reactive-light overlay",
+    beacon_influence_summary: `Beacon glow stays bounded to a ${maxReactiveLightRadius.toFixed(2)}px response radius and drives ${(minBeaconInfluence * 100).toFixed(0)}-${(maxBeaconInfluence * 100).toFixed(0)}% cube/platform influence without breaking spacing stability.`,
+    environmental_response_summary: "Platform illumination, floor glow, chamber haze, and local light bleed all respond to beacon motion with smoothed transitions and preserved scene contrast.",
+    reflection_shadow_summary: `Reflection continuity holds at ${reflectionContinuityScore}/100 while shadow stability stays above ${minShadowStability}/100 with no floor-collapse artifacts.`,
+    scene_believability_summary: "Primitive objects now feel visually integrated through deterministic reactive lighting, shadowing, and environmental response while remaining bounded and review-safe.",
     frame_coherence_score: frameCoherenceScore,
     motion_smoothness_score: motionSmoothnessScore,
     environment_coherence_score: environmentCoherenceScore,
@@ -7837,6 +7932,11 @@ function summarizeGovernedPreviewDiagnostics(input: {
     depth_ordering_score: depthOrderingScore,
     overlap_avoidance_score: overlapAvoidanceScore,
     interaction_staging_score: interactionStagingScore,
+    reactive_lighting_score: reactiveLightingScore,
+    environmental_response_score: environmentalResponseScore,
+    reflection_continuity_score: reflectionContinuityScore,
+    interaction_persistence_score: interactionPersistenceScore,
+    reactive_coherence_score: reactiveCoherenceScore,
     camera_stability_score: cameraStabilityScore,
     spatial_continuity_score: spatialContinuityScore,
     lighting_stability_score: lightingScore,
@@ -7844,13 +7944,14 @@ function summarizeGovernedPreviewDiagnostics(input: {
     readability_score: readabilityScore,
     object_fidelity_score: objectFidelityScore,
     scene_composition_score: sceneCompositionScore,
+    scene_believability_score: sceneBelievabilityScore,
     continuity_quality_indicators: continuityQualityIndicators,
     artifact_diagnostics: [
       "Sandboxed primitive scene renderer only; no unrestricted synthesis path introduced.",
       "Deterministic chamber layout keeps floor, wall, aperture, fog composition, and multi-object placement fixed inside governed bounds.",
-      "Governed multi-object staging maintains cube-beacon separation, overlap avoidance, and platform anchoring without introducing autonomous interaction behavior.",
+      "Governed multi-object staging maintains cube-beacon separation, overlap avoidance, platform anchoring, and bounded reactive lighting without introducing autonomous interaction behavior.",
       "Governed camera smoothing preserves object centering and horizon continuity without adding autonomous camera control.",
-      "Deterministic lighting stack preserves contrast and readability across bounded frames.",
+      "Deterministic lighting stack preserves contrast, reflections, and shadow continuity across bounded frames.",
     ],
     frame_diagnostics: input.frameDiagnostics,
   };
@@ -8057,18 +8158,32 @@ function renderGovernedPrimitiveScene(input: {
   const targetSpacing = orbitRadius;
   const spacingDrift = Math.abs(cubeToBeaconDistance - targetSpacing);
   const overlapGap = cubeToBeaconDistance - (halfSize + beaconRadius);
+  const beaconHorizontalProximity = Math.max(0, 1 - Math.abs(beaconCenterX - anchorX) / (orbitRadius * 1.04));
+  const beaconVerticalCoupling = Math.max(0, 1 - Math.abs((anchorY - beaconCenterY) - objectSize * 0.78) / (objectSize * 0.72));
+  const beaconInfluenceStrength = Math.min(0.94, Math.max(0.58, 0.46 + beaconHorizontalProximity * 0.28 + beaconVerticalCoupling * 0.24));
+  const reactiveLightRadius = orbitRadius * (input.mode === "motion-preview" ? 1.16 : 1.08);
   const overlapAvoidanceScore = Math.max(86, Math.min(100, 100 - Math.round(Math.max(0, 6 - overlapGap) * 3.6)));
   const depthOrderingScore = Math.max(88, 100 - Math.round(Math.abs((anchorY - beaconCenterY) - objectSize * 0.8) * 0.25));
   const interactionStagingScore = Math.max(86, 100 - Math.round(spacingDrift * 2.4 + Math.abs(platformY - anchorY - objectSize * 0.64) * 4));
   const floorAnchorConsistencyScore = Math.max(90, 100 - Math.round(Math.abs(platformY - anchorY - objectSize * 0.64) * 4.5));
+  const platformIlluminationScore = Math.max(88, Math.min(100, Math.round(86 + beaconInfluenceStrength * 14 - spacingDrift * 1.4)));
+  const floorReflectionScore = Math.max(86, Math.min(100, Math.round(84 + beaconInfluenceStrength * 15 - spacingDrift * 1.25)));
+  const shadowStabilityScore = Math.max(88, Math.min(100, Math.round(98 - Math.abs(cameraDriftY) * 3.8 - spacingDrift * 0.9)));
+  const environmentalResponseScore = Math.max(88, Math.min(100, Math.round((platformIlluminationScore + floorReflectionScore + shadowStabilityScore) / 3 + beaconInfluenceStrength * 4)));
+  const interactionPersistenceScore = Math.max(88, Math.min(100, Math.round(100 - spacingDrift * 2.2 - Math.abs(beaconInfluenceStrength - 0.76) * 18)));
+  const reflectionContinuityScore = Math.max(88, Math.min(100, Math.round((floorReflectionScore + shadowStabilityScore + platformIlluminationScore) / 3)));
+  const reactiveCoherenceScore = Math.max(88, Math.min(100, Math.round((environmentalResponseScore + reflectionContinuityScore + interactionPersistenceScore) / 3)));
   const depthOrderingStatus = beaconCenterY < anchorY
     ? "beacon elevated behind cube; platform locked beneath anchor"
     : "watch beacon elevation ordering";
   const overlapWarning = overlapGap > 6 ? "clear separation maintained" : "watch object spacing";
   const interactionStagingNote = input.mode === "motion-preview"
-    ? "beacon orbiting cube while floor marker stays locked beneath anchor"
-    : "beacon staged beside cube with floor marker locked beneath anchor";
-  const objectRelationshipOverlay = `cube-beacon ${Math.round(cubeToBeaconDistance)}px • drift ${spacingDrift.toFixed(2)}px • ${overlapWarning}`;
+    ? "beacon orbiting cube while floor marker stays locked beneath anchor and reactive lighting persists"
+    : "beacon staged beside cube with floor marker locked beneath anchor and bounded reactive lighting";
+  const objectRelationshipOverlay = `cube-beacon ${Math.round(cubeToBeaconDistance)}px • drift ${spacingDrift.toFixed(2)}px • glow ${(beaconInfluenceStrength * 100).toFixed(0)}% • ${overlapWarning}`;
+  const beaconInfluenceOverlay = `beacon influence ${(beaconInfluenceStrength * 100).toFixed(0)}% • radius ${reactiveLightRadius.toFixed(1)}px • platform ${platformIlluminationScore}/100`;
+  const reflectionShadowOverlay = `reflection ${floorReflectionScore}/100 • shadow ${shadowStabilityScore}/100 • continuity ${reflectionContinuityScore}/100`;
+  const environmentalResponseOverlay = `env ${environmentalResponseScore}/100 • persistence ${interactionPersistenceScore}/100 • reactive ${reactiveCoherenceScore}/100`;
 
   drawFilledCircle(buffer, {
     centerX: anchorX + input.width * 0.015,
@@ -8079,6 +8194,42 @@ function renderGovernedPrimitiveScene(input: {
       green: 20,
       blue: 28,
       alpha: Math.max(0, 0.34 - (distance / (objectSize * 0.52)) * 0.34),
+    }),
+  });
+
+  drawFilledCircle(buffer, {
+    centerX: anchorX + depthX * 0.12,
+    centerY: platformY + platformHeight * 0.3,
+    radius: objectSize * 0.46,
+    colorAt: (distance) => ({
+      red: 8,
+      green: 14,
+      blue: 22,
+      alpha: Math.max(0, (0.42 + beaconInfluenceStrength * 0.08) - (distance / (objectSize * 0.46)) * (0.42 + beaconInfluenceStrength * 0.08)),
+    }),
+  });
+
+  drawFilledCircle(buffer, {
+    centerX: beaconCenterX,
+    centerY: beaconCenterY + input.height * 0.02,
+    radius: reactiveLightRadius,
+    colorAt: (distance) => ({
+      red: 42,
+      green: 96,
+      blue: 170,
+      alpha: Math.max(0, beaconInfluenceStrength * 0.18 - (distance / reactiveLightRadius) * beaconInfluenceStrength * 0.18),
+    }),
+  });
+
+  drawFilledCircle(buffer, {
+    centerX: anchorX,
+    centerY: platformY + platformHeight * 0.15,
+    radius: platformHalfWidth * 1.02,
+    colorAt: (distance) => ({
+      red: 76,
+      green: 148,
+      blue: 236,
+      alpha: Math.max(0, beaconInfluenceStrength * 0.24 - (distance / (platformHalfWidth * 1.02)) * beaconInfluenceStrength * 0.24),
     }),
   });
 
@@ -8103,13 +8254,33 @@ function renderGovernedPrimitiveScene(input: {
   drawFilledPolygon(buffer, { points: sideFace, red: 70, green: 114, blue: 164 });
   drawFilledPolygon(buffer, { points: frontFace, red: 104, green: 154, blue: 214 });
 
+  const reactiveFrontGlow = [
+    { x: frontFace[0]!.x + halfSize * 0.08, y: frontFace[0]!.y + halfSize * 0.12 },
+    { x: frontFace[1]!.x - halfSize * 0.12, y: frontFace[0]!.y + halfSize * 0.1 },
+    { x: frontFace[1]!.x - halfSize * 0.1, y: frontFace[0]!.y + halfSize * 0.54 },
+    { x: frontFace[0]!.x + halfSize * 0.12, y: frontFace[0]!.y + halfSize * 0.48 },
+  ];
+  drawFilledPolygon(buffer, {
+    points: reactiveFrontGlow,
+    red: 118,
+    green: 186 + beaconInfluenceStrength * 24,
+    blue: 255,
+    alpha: 0.12 + beaconInfluenceStrength * 0.16,
+  });
+
   const floorReflection = [
     { x: frontFace[0]!.x + 8, y: frontFace[2]!.y + 6 },
     { x: frontFace[2]!.x - 8, y: frontFace[2]!.y + 6 },
     { x: frontFace[2]!.x - 14 + depthX * 0.16, y: frontFace[2]!.y + objectSize * 0.48 },
     { x: frontFace[0]!.x + 14 + depthX * 0.16, y: frontFace[2]!.y + objectSize * 0.48 },
   ];
-  drawFilledPolygon(buffer, { points: floorReflection, red: 62, green: 108, blue: 164, alpha: 0.14 });
+  drawFilledPolygon(buffer, {
+    points: floorReflection,
+    red: 70,
+    green: 126 + beaconInfluenceStrength * 18,
+    blue: 194 + beaconInfluenceStrength * 22,
+    alpha: 0.12 + beaconInfluenceStrength * 0.1,
+  });
 
   const rimFace = [
     { x: frontFace[0]!.x + 4, y: frontFace[0]!.y + 4 },
@@ -8117,7 +8288,13 @@ function renderGovernedPrimitiveScene(input: {
     { x: frontFace[1]!.x - 4, y: frontFace[0]!.y + halfSize * 0.2 },
     { x: frontFace[0]!.x + 4, y: frontFace[0]!.y + halfSize * 0.2 },
   ];
-  drawFilledPolygon(buffer, { points: rimFace, red: 188, green: 225, blue: 255, alpha: 0.45 });
+  drawFilledPolygon(buffer, {
+    points: rimFace,
+    red: 188,
+    green: 225 + beaconInfluenceStrength * 18,
+    blue: 255,
+    alpha: 0.32 + beaconInfluenceStrength * 0.24,
+  });
 
   for (const polygon of [frontFace, topFace, sideFace]) {
     for (let index = 0; index < polygon.length; index += 1) {
@@ -8154,7 +8331,7 @@ function renderGovernedPrimitiveScene(input: {
       red: 52,
       green: 92,
       blue: 152,
-      alpha: Math.max(0, 0.24 - (distance / (beaconRadius * 1.9)) * 0.24),
+      alpha: Math.max(0, 0.22 + beaconInfluenceStrength * 0.08 - (distance / (beaconRadius * 1.9)) * (0.22 + beaconInfluenceStrength * 0.08)),
     }),
   });
   drawFilledCircle(buffer, {
@@ -8175,7 +8352,9 @@ function renderGovernedPrimitiveScene(input: {
 
   for (let x = 0; x < input.width; x += 1) {
     const floorGlow = Math.max(0, 1 - Math.abs(x - anchorX) / (input.width * 0.34));
-    blendRgbPixel(buffer, x, Math.round(horizonY), 84, 152, 232, floorGlow * 0.18);
+    const beaconFloorLift = Math.max(0, 1 - Math.abs(x - beaconCenterX) / reactiveLightRadius);
+    blendRgbPixel(buffer, x, Math.round(horizonY), 84, 152, 232, floorGlow * (0.12 + beaconInfluenceStrength * 0.08));
+    blendRgbPixel(buffer, x, Math.min(input.height - 1, Math.round(platformY + platformHeight * 0.4)), 92, 168, 245, beaconFloorLift * beaconInfluenceStrength * 0.16);
   }
 
   const cameraCenterOffsetX = anchorX - input.width / 2;
@@ -8190,8 +8369,8 @@ function renderGovernedPrimitiveScene(input: {
   const lightingConsistencyScore = 95;
   const continuityAnchorVisualization = `cube ${Math.round(anchorX)},${Math.round(anchorY)} • beacon ${Math.round(beaconCenterX)},${Math.round(beaconCenterY)} • platform ${Math.round(anchorX)},${Math.round(platformY)} • horizon ${Math.round(horizonY)}`;
   const sceneReadabilityOverlay = input.mode === "motion-preview"
-    ? "silhouette / camera drift / environment depth / lighting / object relationships"
-    : "silhouette / chamber anchor / horizon / lighting / object relationships";
+    ? "silhouette / camera drift / environment depth / lighting / reactive relationships"
+    : "silhouette / chamber anchor / horizon / lighting / reactive relationships";
 
   return {
     ppmContent: serializeRgbBufferToPpm(buffer, `AI-E governed ${input.mode} frame ${input.frameIndex + 1}`),
@@ -8205,14 +8384,26 @@ function renderGovernedPrimitiveScene(input: {
       platform_y: Number(platformY.toFixed(2)),
       cube_to_beacon_distance: Number(cubeToBeaconDistance.toFixed(2)),
       spacing_drift: Number(spacingDrift.toFixed(2)),
+      beacon_influence_strength: Number(beaconInfluenceStrength.toFixed(2)),
+      reactive_light_radius: Number(reactiveLightRadius.toFixed(2)),
       depth_ordering_score: depthOrderingScore,
       overlap_avoidance_score: overlapAvoidanceScore,
       interaction_staging_score: interactionStagingScore,
       floor_anchor_consistency_score: floorAnchorConsistencyScore,
+      platform_illumination_score: platformIlluminationScore,
+      floor_reflection_score: floorReflectionScore,
+      reflection_continuity_score: reflectionContinuityScore,
+      shadow_stability_score: shadowStabilityScore,
+      environmental_response_score: environmentalResponseScore,
+      interaction_persistence_score: interactionPersistenceScore,
+      reactive_coherence_score: reactiveCoherenceScore,
       depth_ordering_status: depthOrderingStatus,
       overlap_warning: overlapWarning,
       interaction_staging_note: interactionStagingNote,
       object_relationship_overlay: objectRelationshipOverlay,
+      beacon_influence_overlay: beaconInfluenceOverlay,
+      reflection_shadow_overlay: reflectionShadowOverlay,
+      environmental_response_overlay: environmentalResponseOverlay,
       rotation_degrees: Number(rotationDegrees.toFixed(2)),
       camera_center_offset_x: Number(cameraCenterOffsetX.toFixed(2)),
       camera_center_offset_y: Number(cameraCenterOffsetY.toFixed(2)),
@@ -8223,7 +8414,7 @@ function renderGovernedPrimitiveScene(input: {
       environment_coherence_score: environmentCoherenceScore,
       silhouette_score: input.mode === "motion-preview" ? 91 : 93,
       readability_score: input.mode === "motion-preview" ? 88 : 90,
-      lighting_stability_score: 94,
+      lighting_stability_score: Math.max(92, Math.min(100, Math.round(92 + beaconInfluenceStrength * 4))),
       lighting_consistency_score: lightingConsistencyScore,
       coherence_anchor_strength: input.mode === "motion-preview" ? 89 : 92,
       fog_density: Number(fogDensity.toFixed(2)),

@@ -17,7 +17,11 @@ function buildPreviewDiagnosticsMock(frameCount: number) {
     lighting_profile: "single directional key with stable rim lighting",
     camera_profile: "governed locked-off camera with persistent horizon framing",
     continuity_anchor_visualization: "floor horizon + chamber aperture + centered cube anchor + locked floor marker",
-    scene_readability_overlay: "silhouette / camera / environment / relationship overlay",
+    scene_readability_overlay: "silhouette / camera / environment / relationship / reactive-light overlay",
+    beacon_influence_summary: "Beacon glow stays bounded to a 68px response radius and drives 61-83% cube/platform influence without breaking spacing stability.",
+    environmental_response_summary: "Platform illumination, floor glow, chamber haze, and local light bleed respond to beacon motion with smoothed transitions and preserved scene contrast.",
+    reflection_shadow_summary: "Reflection continuity holds at 93/100 while shadow stability stays above 94/100 with no floor-collapse artifacts.",
+    scene_believability_summary: "Primitive objects feel visually integrated through deterministic reactive lighting, shadowing, and environmental response.",
     frame_coherence_score: 90,
     motion_smoothness_score: 89,
     environment_coherence_score: 91,
@@ -26,6 +30,11 @@ function buildPreviewDiagnosticsMock(frameCount: number) {
     depth_ordering_score: 93,
     overlap_avoidance_score: 95,
     interaction_staging_score: 92,
+    reactive_lighting_score: 93,
+    environmental_response_score: 94,
+    reflection_continuity_score: 93,
+    interaction_persistence_score: 92,
+    reactive_coherence_score: 93,
     camera_stability_score: 90,
     spatial_continuity_score: 89,
     lighting_stability_score: 94,
@@ -33,6 +42,7 @@ function buildPreviewDiagnosticsMock(frameCount: number) {
     readability_score: 90,
     object_fidelity_score: 92,
     scene_composition_score: 91,
+    scene_believability_score: 93,
     continuity_quality_indicators: [
       {
         id: "object-fidelity",
@@ -53,14 +63,26 @@ function buildPreviewDiagnosticsMock(frameCount: number) {
       platform_y: 176,
       cube_to_beacon_distance: 56,
       spacing_drift: 1.8,
+      beacon_influence_strength: 0.72,
+      reactive_light_radius: 68,
       depth_ordering_score: 93,
       overlap_avoidance_score: 95,
       interaction_staging_score: 92,
       floor_anchor_consistency_score: 96,
+      platform_illumination_score: 94,
+      floor_reflection_score: 93,
+      reflection_continuity_score: 93,
+      shadow_stability_score: 94,
+      environmental_response_score: 94,
+      interaction_persistence_score: 92,
+      reactive_coherence_score: 93,
       depth_ordering_status: "beacon elevated behind cube; platform locked beneath anchor",
       overlap_warning: "clear separation maintained",
       interaction_staging_note: "beacon orbiting cube while floor marker stays locked beneath anchor",
       object_relationship_overlay: "cube-beacon 56px • drift 1.80px • clear separation maintained",
+      beacon_influence_overlay: "beacon influence 72% • radius 68.0px • platform 94/100",
+      reflection_shadow_overlay: "reflection 93/100 • shadow 94/100 • continuity 93/100",
+      environmental_response_overlay: "env 94/100 • persistence 92/100 • reactive 93/100",
       rotation_degrees: -12 + index * 7,
       camera_center_offset_x: 1.2,
       camera_center_offset_y: 0.6,
@@ -395,7 +417,7 @@ test("executeGovernedPreviewMicroSequenceRequest returns micro-sequence frame re
   assert.equal(result.preview_cleanup_targets.length, 1);
   assert.equal(result.preview_diagnostics?.object_fidelity_score, 92);
   assert.equal(result.preview_diagnostics?.environment_coherence_score, 91);
-  assert.equal(result.preview_diagnostics?.scene_readability_overlay, "silhouette / camera / environment / relationship overlay");
+  assert.equal(result.preview_diagnostics?.scene_readability_overlay, "silhouette / camera / environment / relationship / reactive-light overlay");
   assert.equal(result.preview_diagnostics?.interaction_staging_score, 92);
   assert.equal(result.preview_diagnostics?.frame_diagnostics.length, 3);
 });

@@ -124,6 +124,10 @@ function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPr
         <p><strong className="text-ink">Relationships:</strong> {diagnostics.object_relationship_summary}</p>
         <p><strong className="text-ink">Environment:</strong> {diagnostics.environment_profile}</p>
         <p><strong className="text-ink">Lighting:</strong> {diagnostics.lighting_profile}</p>
+        <p><strong className="text-ink">Beacon influence:</strong> {diagnostics.beacon_influence_summary}</p>
+        <p><strong className="text-ink">Environmental response:</strong> {diagnostics.environmental_response_summary}</p>
+        <p><strong className="text-ink">Reflection and shadow:</strong> {diagnostics.reflection_shadow_summary}</p>
+        <p><strong className="text-ink">Believability:</strong> {diagnostics.scene_believability_summary}</p>
         <p><strong className="text-ink">Camera:</strong> {diagnostics.camera_profile}</p>
         <p><strong className="text-ink">Continuity anchor:</strong> {diagnostics.continuity_anchor_visualization}</p>
         <p><strong className="text-ink">Scene overlay:</strong> {diagnostics.scene_readability_overlay}</p>
@@ -615,6 +619,9 @@ export function PreviewGenerationClient() {
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Env {card.diagnostic.environment_coherence_score}/100 • Depth {card.diagnostic.spatial_depth_score}/100 • Fog {card.diagnostic.fog_density}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Spacing drift {card.diagnostic.spacing_drift}px • Depth {card.diagnostic.depth_ordering_status}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Overlap {card.diagnostic.overlap_warning} • Stage {card.diagnostic.interaction_staging_note}</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Reactive {card.diagnostic.beacon_influence_overlay}</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Reflection {card.diagnostic.reflection_shadow_overlay}</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Response {card.diagnostic.environmental_response_overlay}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Anchor {card.diagnostic.continuity_anchor_visualization}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
                         <div className="flex flex-wrap gap-2">
@@ -660,6 +667,9 @@ export function PreviewGenerationClient() {
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Camera {card.diagnostic.camera_stability_score}/100 • Horizon {card.diagnostic.horizon_consistency_score}/100 • Lighting consistency {card.diagnostic.lighting_consistency_score}/100</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Spacing {card.diagnostic.cube_to_beacon_distance}px • Drift {card.diagnostic.spacing_drift}px • Overlap {card.diagnostic.overlap_warning}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Depth {card.diagnostic.depth_ordering_status} • Staging {card.diagnostic.interaction_staging_note}</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Influence {card.diagnostic.beacon_influence_overlay}</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Reflection and shadow {card.diagnostic.reflection_shadow_overlay}</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Environmental response {card.diagnostic.environmental_response_overlay}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Overlay {card.diagnostic.scene_readability_overlay}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Relationship overlay {card.diagnostic.object_relationship_overlay}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>

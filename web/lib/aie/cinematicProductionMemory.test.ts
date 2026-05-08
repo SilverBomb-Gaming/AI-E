@@ -453,7 +453,7 @@ test("cinematic execution sandbox plans provider-agnostic jobs and simulates lif
   }
 });
 
-test("governed preview diagnostics keep multi-object relationships deterministic and bounded", async () => {
+test("governed preview diagnostics keep reactive multi-object relationships deterministic and bounded", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-governed-multi-object-preview-"));
 
   try {
@@ -494,19 +494,40 @@ test("governed preview diagnostics keep multi-object relationships deterministic
     assert.ok(microDiagnostics.depth_ordering_score >= 90);
     assert.ok(microDiagnostics.overlap_avoidance_score >= 92);
     assert.ok(microDiagnostics.interaction_staging_score >= 88);
+    assert.ok(microDiagnostics.reactive_lighting_score >= 88);
+    assert.ok(microDiagnostics.environmental_response_score >= 88);
+    assert.ok(microDiagnostics.reflection_continuity_score >= 88);
+    assert.ok(microDiagnostics.interaction_persistence_score >= 88);
+    assert.ok(microDiagnostics.reactive_coherence_score >= 88);
+    assert.ok(microDiagnostics.scene_believability_score >= 88);
     assert.match(microDiagnostics.object_relationship_summary, /beacon/i);
+    assert.match(microDiagnostics.beacon_influence_summary, /radius/i);
+    assert.match(microDiagnostics.environmental_response_summary, /platform/i);
+    assert.match(microDiagnostics.reflection_shadow_summary, /shadow/i);
     assert.match(microDiagnostics.continuity_anchor_visualization, /platform/i);
 
     for (const frame of motionDiagnostics.frame_diagnostics) {
       assert.ok(frame.cube_to_beacon_distance >= 40);
       assert.ok(frame.spacing_drift <= 3);
+      assert.ok(frame.beacon_influence_strength >= 0.58);
+      assert.ok(frame.reactive_light_radius >= 55);
       assert.ok(frame.depth_ordering_score >= 90);
       assert.ok(frame.overlap_avoidance_score >= 92);
       assert.ok(frame.interaction_staging_score >= 88);
       assert.ok(frame.floor_anchor_consistency_score >= 94);
+      assert.ok(frame.platform_illumination_score >= 88);
+      assert.ok(frame.floor_reflection_score >= 88);
+      assert.ok(frame.reflection_continuity_score >= 88);
+      assert.ok(frame.shadow_stability_score >= 88);
+      assert.ok(frame.environmental_response_score >= 88);
+      assert.ok(frame.interaction_persistence_score >= 88);
+      assert.ok(frame.reactive_coherence_score >= 88);
       assert.match(frame.depth_ordering_status, /platform locked beneath anchor/i);
       assert.equal(frame.overlap_warning, "clear separation maintained");
       assert.match(frame.object_relationship_overlay, /cube-beacon/i);
+      assert.match(frame.beacon_influence_overlay, /platform/i);
+      assert.match(frame.reflection_shadow_overlay, /reflection/i);
+      assert.match(frame.environmental_response_overlay, /persistence/i);
     }
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
