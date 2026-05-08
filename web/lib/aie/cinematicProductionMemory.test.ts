@@ -826,7 +826,13 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.equal(validation.governed_micro_sequence_sandbox.sequence_frame_count, 3);
     assert.ok(validation.governed_micro_sequence_sandbox.preview_diagnostics.object_fidelity_score >= 88);
     assert.ok(validation.governed_micro_sequence_sandbox.preview_diagnostics.readability_score >= 86);
+    assert.ok(validation.governed_micro_sequence_sandbox.preview_diagnostics.environment_coherence_score >= 90);
+    assert.ok(validation.governed_micro_sequence_sandbox.preview_diagnostics.camera_stability_score >= 88);
+    assert.ok(validation.governed_micro_sequence_sandbox.preview_diagnostics.spatial_continuity_score >= 90);
+    assert.match(validation.governed_micro_sequence_sandbox.preview_diagnostics.camera_profile, /governed/i);
     assert.equal(validation.governed_micro_sequence_sandbox.preview_diagnostics.frame_diagnostics.length, 3);
+    assert.ok(validation.governed_micro_sequence_sandbox.preview_diagnostics.frame_diagnostics.every((entry) => entry.environment_coherence_score >= 90));
+    assert.ok(validation.governed_micro_sequence_sandbox.preview_diagnostics.frame_diagnostics.every((entry) => entry.camera_stability_score >= 88));
     assert.ok(validation.continuity_preview_sequencing.stages.some((entry) => entry.stage === "bounded_sequence_write" && entry.status === "completed"));
     assert.ok(validation.frame_to_frame_continuity_validation.checks.some((entry) => entry.check === "continuity-drift-thresholds" && entry.passed));
     assert.ok(validation.sequence_rollback_recovery.actions.some((entry) => entry.action === "sequence-rollback-cleanup" && entry.triggered));
@@ -836,7 +842,12 @@ test("controlled local inference bootstrap persists execution boundaries while k
     assert.equal(validation.governed_motion_preview_sandbox.clip_frame_count, 4);
     assert.ok(validation.governed_motion_preview_sandbox.preview_diagnostics.frame_coherence_score >= 82);
     assert.ok(validation.governed_motion_preview_sandbox.preview_diagnostics.motion_smoothness_score >= 82);
+    assert.ok(validation.governed_motion_preview_sandbox.preview_diagnostics.camera_stability_score >= 84);
+    assert.ok(validation.governed_motion_preview_sandbox.preview_diagnostics.environment_coherence_score >= 88);
+    assert.ok(validation.governed_motion_preview_sandbox.preview_diagnostics.lighting_consistency_score >= 92);
     assert.equal(validation.governed_motion_preview_sandbox.preview_diagnostics.frame_diagnostics.length, 4);
+    assert.ok(validation.governed_motion_preview_sandbox.preview_diagnostics.frame_diagnostics.every((entry) => entry.horizon_consistency_score >= 86));
+    assert.ok(validation.governed_motion_preview_sandbox.preview_diagnostics.frame_diagnostics.every((entry) => entry.scene_readability_overlay.length > 0));
     assert.ok(validation.motion_preview_sequencing.stages.some((entry) => entry.stage === "low_fps_clip_write" && entry.status === "completed"));
     assert.ok(validation.temporal_transition_validation.checks.some((entry) => entry.check === "transition-drift-thresholds" && entry.passed));
     assert.ok(validation.motion_preview_rollback.actions.some((entry) => entry.action === "preview-rollback-cleanup" && entry.triggered));

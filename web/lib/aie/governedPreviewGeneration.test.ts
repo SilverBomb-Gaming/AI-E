@@ -14,9 +14,16 @@ function buildPreviewDiagnosticsMock(frameCount: number) {
     recognizable_object: "anchored cube primitive",
     environment_profile: "dark-room sci-fi chamber with bounded fog gradient",
     lighting_profile: "single directional key with stable rim lighting",
+    camera_profile: "governed locked-off camera with persistent horizon framing",
+    continuity_anchor_visualization: "floor horizon + chamber aperture + centered cube anchor",
+    scene_readability_overlay: "silhouette / camera / environment overlay",
     frame_coherence_score: 90,
     motion_smoothness_score: 89,
+    environment_coherence_score: 91,
+    camera_stability_score: 90,
+    spatial_continuity_score: 89,
     lighting_stability_score: 94,
+    lighting_consistency_score: 95,
     readability_score: 90,
     object_fidelity_score: 92,
     scene_composition_score: 91,
@@ -36,11 +43,22 @@ function buildPreviewDiagnosticsMock(frameCount: number) {
       anchor_x: 128,
       anchor_y: 144,
       rotation_degrees: -12 + index * 7,
+      camera_center_offset_x: 1.2,
+      camera_center_offset_y: 0.6,
+      camera_stability_score: 90,
+      horizon_y: 174,
+      horizon_consistency_score: 92,
+      spatial_depth_score: 89,
+      environment_coherence_score: 91,
       silhouette_score: 92,
       readability_score: 90,
       lighting_stability_score: 94,
+      lighting_consistency_score: 95,
       coherence_anchor_strength: 91,
+      fog_density: 0.24,
       environment_profile: "dark-room sci-fi chamber",
+      continuity_anchor_visualization: "center anchor 128,144 on horizon 174",
+      scene_readability_overlay: "silhouette / camera / environment overlay",
     })),
   };
 }
@@ -242,7 +260,10 @@ test("executeGovernedPreviewRequest returns sandbox outputs and does not call pr
   assert.equal(result.execution_ledger_state.attempt_count, 1);
   assert.equal(result.live_workspace_blocked_output, false);
   assert.equal(result.preview_diagnostics?.frame_coherence_score, 90);
+  assert.equal(result.preview_diagnostics?.camera_stability_score, 90);
+  assert.equal(result.preview_diagnostics?.environment_coherence_score, 91);
   assert.equal(result.prerequisite_state.preview_diagnostics?.object_fidelity_score, 92);
+  assert.equal(result.prerequisite_state.preview_diagnostics?.camera_profile, "governed locked-off camera with persistent horizon framing");
 });
 
 test("executeGovernedPreviewRequest blocks when the governed micro-sequence prerequisite is missing", async () => {
@@ -350,6 +371,8 @@ test("executeGovernedPreviewMicroSequenceRequest returns micro-sequence frame re
   assert.equal(result.prerequisite_state.motion_preview_ready, true);
   assert.equal(result.preview_cleanup_targets.length, 1);
   assert.equal(result.preview_diagnostics?.object_fidelity_score, 92);
+  assert.equal(result.preview_diagnostics?.environment_coherence_score, 91);
+  assert.equal(result.preview_diagnostics?.scene_readability_overlay, "silhouette / camera / environment overlay");
   assert.equal(result.preview_diagnostics?.frame_diagnostics.length, 3);
 });
 

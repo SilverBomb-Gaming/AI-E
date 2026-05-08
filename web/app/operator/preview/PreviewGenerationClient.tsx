@@ -123,6 +123,9 @@ function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPr
         <p><strong className="text-ink">Recognizable object:</strong> {diagnostics.recognizable_object}</p>
         <p><strong className="text-ink">Environment:</strong> {diagnostics.environment_profile}</p>
         <p><strong className="text-ink">Lighting:</strong> {diagnostics.lighting_profile}</p>
+        <p><strong className="text-ink">Camera:</strong> {diagnostics.camera_profile}</p>
+        <p><strong className="text-ink">Continuity anchor:</strong> {diagnostics.continuity_anchor_visualization}</p>
+        <p><strong className="text-ink">Scene overlay:</strong> {diagnostics.scene_readability_overlay}</p>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         {diagnostics.artifact_diagnostics.map((entry) => (
@@ -516,6 +519,8 @@ export function PreviewGenerationClient() {
                   <p><strong className="text-ink">Continuity validation:</strong> {prerequisiteState.continuity_validation.valid ? "passed" : "blocked"}</p>
                   <p><strong className="text-ink">Continuity summary:</strong> {prerequisiteState.continuity_validation.summary}</p>
                   {prerequisiteState.preview_diagnostics ? <p><strong className="text-ink">Frame coherence:</strong> {prerequisiteState.preview_diagnostics.frame_coherence_score}/100</p> : null}
+                  {prerequisiteState.preview_diagnostics ? <p><strong className="text-ink">Camera stability:</strong> {prerequisiteState.preview_diagnostics.camera_stability_score}/100</p> : null}
+                  {prerequisiteState.preview_diagnostics ? <p><strong className="text-ink">Environment coherence:</strong> {prerequisiteState.preview_diagnostics.environment_coherence_score}/100</p> : null}
                 </article>
               ) : null}
               {showGenerateMicroSequenceCta ? (
@@ -543,6 +548,9 @@ export function PreviewGenerationClient() {
                   <p><strong className="text-ink">Continuity validation:</strong> {execution.continuity_validation.valid ? "passed" : "blocked"}</p>
                   <p><strong className="text-ink">Continuity summary:</strong> {execution.continuity_validation.summary}</p>
                   {execution.preview_diagnostics ? <p><strong className="text-ink">Motion smoothness:</strong> {execution.preview_diagnostics.motion_smoothness_score}/100</p> : null}
+                  {execution.preview_diagnostics ? <p><strong className="text-ink">Camera stability:</strong> {execution.preview_diagnostics.camera_stability_score}/100</p> : null}
+                  {execution.preview_diagnostics ? <p><strong className="text-ink">Spatial continuity:</strong> {execution.preview_diagnostics.spatial_continuity_score}/100</p> : null}
+                  {execution.preview_diagnostics ? <p><strong className="text-ink">Lighting consistency:</strong> {execution.preview_diagnostics.lighting_consistency_score}/100</p> : null}
                 </article>
               ) : null}
               {microSequence ? (
@@ -552,6 +560,8 @@ export function PreviewGenerationClient() {
                   <p><strong className="text-ink">Continuity validation:</strong> {microSequence.continuity_validation.valid ? "passed" : "blocked"}</p>
                   <p><strong className="text-ink">Continuity summary:</strong> {microSequence.continuity_validation.summary}</p>
                   {microSequence.preview_diagnostics ? <p><strong className="text-ink">Object fidelity:</strong> {microSequence.preview_diagnostics.object_fidelity_score}/100</p> : null}
+                  {microSequence.preview_diagnostics ? <p><strong className="text-ink">Environment coherence:</strong> {microSequence.preview_diagnostics.environment_coherence_score}/100</p> : null}
+                  {microSequence.preview_diagnostics ? <p><strong className="text-ink">Camera profile:</strong> {microSequence.preview_diagnostics.camera_profile}</p> : null}
                   <p><strong className="text-ink">Preview cleanup after prerequisite run:</strong> {microSequence.rollback_status || "No preview cleanup actions were required."}</p>
                 </article>
               ) : null}
@@ -582,12 +592,19 @@ export function PreviewGenerationClient() {
                               {card.diagnostic.object_kind} • {Math.round(card.diagnostic.rotation_degrees)}deg
                             </div>
                           ) : null}
+                          {card.diagnostic ? (
+                            <div className="absolute bottom-3 left-3 rounded-full bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-ink shadow-sm">
+                              horizon {Math.round(card.diagnostic.horizon_y)} • camera {card.diagnostic.camera_stability_score}/100
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                       <div className="space-y-2 p-4">
                         <p className="text-sm font-semibold text-ink">{card.label}</p>
                         <p className="text-xs uppercase tracking-[0.18em] text-slate">{card.format} • {card.source}</p>
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Silhouette {card.diagnostic.silhouette_score}/100 • Readability {card.diagnostic.readability_score}/100</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Env {card.diagnostic.environment_coherence_score}/100 • Depth {card.diagnostic.spatial_depth_score}/100 • Fog {card.diagnostic.fog_density}</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Anchor {card.diagnostic.continuity_anchor_visualization}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
                         <div className="flex flex-wrap gap-2">
                           <a href={card.assetUrl} target="_blank" rel="noreferrer" className="rounded-full border border-ocean/20 bg-ocean px-3 py-1.5 text-xs font-semibold text-white">Open</a>
@@ -618,12 +635,19 @@ export function PreviewGenerationClient() {
                               {card.diagnostic.object_kind} • {Math.round(card.diagnostic.rotation_degrees)}deg
                             </div>
                           ) : null}
+                          {card.diagnostic ? (
+                            <div className="absolute bottom-3 left-3 rounded-full bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-ink shadow-sm">
+                              center {Math.round(card.diagnostic.anchor_x)},{Math.round(card.diagnostic.anchor_y)}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                       <div className="space-y-2 p-4">
                         <p className="text-sm font-semibold text-ink">{card.label}</p>
                         <p className="text-xs uppercase tracking-[0.18em] text-slate">{card.format} • {card.source}</p>
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Coherence {card.diagnostic.coherence_anchor_strength}/100 • Lighting {card.diagnostic.lighting_stability_score}/100</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Camera {card.diagnostic.camera_stability_score}/100 • Horizon {card.diagnostic.horizon_consistency_score}/100 • Lighting consistency {card.diagnostic.lighting_consistency_score}/100</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Overlay {card.diagnostic.scene_readability_overlay}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
                         <div className="flex flex-wrap gap-2">
                           <a href={card.assetUrl} target="_blank" rel="noreferrer" className="rounded-full border border-ocean/20 bg-ocean px-3 py-1.5 text-xs font-semibold text-white">Open</a>
