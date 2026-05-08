@@ -35,6 +35,7 @@ test("compileGovernedPreviewRequest blocks requests without manual approval", ()
     resolution: "720p",
     continuity_priority: "medium",
     governance_approval: false,
+    package_gif_preview: true,
   });
 
   assert.equal(request.manual_approval_required, true);
@@ -52,6 +53,7 @@ test("compileGovernedPreviewRequest enforces governed duration and resolution ca
     resolution: "4k",
     continuity_priority: "high",
     governance_approval: true,
+    package_gif_preview: true,
   });
 
   assert.equal(request.duration_seconds, 2);
@@ -72,6 +74,7 @@ test("executeGovernedPreviewRequest returns blocked status for compiler blockers
     resolution: "720p",
     continuity_priority: "low",
     governance_approval: false,
+    package_gif_preview: true,
   });
 
   const result = await executeGovernedPreviewRequest(request, {
@@ -100,6 +103,7 @@ test("executeGovernedPreviewRequest returns sandbox outputs and does not call pr
     resolution: "720p",
     continuity_priority: "high",
     governance_approval: true,
+    package_gif_preview: true,
   });
 
   const result = await executeGovernedPreviewRequest(request, {
@@ -186,6 +190,7 @@ test("executeGovernedPreviewRequest blocks when the governed micro-sequence prer
     resolution: "720p",
     continuity_priority: "medium",
     governance_approval: true,
+    package_gif_preview: true,
   });
 
   const result = await executeGovernedPreviewRequest(request, {
@@ -218,6 +223,7 @@ test("executeGovernedPreviewMicroSequenceRequest returns micro-sequence frame re
     resolution: "720p",
     continuity_priority: "high",
     governance_approval: true,
+    package_gif_preview: true,
   });
 
   const result = await executeGovernedPreviewMicroSequenceRequest(request, {

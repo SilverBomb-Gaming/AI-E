@@ -178,6 +178,7 @@ export async function executeGovernedPreviewMicroSequenceRequest(
     desiredResolution: request.resolution,
     desiredDurationSeconds: request.duration_seconds,
     continuityPriority: request.continuity_priority,
+    packageGifPreview: request.package_gif_preview,
   });
   const prerequisiteState = buildPrerequisiteState({
     governedMicroSequenceSandbox: simulation.validation.governed_micro_sequence_sandbox,
@@ -274,6 +275,7 @@ export async function executeGovernedPreviewRequest(
     desiredResolution: request.resolution,
     desiredDurationSeconds: request.duration_seconds,
     continuityPriority: request.continuity_priority,
+    packageGifPreview: request.package_gif_preview,
   });
 
   const previewSandbox = simulation.validation.governed_motion_preview_sandbox;

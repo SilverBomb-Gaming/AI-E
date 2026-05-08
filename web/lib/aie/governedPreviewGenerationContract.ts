@@ -15,6 +15,7 @@ export type GovernedPreviewFormInput = {
   resolution: string;
   continuity_priority: GovernedPreviewContinuityPriority;
   governance_approval: boolean;
+  package_gif_preview: boolean;
 };
 
 export type GovernedPreviewRequest = {
@@ -28,6 +29,7 @@ export type GovernedPreviewRequest = {
   duration_seconds: GovernedPreviewDurationSeconds;
   resolution: GovernedPreviewResolution;
   continuity_priority: GovernedPreviewContinuityPriority;
+  package_gif_preview: boolean;
   manual_approval_required: true;
   manual_approval_granted: boolean;
   sandbox_output_only: true;
@@ -64,6 +66,7 @@ function buildCompiledPrompt(input: {
   style: string;
   durationSeconds: GovernedPreviewDurationSeconds;
   continuityPriority: GovernedPreviewContinuityPriority;
+  packageGifPreview: boolean;
 }): string {
   return [
     input.prompt,
@@ -72,6 +75,7 @@ function buildCompiledPrompt(input: {
     `Style: ${input.style}`,
     `Governed preview duration: ${input.durationSeconds}s`,
     `Continuity priority: ${input.continuityPriority}`,
+    `Browser GIF packaging: ${input.packageGifPreview ? "enabled" : "disabled"} within the governed sandbox`,
     "Governance: manual approval required, sandbox output only, rollback enabled, no autonomous continuation.",
   ].join("\n");
 }
@@ -115,10 +119,12 @@ export function compileGovernedPreviewRequest(input: GovernedPreviewFormInput): 
       style,
       durationSeconds,
       continuityPriority: input.continuity_priority,
+      packageGifPreview: input.package_gif_preview,
     }),
     duration_seconds: durationSeconds,
     resolution: GOVERNED_PREVIEW_RESOLUTION,
     continuity_priority: input.continuity_priority,
+    package_gif_preview: input.package_gif_preview,
     manual_approval_required: true,
     manual_approval_granted: input.governance_approval,
     sandbox_output_only: true,
@@ -130,6 +136,7 @@ export function compileGovernedPreviewRequest(input: GovernedPreviewFormInput): 
       "Manual approval required.",
       "Sandbox output only.",
       "Rollback enabled.",
+      "Optional GIF packaging remains bounded to governed sandbox artifacts only.",
       "No autonomous continuation.",
     ],
     compiler_notes: compilerNotes,

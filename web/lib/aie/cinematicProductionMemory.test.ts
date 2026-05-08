@@ -843,10 +843,14 @@ test("controlled local inference bootstrap persists execution boundaries while k
     const microSequenceDir = path.join(tempRoot, ".aie", "governed_micro_sequence_sandbox", "sequence-governed-micro-preview-001");
     const microSequenceFiles = await readdir(microSequenceDir);
     assert.equal(microSequenceFiles.filter((entry) => entry.endsWith(".ppm")).length, 3);
+    assert.equal(microSequenceFiles.filter((entry) => entry.endsWith(".png")).length, 3);
+    assert.ok(microSequenceFiles.includes("governed_preview_sequence_preview.gif"));
     assert.match(await readFile(path.join(microSequenceDir, "governed_preview_sequence_frame_001.ppm"), "utf8"), /^P3/m);
     const motionPreviewDir = path.join(tempRoot, ".aie", "governed_motion_preview_sandbox", "clip-governed-motion-preview-001");
     const motionPreviewFiles = await readdir(motionPreviewDir);
     assert.equal(motionPreviewFiles.filter((entry) => entry.endsWith(".ppm")).length, 4);
+    assert.equal(motionPreviewFiles.filter((entry) => entry.endsWith(".png")).length, 4);
+    assert.ok(motionPreviewFiles.includes("governed_motion_preview.gif"));
     assert.ok(motionPreviewFiles.includes("governed_motion_preview_manifest.json"));
     assert.match(await readFile(path.join(motionPreviewDir, "governed_motion_preview_frame_001.ppm"), "utf8"), /^P3/m);
 
@@ -997,7 +1001,12 @@ test("controlled local inference bootstrap still writes governed micro-sequence 
     const microSequenceDir = path.join(tempRoot, ".aie", "governed_micro_sequence_sandbox", "sequence-governed-micro-preview-001");
     const microSequenceFiles = await readdir(microSequenceDir);
     assert.equal(microSequenceFiles.filter((entry) => entry.endsWith(".ppm")).length, 3);
+    assert.equal(microSequenceFiles.filter((entry) => entry.endsWith(".png")).length, 3);
+    assert.ok(microSequenceFiles.includes("governed_preview_sequence_preview.gif"));
     assert.match(await readFile(path.join(microSequenceDir, "governed_preview_sequence_frame_001.ppm"), "utf8"), /^P3/m);
+    assert.ok(simulation.validation.governed_micro_sequence_sandbox.output_file_paths.some((entry) => entry.endsWith(".png")));
+    assert.ok(simulation.validation.governed_micro_sequence_sandbox.output_file_paths.some((entry) => entry.endsWith(".gif")));
+    assert.match(simulation.validation.governed_motion_preview_sandbox.gif_preview_path ?? "", /governed_motion_preview\.gif$/);
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

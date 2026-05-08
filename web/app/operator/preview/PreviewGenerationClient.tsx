@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 
@@ -24,7 +25,53 @@ const DEFAULT_FORM: GovernedPreviewFormInput = {
   resolution: GOVERNED_PREVIEW_RESOLUTION,
   continuity_priority: "medium",
   governance_approval: false,
+  package_gif_preview: true,
 };
+
+type PreviewGalleryCard = {
+  id: string;
+  label: string;
+  source: "micro-sequence" | "motion-preview";
+  format: "png" | "gif";
+  assetPath: string;
+  assetUrl: string;
+  frameIndex: number | null;
+};
+
+function buildSandboxAssetUrl(assetPath: string): string {
+  return `/api/operator/preview-generation/asset?path=${encodeURIComponent(assetPath)}`;
+}
+
+function extractFrameIndex(assetPath: string): number | null {
+  const match = assetPath.match(/_(\d{3})\.(ppm|png)$/i);
+  return match ? Number(match[1]) : null;
+}
+
+function buildGalleryCards(assetPaths: string[], source: PreviewGalleryCard["source"]): PreviewGalleryCard[] {
+  return assetPaths
+    .filter((assetPath) => assetPath.endsWith(".png") || assetPath.endsWith(".gif"))
+    .map((assetPath) => {
+      const frameIndex = extractFrameIndex(assetPath);
+      const format = assetPath.endsWith(".gif") ? "gif" : "png";
+      const label = format === "gif"
+        ? source === "motion-preview"
+          ? "Governed motion preview GIF"
+          : "Governed micro-sequence GIF"
+        : frameIndex !== null
+          ? `${source === "motion-preview" ? "Preview" : "Sequence"} frame ${String(frameIndex).padStart(3, "0")}`
+          : `${source} preview asset`;
+
+      return {
+        id: `${source}-${assetPath}`,
+        label,
+        source,
+        format,
+        assetPath,
+        assetUrl: buildSandboxAssetUrl(assetPath),
+        frameIndex,
+      };
+    });
+}
 
 function FieldLabel({ children }: { children: string }) {
   return <span className="text-xs uppercase tracking-[0.18em] text-slate">{children}</span>;
@@ -207,6 +254,14 @@ export function PreviewGenerationClient() {
   const latestMicroSequenceFrameReferences = microSequence?.generated_frame_references.length
     ? microSequence.generated_frame_references
     : (prerequisiteState?.generated_frame_references ?? []);
+  const microSequenceGalleryCards = buildGalleryCards(latestMicroSequenceFrameReferences, "micro-sequence");
+  const previewGalleryCards = buildGalleryCards(execution?.generated_preview_references ?? [], "motion-preview");
+  const motionPreviewFrameCards = previewGalleryCards.filter((entry) => entry.format === "png");
+  const comparisonCards = motionPreviewFrameCards.length >= 2
+    ? [motionPreviewFrameCards[0], motionPreviewFrameCards[motionPreviewFrameCards.length - 1]]
+    : microSequenceGalleryCards.filter((entry) => entry.format === "png").length >= 2
+      ? [microSequenceGalleryCards.filter((entry) => entry.format === "png")[0], microSequenceGalleryCards.filter((entry) => entry.format === "png").at(-1)!]
+      : [];
   const showGenerateMicroSequenceCta = !motionPreviewReady
     || execution?.blockers.includes("micro-sequence-prerequisite")
     || microSequence?.status === "blocked";
@@ -312,6 +367,19 @@ export function PreviewGenerationClient() {
                   <option value="1">1 second</option>
                   <option value="2">2 seconds</option>
                 </select>
+              </label>
+
+              <label className="flex items-start gap-3 rounded-[1.25rem] border border-ink/10 bg-white/80 p-4 md:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={form.package_gif_preview}
+                  onChange={(event) => updateField("package_gif_preview", event.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border border-ink/10"
+                />
+                <div>
+                  <FieldLabel>Optional GIF Packaging</FieldLabel>
+                  <p className="mt-2 text-sm leading-7 body-muted">Package a browser-friendly governed GIF inside the same sandbox directory for bounded continuity and motion inspection.</p>
+                </div>
               </label>
 
               <label className="flex items-start gap-3 rounded-[1.25rem] border border-coral/20 bg-white/80 p-4 md:col-span-2">
@@ -438,12 +506,25 @@ export function PreviewGenerationClient() {
           <article className="glass-card rounded-[2rem] p-6 shadow-float">
             <p className="section-label">Micro-Sequence Frames</p>
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
-              {latestMicroSequenceFrameReferences.length ? (
-                <ul className="space-y-2">
-                  {latestMicroSequenceFrameReferences.map((reference) => (
-                    <li key={reference} className="rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3">{reference}</li>
+              {microSequenceGalleryCards.length ? (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {microSequenceGalleryCards.map((card) => (
+                    <article key={card.id} className="overflow-hidden rounded-[1.25rem] border border-ink/10 bg-white/90 shadow-sm">
+                      <div className="aspect-square bg-mist/50">
+                        <Image src={card.assetUrl} alt={card.label} width={256} height={256} unoptimized className="h-full w-full object-contain" />
+                      </div>
+                      <div className="space-y-2 p-4">
+                        <p className="text-sm font-semibold text-ink">{card.label}</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate">{card.format} • {card.source}</p>
+                        <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
+                        <div className="flex flex-wrap gap-2">
+                          <a href={card.assetUrl} target="_blank" rel="noreferrer" className="rounded-full border border-ocean/20 bg-ocean px-3 py-1.5 text-xs font-semibold text-white">Open</a>
+                          <a href={`${card.assetUrl}&download=1`} className="rounded-full border border-ink/10 bg-white px-3 py-1.5 text-xs font-semibold text-ink">Download</a>
+                        </div>
+                      </div>
+                    </article>
                   ))}
-                </ul>
+                </div>
               ) : (
                 <p>{microSequence?.sandbox_path ? "No governed micro-sequence frame files were produced for the latest prerequisite run." : "No governed micro-sequence frames are available yet."}</p>
               )}
@@ -453,18 +534,56 @@ export function PreviewGenerationClient() {
           <article className="glass-card rounded-[2rem] p-6 shadow-float">
             <p className="section-label">Preview Outputs</p>
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
-              {execution?.generated_preview_references.length ? (
-                <ul className="space-y-2">
-                  {execution.generated_preview_references.map((reference) => (
-                    <li key={reference} className="rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-3">{reference}</li>
+              {previewGalleryCards.length ? (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {previewGalleryCards.map((card) => (
+                    <article key={card.id} className="overflow-hidden rounded-[1.25rem] border border-ink/10 bg-white/90 shadow-sm">
+                      <div className="aspect-square bg-mist/50">
+                        <Image src={card.assetUrl} alt={card.label} width={256} height={256} unoptimized className="h-full w-full object-contain" />
+                      </div>
+                      <div className="space-y-2 p-4">
+                        <p className="text-sm font-semibold text-ink">{card.label}</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate">{card.format} • {card.source}</p>
+                        <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
+                        <div className="flex flex-wrap gap-2">
+                          <a href={card.assetUrl} target="_blank" rel="noreferrer" className="rounded-full border border-ocean/20 bg-ocean px-3 py-1.5 text-xs font-semibold text-white">Open</a>
+                          <a href={`${card.assetUrl}&download=1`} className="rounded-full border border-ink/10 bg-white px-3 py-1.5 text-xs font-semibold text-ink">Download</a>
+                        </div>
+                      </div>
+                    </article>
                   ))}
-                </ul>
+                </div>
               ) : (
                 <p>No governed preview files are available yet.</p>
               )}
             </div>
           </article>
 
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <p className="section-label">Frame Comparison</p>
+            <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
+              {comparisonCards.length === 2 ? (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {comparisonCards.map((card) => (
+                    <article key={`compare-${card.id}`} className="overflow-hidden rounded-[1.25rem] border border-ink/10 bg-white/90 shadow-sm">
+                      <div className="aspect-square bg-mist/50">
+                        <Image src={card.assetUrl} alt={card.label} width={256} height={256} unoptimized className="h-full w-full object-contain" />
+                      </div>
+                      <div className="p-4">
+                        <p className="text-sm font-semibold text-ink">{card.label}</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate">{card.source}</p>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p>Generate at least two governed PNG frames to compare continuity side by side.</p>
+              )}
+            </div>
+          </article>
+        </section>
+
+        <section className="mt-6 grid gap-6 lg:grid-cols-1">
           <article className="glass-card rounded-[2rem] p-6 shadow-float">
             <p className="section-label">Blockers And Rollback</p>
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">

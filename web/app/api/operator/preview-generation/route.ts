@@ -36,6 +36,7 @@ function normalizeGenerateInput(value: unknown): GovernedPreviewFormInput | null
     resolution: typeof candidate.resolution === "string" ? candidate.resolution : "720p",
     continuity_priority: normalizeContinuityPriority(candidate.continuity_priority),
     governance_approval: candidate.governance_approval === true,
+    package_gif_preview: candidate.package_gif_preview !== false,
   };
 }
 

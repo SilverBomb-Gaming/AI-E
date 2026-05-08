@@ -1,6 +1,8 @@
 import { constants, existsSync, readFileSync } from "node:fs";
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { GifWriter } from "omggif";
+import { PNG } from "pngjs";
 
 import { resolveRepoRoot, resolveRepoRootSync } from "./repoContext";
 
@@ -10,6 +12,11 @@ const DEFAULT_CREATED_AT = "2026-05-07T00:00:00.000Z";
 const GOVERNED_LOW_RES_SANDBOX_DIR = path.join(".aie", "governed_low_res_frame_sandbox");
 const GOVERNED_MICRO_SEQUENCE_SANDBOX_DIR = path.join(".aie", "governed_micro_sequence_sandbox");
 const GOVERNED_MOTION_PREVIEW_SANDBOX_DIR = path.join(".aie", "governed_motion_preview_sandbox");
+const GOVERNED_PREVIEW_DISPLAY_WIDTH = 256;
+const GOVERNED_PREVIEW_DISPLAY_HEIGHT = 256;
+const GOVERNED_GIF_RED_LEVELS = [0, 85, 170, 255] as const;
+const GOVERNED_GIF_GREEN_LEVELS = [0, 36, 73, 109, 146, 182, 219, 255] as const;
+const GOVERNED_GIF_BLUE_LEVELS = [0, 36, 73, 109, 146, 182, 219, 255] as const;
 
 export type CostTier = "low" | "medium" | "high";
 
@@ -1676,6 +1683,7 @@ export type CinematicGovernedMicroSequenceSandbox = {
   output_root: string;
   sequence_directory: string;
   output_file_paths: string[];
+  gif_preview_path?: string | null;
   output_retention_policy: string;
   maximum_resolution: CinematicVideoResolution;
   maximum_frame_count: number;
@@ -1806,6 +1814,7 @@ export type CinematicGovernedMotionPreviewSandbox = {
   output_root: string;
   clip_directory: string;
   output_file_paths: string[];
+  gif_preview_path?: string | null;
   manifest_file_path: string | null;
   output_retention_policy: string;
   maximum_resolution: CinematicVideoResolution;
@@ -7359,10 +7368,131 @@ function buildDeterministicContinuityPreviewFrame(input: {
   return `${rows.join("\n")}\n`;
 }
 
+type PortablePixmap = {
+  width: number;
+  height: number;
+  rgba: Buffer;
+};
+
+function parsePortablePixmap(content: string): PortablePixmap {
+  const sanitized = content.replace(/#[^\r\n]*/g, " ");
+  const tokens = sanitized.trim().split(/\s+/);
+  if (tokens[0] !== "P3") {
+    throw new Error("Governed preview conversion only supports ASCII PPM (P3) artifacts.");
+  }
+
+  const width = Number(tokens[1] ?? Number.NaN);
+  const height = Number(tokens[2] ?? Number.NaN);
+  const maxValue = Number(tokens[3] ?? Number.NaN);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0 || maxValue !== 255) {
+    throw new Error("Governed preview conversion encountered invalid PPM dimensions or max value.");
+  }
+
+  const rgba = Buffer.alloc(width * height * 4);
+  let sourceIndex = 4;
+  for (let pixelIndex = 0; pixelIndex < width * height; pixelIndex += 1) {
+    const red = Number(tokens[sourceIndex++] ?? Number.NaN);
+    const green = Number(tokens[sourceIndex++] ?? Number.NaN);
+    const blue = Number(tokens[sourceIndex++] ?? Number.NaN);
+    if (![red, green, blue].every((entry) => Number.isInteger(entry) && entry >= 0 && entry <= 255)) {
+      throw new Error("Governed preview conversion encountered invalid PPM pixel data.");
+    }
+    const targetIndex = pixelIndex * 4;
+    rgba[targetIndex] = red;
+    rgba[targetIndex + 1] = green;
+    rgba[targetIndex + 2] = blue;
+    rgba[targetIndex + 3] = 255;
+  }
+
+  return { width, height, rgba };
+}
+
+function buildPngBufferFromPortablePixmap(image: PortablePixmap): Buffer {
+  const png = new PNG({ width: image.width, height: image.height });
+  image.rgba.copy(png.data);
+  return PNG.sync.write(png);
+}
+
+function quantizeGifComponent(value: number): number {
+  const quantizedIndex = Math.max(0, Math.min(GOVERNED_GIF_GREEN_LEVELS.length - 1, Math.round((value / 255) * (GOVERNED_GIF_GREEN_LEVELS.length - 1))));
+  return quantizedIndex;
+}
+
+function buildGovernedGifPalette(): number[] {
+  const palette: number[] = [];
+  for (const red of GOVERNED_GIF_RED_LEVELS) {
+    for (const green of GOVERNED_GIF_GREEN_LEVELS) {
+      for (const blue of GOVERNED_GIF_BLUE_LEVELS) {
+        palette.push((red << 16) | (green << 8) | blue);
+      }
+    }
+  }
+  return palette;
+}
+
+function buildGifBufferFromPortablePixmaps(input: {
+  frames: PortablePixmap[];
+  frameDelayCentiseconds: number;
+}): Buffer {
+  const firstFrame = input.frames[0];
+  if (!firstFrame) {
+    throw new Error("Governed GIF packaging requires at least one frame.");
+  }
+
+  const palette = buildGovernedGifPalette();
+  const estimatedSize = input.frames.reduce((total, frame) => total + frame.width * frame.height * 2, 4096);
+  const buffer = Buffer.alloc(estimatedSize);
+  const writer = new GifWriter(buffer, firstFrame.width, firstFrame.height, { loop: 0 });
+  for (const frame of input.frames) {
+    if (frame.width !== firstFrame.width || frame.height !== firstFrame.height) {
+      throw new Error("Governed GIF packaging requires all frames to share the same dimensions.");
+    }
+
+    const indexedPixels = new Uint8Array(frame.width * frame.height);
+    for (let pixelIndex = 0; pixelIndex < indexedPixels.length; pixelIndex += 1) {
+      const rgbaIndex = pixelIndex * 4;
+      const redIndex = Math.max(0, Math.min(GOVERNED_GIF_RED_LEVELS.length - 1, Math.round((frame.rgba[rgbaIndex] / 255) * (GOVERNED_GIF_RED_LEVELS.length - 1))));
+      const greenIndex = quantizeGifComponent(frame.rgba[rgbaIndex + 1]);
+      const blueIndex = quantizeGifComponent(frame.rgba[rgbaIndex + 2]);
+      indexedPixels[pixelIndex] = redIndex * 64 + greenIndex * 8 + blueIndex;
+    }
+
+    writer.addFrame(0, 0, frame.width, frame.height, indexedPixels, {
+      delay: input.frameDelayCentiseconds,
+      palette,
+    });
+  }
+
+  return buffer.subarray(0, writer.end());
+}
+
+async function writeGovernedBrowserPreviewArtifacts(input: {
+  absoluteDirectory: string;
+  relativeToRoot: (targetPath: string) => string;
+  ppmBaseName: string;
+  ppmContent: string;
+}): Promise<{
+  ppmPath: string;
+  pngPath: string;
+  image: PortablePixmap;
+}> {
+  const ppmPath = path.join(input.absoluteDirectory, `${input.ppmBaseName}.ppm`);
+  await writeFile(ppmPath, input.ppmContent, "utf8");
+  const image = parsePortablePixmap(input.ppmContent);
+  const pngPath = path.join(input.absoluteDirectory, `${input.ppmBaseName}.png`);
+  await writeFile(pngPath, buildPngBufferFromPortablePixmap(image));
+  return {
+    ppmPath: input.relativeToRoot(ppmPath),
+    pngPath: input.relativeToRoot(pngPath),
+    image,
+  };
+}
+
 async function executeGovernedMicroSequenceSandbox(input: {
   root: string;
   sequenceContainment: CinematicContinuitySequenceContainmentRegistryEntry[];
   continuityValidation: CinematicFrameToFrameContinuityValidation;
+  packageGifPreview?: boolean;
 }): Promise<CinematicGovernedMicroSequenceSandbox> {
   const containment = input.sequenceContainment[0] ?? null;
   const outputRoot = path.join(input.root, GOVERNED_MICRO_SEQUENCE_SANDBOX_DIR);
@@ -7382,12 +7512,33 @@ async function executeGovernedMicroSequenceSandbox(input: {
   const outputFilePaths: string[] = [];
   const frameCount = containment?.maximum_frame_count ?? 0;
   const realSequenceWritten = input.continuityValidation.valid;
+  let gifPreviewPath: string | null = null;
   if (realSequenceWritten) {
+    const gifFrames: PortablePixmap[] = [];
+    const toRelativePath = (targetPath: string) => path.relative(input.root, targetPath).replace(/\\/g, "/");
     for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-      const fileName = `governed_preview_sequence_frame_${String(frameIndex + 1).padStart(3, "0")}.ppm`;
-      const filePath = path.join(absoluteSequenceDirectory, fileName);
-      await writeFile(filePath, buildDeterministicContinuityPreviewFrame({ frameIndex, width: 16, height: 16 }), "utf8");
-      outputFilePaths.push(path.relative(input.root, filePath).replace(/\\/g, "/"));
+      const artifacts = await writeGovernedBrowserPreviewArtifacts({
+        absoluteDirectory: absoluteSequenceDirectory,
+        relativeToRoot: toRelativePath,
+        ppmBaseName: `governed_preview_sequence_frame_${String(frameIndex + 1).padStart(3, "0")}`,
+        ppmContent: buildDeterministicContinuityPreviewFrame({
+          frameIndex,
+          width: GOVERNED_PREVIEW_DISPLAY_WIDTH,
+          height: GOVERNED_PREVIEW_DISPLAY_HEIGHT,
+        }),
+      });
+      outputFilePaths.push(artifacts.ppmPath, artifacts.pngPath);
+      gifFrames.push(artifacts.image);
+    }
+
+    if ((input.packageGifPreview ?? true) && gifFrames.length > 1) {
+      const absoluteGifPath = path.join(absoluteSequenceDirectory, "governed_preview_sequence_preview.gif");
+      await writeFile(absoluteGifPath, buildGifBufferFromPortablePixmaps({
+        frames: gifFrames,
+        frameDelayCentiseconds: 50,
+      }));
+      gifPreviewPath = toRelativePath(absoluteGifPath);
+      outputFilePaths.push(gifPreviewPath);
     }
   }
   return {
@@ -7397,6 +7548,7 @@ async function executeGovernedMicroSequenceSandbox(input: {
     output_root: GOVERNED_MICRO_SEQUENCE_SANDBOX_DIR.replace(/\\/g, "/"),
     sequence_directory: path.relative(input.root, absoluteSequenceDirectory).replace(/\\/g, "/"),
     output_file_paths: outputFilePaths,
+    gif_preview_path: gifPreviewPath,
     output_retention_policy: "retain_latest_micro_sequence_only",
     maximum_resolution: "720p",
     maximum_frame_count: containment?.maximum_frame_count ?? 0,
@@ -7405,7 +7557,7 @@ async function executeGovernedMicroSequenceSandbox(input: {
     rollback_enabled: true,
     continuity_anchor: containment?.continuity_anchor_policy ?? "none",
     real_sequence_written: realSequenceWritten,
-    sequence_frame_count: realSequenceWritten ? outputFilePaths.length : 0,
+    sequence_frame_count: realSequenceWritten ? frameCount : 0,
     deleted_output_targets: deletedOutputTargets,
   };
 }
@@ -7683,6 +7835,7 @@ async function executeGovernedMotionPreviewSandbox(input: {
   root: string;
   motionPreviewContainment: CinematicMotionPreviewContainmentRegistryEntry[];
   temporalTransitionValidation: CinematicTemporalTransitionValidation;
+  packageGifPreview?: boolean;
 }): Promise<CinematicGovernedMotionPreviewSandbox> {
   const containment = input.motionPreviewContainment[0] ?? null;
   const outputRoot = path.join(input.root, GOVERNED_MOTION_PREVIEW_SANDBOX_DIR);
@@ -7703,19 +7856,44 @@ async function executeGovernedMotionPreviewSandbox(input: {
   let manifestFilePath: string | null = null;
   const frameCount = containment?.maximum_frame_count ?? 0;
   const previewClipWritten = input.temporalTransitionValidation.valid;
+  let gifPreviewPath: string | null = null;
   if (previewClipWritten) {
+    const gifFrames: PortablePixmap[] = [];
+    const toRelativePath = (targetPath: string) => path.relative(input.root, targetPath).replace(/\\/g, "/");
     for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
-      const fileName = `governed_motion_preview_frame_${String(frameIndex + 1).padStart(3, "0")}.ppm`;
-      const filePath = path.join(absoluteClipDirectory, fileName);
-      await writeFile(filePath, buildDeterministicMotionPreviewFrame({ frameIndex, width: 16, height: 16 }), "utf8");
-      outputFilePaths.push(path.relative(input.root, filePath).replace(/\\/g, "/"));
+      const artifacts = await writeGovernedBrowserPreviewArtifacts({
+        absoluteDirectory: absoluteClipDirectory,
+        relativeToRoot: toRelativePath,
+        ppmBaseName: `governed_motion_preview_frame_${String(frameIndex + 1).padStart(3, "0")}`,
+        ppmContent: buildDeterministicMotionPreviewFrame({
+          frameIndex,
+          width: GOVERNED_PREVIEW_DISPLAY_WIDTH,
+          height: GOVERNED_PREVIEW_DISPLAY_HEIGHT,
+        }),
+      });
+      outputFilePaths.push(artifacts.ppmPath, artifacts.pngPath);
+      gifFrames.push(artifacts.image);
+    }
+
+    if ((input.packageGifPreview ?? true) && gifFrames.length > 1) {
+      const absoluteGifPath = path.join(absoluteClipDirectory, "governed_motion_preview.gif");
+      await writeFile(absoluteGifPath, buildGifBufferFromPortablePixmaps({
+        frames: gifFrames,
+        frameDelayCentiseconds: Math.max(1, Math.round(100 / Math.max(1, containment?.allowed_frame_rate ?? 2))),
+      }));
+      gifPreviewPath = toRelativePath(absoluteGifPath);
+      outputFilePaths.push(gifPreviewPath);
     }
     const manifestPath = path.join(absoluteClipDirectory, "governed_motion_preview_manifest.json");
     await writeFile(manifestPath, JSON.stringify({
       clip_id: containment?.clip_id ?? null,
       frame_rate: containment?.allowed_frame_rate ?? 0,
       duration_seconds: containment?.maximum_duration_seconds ?? 0,
-      frame_count: outputFilePaths.length,
+      frame_count: frameCount,
+      display_frame_width: GOVERNED_PREVIEW_DISPLAY_WIDTH,
+      display_frame_height: GOVERNED_PREVIEW_DISPLAY_HEIGHT,
+      gif_preview_path: gifPreviewPath,
+      browser_preview_paths: outputFilePaths.filter((entry) => entry.endsWith(".png") || entry.endsWith(".gif")),
       manual_approval_required: true,
     }, null, 2), "utf8");
     manifestFilePath = path.relative(input.root, manifestPath).replace(/\\/g, "/");
@@ -7727,6 +7905,7 @@ async function executeGovernedMotionPreviewSandbox(input: {
     output_root: GOVERNED_MOTION_PREVIEW_SANDBOX_DIR.replace(/\\/g, "/"),
     clip_directory: path.relative(input.root, absoluteClipDirectory).replace(/\\/g, "/"),
     output_file_paths: outputFilePaths,
+    gif_preview_path: gifPreviewPath,
     manifest_file_path: manifestFilePath,
     output_retention_policy: "retain_latest_preview_clip_only",
     maximum_resolution: containment?.maximum_resolution ?? "720p",
@@ -7738,7 +7917,7 @@ async function executeGovernedMotionPreviewSandbox(input: {
     rollback_enabled: true,
     continuity_anchor: containment?.continuity_anchor_policy ?? "none",
     preview_clip_written: previewClipWritten,
-    clip_frame_count: previewClipWritten ? outputFilePaths.length : 0,
+    clip_frame_count: previewClipWritten ? frameCount : 0,
     deleted_output_targets: deletedOutputTargets,
   };
 }
@@ -9251,6 +9430,7 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
   desiredResolution?: CinematicVideoResolution;
   desiredDurationSeconds?: number;
   continuityPriority?: "low" | "medium" | "high";
+  packageGifPreview?: boolean;
 }): Promise<CinematicControlledLocalInferenceBootstrapValidation> {
   const initialization = await loadProductionMemory(input?.root);
   const record = initialization.record;
@@ -9497,6 +9677,7 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     root: initialization.repoRoot,
     sequenceContainment: continuitySequenceContainment,
     continuityValidation: frameToFrameContinuityValidation,
+    packageGifPreview: input?.packageGifPreview,
   });
   const continuityPreviewSequencing = buildContinuityPreviewSequencingPath({
     sequenceContainment: continuitySequenceContainment,
@@ -9526,6 +9707,7 @@ export async function validateCinematicControlledLocalInferenceBootstrap(input?:
     root: initialization.repoRoot,
     motionPreviewContainment,
     temporalTransitionValidation,
+    packageGifPreview: input?.packageGifPreview,
   });
   const motionPreviewSequencing = buildMotionPreviewSequencingPath({
     motionPreviewContainment,
@@ -9698,6 +9880,7 @@ export async function simulateCinematicControlledLocalInferenceBootstrap(input?:
   desiredResolution?: CinematicVideoResolution;
   desiredDurationSeconds?: number;
   continuityPriority?: "low" | "medium" | "high";
+  packageGifPreview?: boolean;
 }): Promise<CinematicControlledLocalInferenceBootstrapResult> {
   const validation = await validateCinematicControlledLocalInferenceBootstrap(input);
   const record = await readCinematicProductionMemory({ root: input?.root });
