@@ -6985,6 +6985,32 @@ function buildOutputContainmentValidation(input: {
   };
 }
 
+function buildGovernedMicroSequenceOutputContainmentState(input: {
+  outputContainmentValidation: CinematicOutputContainmentValidation;
+}): {
+  passed: boolean;
+  blockers: string[];
+} {
+  const continuitySafeChecks = input.outputContainmentValidation.checks.filter((entry) => entry.check !== "frame-count-restrictions" && entry.check !== "runtime-integrity-sufficiency");
+  return {
+    passed: continuitySafeChecks.every((entry) => entry.passed),
+    blockers: continuitySafeChecks.filter((entry) => !entry.passed).map((entry) => entry.check),
+  };
+}
+
+function buildGovernedMicroSequenceRuntimeReadiness(input: {
+  governedSandbox: CinematicGovernedLowResolutionSandbox;
+}): {
+  passed: boolean;
+  blockers: string[];
+} {
+  const sandboxReady = normalizeText(input.governedSandbox.output_root).length > 0 && input.governedSandbox.rollback_enabled;
+  return {
+    passed: sandboxReady,
+    blockers: sandboxReady ? [] : ["Governed deterministic micro-sequence sandbox readiness is unavailable."],
+  };
+}
+
 function buildDeterministicGovernedPreviewFrame(): string {
   const width = 16;
   const height = 16;
@@ -7248,6 +7274,12 @@ function buildFrameToFrameContinuityValidation(input: {
   const containment = input.sequenceContainment[0] ?? null;
   const frameCount = containment?.maximum_frame_count ?? 0;
   const driftThreshold = containment?.escalation_threshold ?? 0;
+  const continuitySafeOutputContainment = buildGovernedMicroSequenceOutputContainmentState({
+    outputContainmentValidation: input.outputContainmentValidation,
+  });
+  const microSequenceRuntimeReadiness = buildGovernedMicroSequenceRuntimeReadiness({
+    governedSandbox: input.governedSandbox,
+  });
   const checks: CinematicFrameToFrameContinuityValidationCheck[] = [
     {
       check: "continuity-anchor-integrity",
@@ -7263,9 +7295,9 @@ function buildFrameToFrameContinuityValidation(input: {
     },
     {
       check: "output-containment-restrictions",
-      passed: input.outputContainmentValidation.valid,
+      passed: continuitySafeOutputContainment.passed,
       detail: "Micro-sequence output must inherit the bounded real-output containment checks.",
-      blockers: input.outputContainmentValidation.blocked_transitions,
+      blockers: continuitySafeOutputContainment.blockers,
     },
     {
       check: "rollback-availability",
@@ -7275,9 +7307,9 @@ function buildFrameToFrameContinuityValidation(input: {
     },
     {
       check: "runtime-integrity-sufficiency",
-      passed: input.bootstrap.valid,
-      detail: "The micro-sequence sandbox requires a valid bootstrap before bounded sequencing begins.",
-      blockers: input.bootstrap.valid ? [] : input.bootstrap.activation_blockers,
+      passed: microSequenceRuntimeReadiness.passed,
+      detail: "The micro-sequence sandbox requires governed sandbox writeability and rollback coverage before deterministic sequencing begins.",
+      blockers: microSequenceRuntimeReadiness.blockers,
     },
     {
       check: "forbidden-state-enforcement",

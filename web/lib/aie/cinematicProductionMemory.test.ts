@@ -951,3 +951,54 @@ test("controlled local inference bootstrap persists execution boundaries while k
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+test("controlled local inference bootstrap still writes governed micro-sequence frames when later runtime packaging checks stay blocked", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-governed-micro-sequence-readiness-"));
+
+  try {
+    await ensureCinematicProductionMemoryInitialized(tempRoot);
+    await mkdir(path.join(tempRoot, ".venv", "Scripts"), { recursive: true });
+    await mkdir(path.join(tempRoot, "ComfyUI"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "wan-2.1-t2v-q8"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "ltx-video-img2vid-int8"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "hunyuan-video-13b-planned"), { recursive: true });
+    await mkdir(path.join(tempRoot, ".aie"), { recursive: true });
+    await writeFile(path.join(tempRoot, ".venv", "Scripts", "python.exe"), "", "utf8");
+    await writeFile(path.join(tempRoot, "ComfyUI", "main.py"), "", "utf8");
+    await writeFile(path.join(tempRoot, "requirements.txt"), "torch\ndiffusers\n", "utf8");
+
+    await inspectCinematicLocalRuntimeEnvironment({
+      root: tempRoot,
+      persist: true,
+      pathHints: {
+        python_paths: [".venv/Scripts/python.exe"],
+        inference_runtime_paths: ["ComfyUI"],
+        local_model_paths: ["models"],
+      },
+    });
+
+    const simulation = await simulateCinematicControlledLocalInferenceBootstrap({
+      root: tempRoot,
+      desiredResolution: "720p",
+      desiredDurationSeconds: 2,
+      continuityPriority: "medium",
+    });
+
+    assert.equal(simulation.validation.dry_runtime_bootstrap.valid, false);
+    assert.ok(simulation.validation.dry_runtime_bootstrap.activation_blockers.some((entry) => /ffmpeg visibility is still missing/i.test(entry)));
+    assert.equal(simulation.validation.output_containment_validation.valid, false);
+    assert.ok(simulation.validation.output_containment_validation.blocked_transitions.includes("runtime-integrity-sufficiency"));
+    assert.equal(simulation.validation.runtime_integrity_validation.valid, false);
+    assert.equal(simulation.validation.frame_to_frame_continuity_validation.valid, true);
+    assert.equal(simulation.validation.governed_low_resolution_sandbox.real_output_written, false);
+    assert.equal(simulation.validation.governed_micro_sequence_sandbox.real_sequence_written, true);
+    assert.equal(simulation.validation.governed_micro_sequence_sandbox.sequence_frame_count, 3);
+
+    const microSequenceDir = path.join(tempRoot, ".aie", "governed_micro_sequence_sandbox", "sequence-governed-micro-preview-001");
+    const microSequenceFiles = await readdir(microSequenceDir);
+    assert.equal(microSequenceFiles.filter((entry) => entry.endsWith(".ppm")).length, 3);
+    assert.match(await readFile(path.join(microSequenceDir, "governed_preview_sequence_frame_001.ppm"), "utf8"), /^P3/m);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
