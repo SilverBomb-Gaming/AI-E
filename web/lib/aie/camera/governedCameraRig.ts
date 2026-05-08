@@ -38,6 +38,11 @@ export type GovernedCameraRigFrameInput = {
   entityX?: number;
   entityY?: number;
   entityRadius?: number;
+  focusX?: number;
+  focusY?: number;
+  focusRadius?: number;
+  revealPreference?: number;
+  compositionPriority?: number;
   chamberCenterX?: number;
   chamberCenterY?: number;
   previousSnapshot?: GovernedCameraSnapshot | null;
@@ -117,16 +122,18 @@ export function computeGovernedCameraRigFrame(input: GovernedCameraRigFrameInput
   const previousTarget = previousState?.target ?? { x: 0, y: 0, z: 0 };
 
   const weightedTargetX = (
-    input.anchorX * 0.44
-    + input.beaconX * 0.18
-    + (input.entityX ?? input.anchorX) * 0.24
-    + (input.chamberCenterX ?? input.width * 0.5) * 0.14
+    input.anchorX * 0.34
+    + input.beaconX * (0.16 + (input.revealPreference ?? 0.5) * 0.08)
+    + (input.entityX ?? input.anchorX) * 0.18
+    + (input.focusX ?? input.entityX ?? input.anchorX) * 0.2
+    + (input.chamberCenterX ?? input.width * 0.5) * (0.12 + (input.compositionPriority ?? 0.7) * 0.04)
   ) / input.width;
   const weightedTargetY = (
-    input.anchorY * 0.42
-    + input.beaconY * 0.14
-    + (input.entityY ?? input.anchorY) * 0.28
-    + (input.chamberCenterY ?? input.height * 0.56) * 0.16
+    input.anchorY * 0.34
+    + input.beaconY * (0.13 + (input.revealPreference ?? 0.5) * 0.07)
+    + (input.entityY ?? input.anchorY) * 0.2
+    + (input.focusY ?? input.entityY ?? input.anchorY) * 0.18
+    + (input.chamberCenterY ?? input.height * 0.56) * (0.15 + (input.compositionPriority ?? 0.7) * 0.03)
   ) / input.height;
   const desiredTarget: Vec3 = {
     x: weightedTargetX - 0.5,

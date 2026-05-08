@@ -16,6 +16,14 @@ import {
   type MultiEntitySceneSnapshot,
 } from "./entities/governedArticulatedEntity";
 import { resolveRepoRoot, resolveRepoRootSync } from "./repoContext";
+import {
+  buildDeterministicEventBeat,
+} from "./staging/eventBeatModel";
+import { summarizeCinematicStagingDiagnostics } from "./staging/stagingDiagnostics";
+import {
+  computeCinematicStagingFrame,
+} from "./staging/stagingPrioritySolver";
+import type { CinematicBeatType, CinematicStagingSnapshot, StagingFocusSubject } from "./staging/cinematicStagingState";
 
 const SECOND_BRAIN_DIR = path.join("data", "second_brain");
 const PRODUCTION_MEMORY_FILE = "production_memory.json";
@@ -1739,7 +1747,12 @@ export type CinematicGovernedPreviewQualityIndicatorId =
   | "entity-separation"
   | "formation-stability"
   | "multi-entity-silhouette"
-  | "group-spatial-persistence";
+  | "group-spatial-persistence"
+  | "staging-emphasis"
+  | "beat-readability"
+  | "focus-persistence"
+  | "event-focus-alignment"
+  | "staging-camera-compatibility";
 
 export type CinematicGovernedPreviewQualityIndicator = {
   id: CinematicGovernedPreviewQualityIndicatorId;
@@ -1755,11 +1768,15 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   active_shot_type?: ShotType;
   active_entity_type?: "SEGMENTED_DRONE";
   active_formation_type?: FormationType;
+  active_beat_type?: CinematicBeatType;
   anchor_x: number;
   anchor_y: number;
   beacon_x: number;
   beacon_y: number;
   platform_y: number;
+  beat_phase?: number;
+  focus_subject?: StagingFocusSubject;
+  staging_intensity?: number;
   entity_count?: number;
   entity_ids?: string[];
   joint_count?: number;
@@ -1776,6 +1793,12 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   choreography_continuity_score?: number;
   group_spatial_persistence_score?: number;
   rejected_formation_transition_count?: number;
+  emphasis_score?: number;
+  beat_readability_score?: number;
+  focus_persistence_score?: number;
+  event_focus_alignment_score?: number;
+  staging_camera_compatibility_score?: number;
+  rejected_staging_transition_count?: number;
   orbital_radius?: number;
   framing_score?: number;
   visibility_score?: number;
@@ -1790,6 +1813,7 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   rollback_restored_state?: boolean;
   rollback_restored_pose?: boolean;
   rollback_restored_formation?: boolean;
+  rollback_restored_staging?: boolean;
   cube_to_beacon_distance: number;
   spacing_drift: number;
   beacon_influence_strength: number;
@@ -1816,6 +1840,7 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   camera_state_overlay?: string;
   articulated_entity_overlay?: string;
   multi_entity_overlay?: string;
+  cinematic_staging_overlay?: string;
   rotation_degrees: number;
   camera_center_offset_x: number;
   camera_center_offset_y: number;
@@ -1853,8 +1878,13 @@ export type CinematicGovernedPreviewDiagnostics = {
   pose_governance_summary?: string;
   multi_entity_choreography_summary?: string;
   spacing_governance_summary?: string;
+  cinematic_staging_summary?: string;
   active_entity_type?: "SEGMENTED_DRONE";
   active_formation_type?: FormationType;
+  active_beat_type?: CinematicBeatType;
+  beat_phase?: number;
+  focus_subject?: StagingFocusSubject;
+  staging_intensity?: number;
   entity_count?: number;
   entity_ids?: string[];
   joint_count?: number;
@@ -1872,6 +1902,16 @@ export type CinematicGovernedPreviewDiagnostics = {
   group_spatial_persistence_score?: number;
   rollback_restored_formation?: boolean;
   rejected_formation_transition_count?: number;
+  emphasis_score?: number;
+  beat_readability_score?: number;
+  focus_persistence_score?: number;
+  event_focus_alignment_score?: number;
+  staging_camera_compatibility_score?: number;
+  rollback_restored_staging?: boolean;
+  rejected_staging_transition_count?: number;
+  reaction_continuity_score?: number;
+  event_causality_score?: number;
+  camera_event_framing_score?: number;
   rollback_integrity_status?: "PASS" | "WATCH";
   frame_coherence_score: number;
   motion_smoothness_score: number;
@@ -7591,6 +7631,7 @@ type GovernedRenderedFrame = {
   diagnostic: CinematicGovernedPreviewFrameDiagnostic;
   cameraSnapshot: GovernedCameraSnapshot;
   multiEntitySnapshot: MultiEntitySceneSnapshot;
+  stagingSnapshot: CinematicStagingSnapshot;
 };
 
 type GovernedRgbBuffer = {
@@ -7910,6 +7951,30 @@ function summarizeGovernedPreviewDiagnostics(input: {
     rejectedFormationTransitionCount: entry.rejected_formation_transition_count ?? 0,
     overlay: entry.multi_entity_overlay ?? "",
   })));
+  const stagingDiagnostics = input.frameDiagnostics.filter((entry) => entry.active_beat_type && typeof entry.staging_intensity === "number");
+  const stagingSummary = summarizeCinematicStagingDiagnostics(stagingDiagnostics.map((entry) => ({
+    activeBeatType: entry.active_beat_type ?? "BASELINE",
+    beatPhase: entry.beat_phase ?? 0,
+    focusSubject: entry.focus_subject ?? "CUBE",
+    stagingIntensity: entry.staging_intensity ?? 0,
+    emphasisScore: entry.emphasis_score ?? 0,
+    beatReadabilityScore: entry.beat_readability_score ?? 0,
+    focusPersistenceScore: entry.focus_persistence_score ?? 0,
+    eventFocusAlignmentScore: entry.event_focus_alignment_score ?? 0,
+    stagingCameraCompatibilityScore: entry.staging_camera_compatibility_score ?? 0,
+    rollbackRestoredStaging: entry.rollback_restored_staging ?? false,
+    rejectedStagingTransitionCount: entry.rejected_staging_transition_count ?? 0,
+    overlay: entry.cinematic_staging_overlay ?? "",
+  })));
+  const reactionContinuityScore = stagingDiagnostics.length > 0
+    ? averagePreviewScore(input.frameDiagnostics.map((entry) => Math.round(((entry.choreography_continuity_score ?? 0) + entry.interaction_persistence_score) / 2)))
+    : averagePreviewScore(input.frameDiagnostics.map((entry) => entry.interaction_persistence_score));
+  const eventCausalityScore = stagingDiagnostics.length > 0
+    ? averagePreviewScore(input.frameDiagnostics.map((entry) => Math.round(((entry.emphasis_score ?? 0) + (entry.event_focus_alignment_score ?? 0) + entry.environmental_response_score) / 3)))
+    : environmentalResponseScore;
+  const cameraEventFramingScore = stagingDiagnostics.length > 0
+    ? averagePreviewScore(input.frameDiagnostics.map((entry) => Math.round((((entry.staging_camera_compatibility_score ?? 0) + (entry.framing_score ?? entry.readability_score) + (entry.camera_continuity_score ?? entry.camera_stability_score)) / 3))))
+    : averagePreviewScore([cameraContinuityScore, framingPersistenceScore]);
   const continuityQualityIndicators = [
     buildGovernedPreviewIndicator({
       id: "object-fidelity",
@@ -8085,6 +8150,36 @@ function summarizeGovernedPreviewDiagnostics(input: {
       score: multiEntitySummary.groupSpatialPersistenceScore,
       summary: `Group center and spacing remain continuity-safe with ${multiEntitySummary.groupSpatialPersistenceScore}/100 spatial persistence.`,
     }),
+    buildGovernedPreviewIndicator({
+      id: "staging-emphasis",
+      label: "Staging Emphasis",
+      score: stagingSummary.emphasisScore,
+      summary: `Cinematic beat emphasis remains bounded at ${stagingSummary.emphasisScore}/100 while the reveal stays deterministic and review-safe.`,
+    }),
+    buildGovernedPreviewIndicator({
+      id: "beat-readability",
+      label: "Beat Readability",
+      score: stagingSummary.beatReadabilityScore,
+      summary: `The active beat reads at ${stagingSummary.beatReadabilityScore}/100 without collapsing beacon, drone group, and chamber composition into one noisy event cluster.`,
+    }),
+    buildGovernedPreviewIndicator({
+      id: "focus-persistence",
+      label: "Focus Persistence",
+      score: stagingSummary.focusPersistenceScore,
+      summary: `Bounded focus targeting holds ${stagingSummary.focusPersistenceScore}/100 persistence across the governed preview window.`,
+    }),
+    buildGovernedPreviewIndicator({
+      id: "event-focus-alignment",
+      label: "Event Focus Alignment",
+      score: stagingSummary.eventFocusAlignmentScore,
+      summary: `Beacon reveal and group emphasis stay aligned at ${stagingSummary.eventFocusAlignmentScore}/100 without direct camera control.`,
+    }),
+    buildGovernedPreviewIndicator({
+      id: "staging-camera-compatibility",
+      label: "Staging Camera Compatibility",
+      score: stagingSummary.stagingCameraCompatibilityScore,
+      summary: `Staging hints and authoritative camera framing stay compatible at ${stagingSummary.stagingCameraCompatibilityScore}/100.`,
+    }),
   ];
 
   return {
@@ -8111,8 +8206,13 @@ function summarizeGovernedPreviewDiagnostics(input: {
     pose_governance_summary: articulatedSummary.poseGovernanceSummary,
     multi_entity_choreography_summary: multiEntityDiagnostics.length > 0 ? multiEntitySummary.multiEntityChoreographySummary : undefined,
     spacing_governance_summary: multiEntityDiagnostics.length > 0 ? multiEntitySummary.spacingGovernanceSummary : undefined,
+    cinematic_staging_summary: stagingDiagnostics.length > 0 ? stagingSummary.cinematicStagingSummary : undefined,
     active_entity_type: articulatedDiagnostics.length > 0 ? "SEGMENTED_DRONE" : undefined,
     active_formation_type: multiEntityDiagnostics.length > 0 ? multiEntitySummary.activeFormationType : undefined,
+    active_beat_type: stagingDiagnostics.length > 0 ? stagingSummary.activeBeatType : undefined,
+    beat_phase: stagingDiagnostics.length > 0 ? stagingSummary.beatPhase : undefined,
+    focus_subject: stagingDiagnostics.length > 0 ? stagingSummary.focusSubject : undefined,
+    staging_intensity: stagingDiagnostics.length > 0 ? stagingSummary.stagingIntensity : undefined,
     entity_count: multiEntityDiagnostics.length > 0 ? multiEntitySummary.entityCount : undefined,
     entity_ids: multiEntityDiagnostics.length > 0 ? (multiEntityDiagnostics[multiEntityDiagnostics.length - 1]?.entity_ids ?? []) : undefined,
     joint_count: articulatedDiagnostics[0]?.joint_count,
@@ -8130,7 +8230,19 @@ function summarizeGovernedPreviewDiagnostics(input: {
     group_spatial_persistence_score: multiEntityDiagnostics.length > 0 ? multiEntitySummary.groupSpatialPersistenceScore : undefined,
     rollback_restored_formation: multiEntityDiagnostics.length > 0 ? multiEntitySummary.rollbackRestoredFormation : undefined,
     rejected_formation_transition_count: multiEntityDiagnostics.length > 0 ? multiEntitySummary.rejectedFormationTransitionCount : undefined,
-    rollback_integrity_status: multiEntityDiagnostics.length > 0 ? multiEntitySummary.rollbackIntegrityStatus : articulatedSummary.rollbackIntegrityStatus,
+    emphasis_score: stagingDiagnostics.length > 0 ? stagingSummary.emphasisScore : undefined,
+    beat_readability_score: stagingDiagnostics.length > 0 ? stagingSummary.beatReadabilityScore : undefined,
+    focus_persistence_score: stagingDiagnostics.length > 0 ? stagingSummary.focusPersistenceScore : undefined,
+    event_focus_alignment_score: stagingDiagnostics.length > 0 ? stagingSummary.eventFocusAlignmentScore : undefined,
+    staging_camera_compatibility_score: stagingDiagnostics.length > 0 ? stagingSummary.stagingCameraCompatibilityScore : undefined,
+    rollback_restored_staging: stagingDiagnostics.length > 0 ? stagingSummary.rollbackRestoredStaging : undefined,
+    rejected_staging_transition_count: stagingDiagnostics.length > 0 ? stagingSummary.rejectedStagingTransitionCount : undefined,
+    reaction_continuity_score: reactionContinuityScore,
+    event_causality_score: eventCausalityScore,
+    camera_event_framing_score: cameraEventFramingScore,
+    rollback_integrity_status: stagingDiagnostics.length > 0
+      ? (stagingSummary.rollbackIntegrityStatus === "PASS" && (multiEntityDiagnostics.length === 0 || multiEntitySummary.rollbackIntegrityStatus === "PASS") ? "PASS" : "WATCH")
+      : (multiEntityDiagnostics.length > 0 ? multiEntitySummary.rollbackIntegrityStatus : articulatedSummary.rollbackIntegrityStatus),
     frame_coherence_score: frameCoherenceScore,
     motion_smoothness_score: motionSmoothnessScore,
     environment_coherence_score: environmentCoherenceScore,
@@ -8178,6 +8290,7 @@ function renderGovernedPrimitiveScene(input: {
   mode: GovernedPrimitiveSceneMode;
   previousCameraSnapshot?: GovernedCameraSnapshot | null;
   previousMultiEntitySnapshot?: MultiEntitySceneSnapshot | null;
+  previousStagingSnapshot?: CinematicStagingSnapshot | null;
 }): GovernedRenderedFrame {
   const buffer = createRgbBuffer(input.width, input.height);
   fillRgbBuffer(buffer, 6, 9, 18);
@@ -8192,12 +8305,50 @@ function renderGovernedPrimitiveScene(input: {
   const baseBeaconCenterY = baseAnchorY + Math.sin(baseOrbitAngle) * baseOrbitRadius;
   const baseOverlapGap = Math.hypot(baseBeaconCenterX - baseAnchorX, baseBeaconCenterY - baseAnchorY) - (baseObjectSize / 2 + baseBeaconRadius);
   const basePlatformY = baseAnchorY + baseObjectSize * 0.64;
+  const stagingBeat = buildDeterministicEventBeat({
+    frameIndex: input.frameIndex,
+    totalFrames: input.totalFrames,
+    mode: input.mode,
+  });
+  const seedFormationPlan = buildGovernedFormationPlan({
+    frameIndex: input.frameIndex,
+    totalFrames: input.totalFrames,
+    mode: input.mode,
+    width: input.width,
+    height: input.height,
+    formationEmphasis: stagingBeat.formationEmphasis,
+    chamberCenterX: input.width * 0.5,
+    horizonY: input.height * 0.68,
+    platformY: basePlatformY,
+    cubeAnchorX: baseAnchorX,
+    cubeAnchorY: baseAnchorY,
+    beaconX: baseBeaconCenterX,
+    beaconY: baseBeaconCenterY,
+  });
+  const stagingFrame = computeCinematicStagingFrame({
+    frameIndex: input.frameIndex,
+    totalFrames: input.totalFrames,
+    mode: input.mode,
+    width: input.width,
+    height: input.height,
+    cubeAnchorX: baseAnchorX,
+    cubeAnchorY: baseAnchorY,
+    beaconX: baseBeaconCenterX,
+    beaconY: baseBeaconCenterY,
+    groupHint: seedFormationPlan.cameraHint,
+    cameraContinuityScore: input.previousCameraSnapshot?.cameraState.continuityScore ?? 100,
+    cameraFramingScore: input.previousCameraSnapshot?.framingState.framingScore ?? 100,
+    reactionContinuityScore: input.previousMultiEntitySnapshot?.diagnostics.choreographyContinuityScore ?? 100,
+    previousSnapshot: input.previousStagingSnapshot,
+    injectInvalidTransition: input.mode === "motion-preview" && input.frameIndex === 3,
+  });
   const formationPlan = buildGovernedFormationPlan({
     frameIndex: input.frameIndex,
     totalFrames: input.totalFrames,
     mode: input.mode,
     width: input.width,
     height: input.height,
+    formationEmphasis: stagingFrame.hint.formationEmphasis,
     chamberCenterX: input.width * 0.5,
     horizonY: input.height * 0.68,
     platformY: basePlatformY,
@@ -8224,6 +8375,11 @@ function renderGovernedPrimitiveScene(input: {
     entityX: formationPlan.cameraHint.groupCenterX,
     entityY: formationPlan.cameraHint.groupCenterY,
     entityRadius: formationPlan.cameraHint.groupRadius,
+    focusX: stagingFrame.hint.focusCenterX,
+    focusY: stagingFrame.hint.focusCenterY,
+    focusRadius: stagingFrame.hint.focusRadius,
+    revealPreference: stagingFrame.hint.revealPreference,
+    compositionPriority: stagingFrame.hint.compositionPriority,
     chamberCenterX: input.width * 0.5,
     chamberCenterY: input.height * 0.56,
     previousSnapshot: input.previousCameraSnapshot,
@@ -8232,7 +8388,7 @@ function renderGovernedPrimitiveScene(input: {
   const cameraDriftY = rigFrame.cameraState.position.y * input.height;
   const cameraYawDegrees = rigFrame.cameraState.orbitAngle * 8;
   const horizonY = input.height * 0.68 + cameraDriftY * 0.55;
-  const roomPulse = input.mode === "motion-preview" ? 1.12 : 0.92;
+  const roomPulse = (input.mode === "motion-preview" ? 1.02 : 0.86) + stagingFrame.hint.environmentEmphasis * 0.16;
   for (let y = 0; y < input.height; y += 1) {
     const verticalProgress = y / Math.max(1, input.height - 1);
     for (let x = 0; x < input.width; x += 1) {
@@ -8272,6 +8428,7 @@ function renderGovernedPrimitiveScene(input: {
     cameraCenterX: input.width * 0.5,
     cameraCenterY: input.height * 0.56,
     previousSnapshot: input.previousMultiEntitySnapshot,
+    formationEmphasis: stagingFrame.hint.formationEmphasis,
   });
   const articulatedSummary = summarizeArticulatedEntityDiagnostics(multiEntityScene.entitySnapshots.map((entry) => entry.diagnostics));
 
@@ -8356,7 +8513,7 @@ function renderGovernedPrimitiveScene(input: {
     });
   }
 
-  const fogDensity = input.mode === "motion-preview" ? 0.3 : 0.24;
+  const fogDensity = (input.mode === "motion-preview" ? 0.24 : 0.2) + stagingFrame.hint.environmentEmphasis * 0.08;
   drawFilledCircle(buffer, {
     centerX: chamberCenterX - input.width * 0.12,
     centerY: input.height * 0.44,
@@ -8440,8 +8597,8 @@ function renderGovernedPrimitiveScene(input: {
   const overlapGap = cubeToBeaconDistance - (halfSize + beaconRadius);
   const beaconHorizontalProximity = Math.max(0, 1 - Math.abs(beaconCenterX - anchorX) / (orbitRadius * 1.04));
   const beaconVerticalCoupling = Math.max(0, 1 - Math.abs((anchorY - beaconCenterY) - objectSize * 0.78) / (objectSize * 0.72));
-  const beaconInfluenceStrength = Math.min(0.94, Math.max(0.58, 0.46 + beaconHorizontalProximity * 0.28 + beaconVerticalCoupling * 0.24));
-  const reactiveLightRadius = orbitRadius * (input.mode === "motion-preview" ? 1.16 : 1.08);
+  const beaconInfluenceStrength = Math.min(0.98, Math.max(0.58, (0.46 + beaconHorizontalProximity * 0.28 + beaconVerticalCoupling * 0.24) * (0.94 + stagingFrame.hint.environmentEmphasis * 0.16)));
+  const reactiveLightRadius = orbitRadius * (input.mode === "motion-preview" ? 1.08 : 1.02) * (0.94 + stagingFrame.hint.environmentEmphasis * 0.22);
   const overlapAvoidanceScore = Math.max(86, Math.min(100, 100 - Math.round(Math.max(0, 6 - overlapGap) * 3.6)));
   const depthOrderingScore = Math.max(88, 100 - Math.round(Math.abs((anchorY - beaconCenterY) - objectSize * 0.8) * 0.25));
   const interactionStagingScore = Math.max(86, 100 - Math.round(spacingDrift * 2.4 + Math.abs(platformY - anchorY - objectSize * 0.64) * 4));
@@ -8695,11 +8852,15 @@ function renderGovernedPrimitiveScene(input: {
       active_shot_type: rigFrame.activeShotType,
       active_entity_type: multiEntityScene.entitySnapshots.length > 0 ? "SEGMENTED_DRONE" : undefined,
       active_formation_type: multiEntityScene.diagnostics.activeFormationType,
+      active_beat_type: stagingFrame.state.activeBeatType,
       anchor_x: Number(anchorX.toFixed(2)),
       anchor_y: Number(anchorY.toFixed(2)),
       beacon_x: Number(beaconCenterX.toFixed(2)),
       beacon_y: Number(beaconCenterY.toFixed(2)),
       platform_y: Number(platformY.toFixed(2)),
+      beat_phase: Number(stagingFrame.state.beatPhase.toFixed(2)),
+      focus_subject: stagingFrame.state.focusSubject,
+      staging_intensity: Number(stagingFrame.state.stagingIntensity.toFixed(2)),
       entity_count: multiEntityScene.diagnostics.entityCount,
       entity_ids: multiEntityScene.diagnostics.entityIds,
       joint_count: multiEntityScene.entitySnapshots.reduce((sum, entry) => sum + entry.diagnostics.jointCount, 0),
@@ -8716,6 +8877,12 @@ function renderGovernedPrimitiveScene(input: {
       choreography_continuity_score: multiEntityScene.diagnostics.choreographyContinuityScore,
       group_spatial_persistence_score: multiEntityScene.diagnostics.groupSpatialPersistenceScore,
       rejected_formation_transition_count: multiEntityScene.diagnostics.rejectedFormationTransitionCount,
+      emphasis_score: stagingFrame.diagnostics.emphasisScore,
+      beat_readability_score: stagingFrame.diagnostics.beatReadabilityScore,
+      focus_persistence_score: stagingFrame.diagnostics.focusPersistenceScore,
+      event_focus_alignment_score: stagingFrame.diagnostics.eventFocusAlignmentScore,
+      staging_camera_compatibility_score: stagingFrame.diagnostics.stagingCameraCompatibilityScore,
+      rejected_staging_transition_count: stagingFrame.diagnostics.rejectedStagingTransitionCount,
       orbital_radius: Number((rigFrame.orbitalParameters.radius * input.width).toFixed(2)),
       framing_score: rigFrame.framingState.framingScore,
       visibility_score: rigFrame.framingState.visibilityScore,
@@ -8730,6 +8897,7 @@ function renderGovernedPrimitiveScene(input: {
       rollback_restored_state: rigFrame.rollbackRestoredState,
       rollback_restored_pose: multiEntityScene.diagnostics.rollbackRestoredPose,
       rollback_restored_formation: multiEntityScene.diagnostics.rollbackRestoredFormation,
+      rollback_restored_staging: stagingFrame.diagnostics.rollbackRestoredStaging,
       cube_to_beacon_distance: Number(cubeToBeaconDistance.toFixed(2)),
       spacing_drift: Number(spacingDrift.toFixed(2)),
       beacon_influence_strength: Number(beaconInfluenceStrength.toFixed(2)),
@@ -8756,6 +8924,7 @@ function renderGovernedPrimitiveScene(input: {
       camera_state_overlay: `${rigFrame.activeShotType} • orbit ${(rigFrame.orbitalParameters.radius * input.width).toFixed(1)}px • continuity ${rigFrame.cameraContinuityScore}/100`,
       articulated_entity_overlay: `${multiEntityScene.diagnostics.overlay} • pose ${articulatedSummary.poseStabilityScore}/100`,
       multi_entity_overlay: multiEntityScene.diagnostics.overlay,
+      cinematic_staging_overlay: stagingFrame.diagnostics.overlay,
       rotation_degrees: Number(rotationDegrees.toFixed(2)),
       camera_center_offset_x: Number(cameraCenterOffsetX.toFixed(2)),
       camera_center_offset_y: Number(cameraCenterOffsetY.toFixed(2)),
@@ -8776,6 +8945,7 @@ function renderGovernedPrimitiveScene(input: {
     },
     cameraSnapshot: rigFrame.snapshot,
     multiEntitySnapshot: multiEntityScene.snapshot,
+    stagingSnapshot: stagingFrame.snapshot,
   };
 }
 
@@ -8883,6 +9053,7 @@ async function executeGovernedMicroSequenceSandbox(input: {
   const frameDiagnostics: CinematicGovernedPreviewFrameDiagnostic[] = [];
   let previousCameraSnapshot: GovernedCameraSnapshot | null = null;
   let previousMultiEntitySnapshot: MultiEntitySceneSnapshot | null = null;
+  let previousStagingSnapshot: CinematicStagingSnapshot | null = null;
   let gifPreviewPath: string | null = null;
   if (realSequenceWritten) {
     const gifFrames: PortablePixmap[] = [];
@@ -8896,6 +9067,7 @@ async function executeGovernedMicroSequenceSandbox(input: {
         mode: "micro-sequence",
         previousCameraSnapshot,
         previousMultiEntitySnapshot,
+        previousStagingSnapshot,
       });
       const artifacts = await writeGovernedBrowserPreviewArtifacts({
         absoluteDirectory: absoluteSequenceDirectory,
@@ -8908,6 +9080,7 @@ async function executeGovernedMicroSequenceSandbox(input: {
       frameDiagnostics.push(artifacts.diagnostic);
       previousCameraSnapshot = renderedFrame.cameraSnapshot;
       previousMultiEntitySnapshot = renderedFrame.multiEntitySnapshot;
+      previousStagingSnapshot = renderedFrame.stagingSnapshot;
     }
 
     if ((input.packageGifPreview ?? true) && gifFrames.length > 1) {
@@ -9242,6 +9415,7 @@ async function executeGovernedMotionPreviewSandbox(input: {
   const frameDiagnostics: CinematicGovernedPreviewFrameDiagnostic[] = [];
   let previousCameraSnapshot: GovernedCameraSnapshot | null = null;
   let previousMultiEntitySnapshot: MultiEntitySceneSnapshot | null = null;
+  let previousStagingSnapshot: CinematicStagingSnapshot | null = null;
   let gifPreviewPath: string | null = null;
   if (previewClipWritten) {
     const gifFrames: PortablePixmap[] = [];
@@ -9255,6 +9429,7 @@ async function executeGovernedMotionPreviewSandbox(input: {
         mode: "motion-preview",
         previousCameraSnapshot,
         previousMultiEntitySnapshot,
+        previousStagingSnapshot,
       });
       const artifacts = await writeGovernedBrowserPreviewArtifacts({
         absoluteDirectory: absoluteClipDirectory,
@@ -9267,6 +9442,7 @@ async function executeGovernedMotionPreviewSandbox(input: {
       frameDiagnostics.push(artifacts.diagnostic);
       previousCameraSnapshot = renderedFrame.cameraSnapshot;
       previousMultiEntitySnapshot = renderedFrame.multiEntitySnapshot;
+      previousStagingSnapshot = renderedFrame.stagingSnapshot;
     }
 
     if ((input.packageGifPreview ?? true) && gifFrames.length > 1) {

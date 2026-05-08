@@ -28,6 +28,7 @@ export type GovernedFormationControllerInput = {
   mode: "micro-sequence" | "motion-preview";
   width: number;
   height: number;
+  formationEmphasis?: number;
   chamberCenterX: number;
   horizonY: number;
   platformY: number;
@@ -78,7 +79,8 @@ export function buildGovernedFormationPlan(input: GovernedFormationControllerInp
   const cubeBeaconCenterX = (input.cubeAnchorX + input.beaconX) / 2;
   const cubeBeaconCenterY = (input.cubeAnchorY + input.beaconY) / 2;
   const choreographyPhase = input.frameIndex * 0.42;
-  const orbitRadiusX = input.width * 0.17;
+  const emphasis = input.formationEmphasis ?? 0;
+  const orbitRadiusX = input.width * (0.17 + emphasis * 0.08);
   const orbitRadiusY = input.height * 0.06;
 
   if (formationType === "DUAL_ORBIT") {
@@ -97,8 +99,8 @@ export function buildGovernedFormationPlan(input: GovernedFormationControllerInp
     return buildPlanFromPositions(
       formationType,
       [
-        { x: input.chamberCenterX - input.width * 0.2, y: input.horizonY - 34 },
-        { x: input.chamberCenterX + input.width * 0.2, y: input.horizonY - 34 },
+        { x: input.chamberCenterX - input.width * (0.2 + emphasis * 0.07), y: input.horizonY - 34 },
+        { x: input.chamberCenterX + input.width * (0.2 + emphasis * 0.07), y: input.horizonY - 34 },
       ],
       [0, Math.PI],
       [-4, 4],
@@ -107,11 +109,11 @@ export function buildGovernedFormationPlan(input: GovernedFormationControllerInp
   }
 
   if (formationType === "STAGGERED_PASS") {
-    const foregroundRight = { x: input.chamberCenterX + input.width * 0.24, y: input.horizonY - 26 };
+    const foregroundRight = { x: input.chamberCenterX + input.width * (0.24 + emphasis * 0.05), y: input.horizonY - 26 };
     const backgroundLeft = {
       x: input.frameIndex === 2 && input.mode === "motion-preview"
         ? input.chamberCenterX + input.width * 0.12
-        : input.chamberCenterX - input.width * 0.23,
+        : input.chamberCenterX - input.width * (0.23 + emphasis * 0.04),
       y: input.horizonY - 50,
     };
     return buildPlanFromPositions(formationType, [foregroundRight, backgroundLeft], [0, Math.PI], [5, -7], choreographyPhase);
@@ -120,9 +122,9 @@ export function buildGovernedFormationPlan(input: GovernedFormationControllerInp
   return buildPlanFromPositions(
     "BEACON_TRIANGULATION",
     [
-      { x: input.beaconX - input.width * 0.18, y: input.horizonY - 46 },
-      { x: input.beaconX + input.width * 0.18, y: input.horizonY - 46 },
-      { x: input.chamberCenterX, y: input.horizonY + 6 },
+      { x: input.beaconX - input.width * (0.18 + emphasis * 0.04), y: input.horizonY - 46 },
+      { x: input.beaconX + input.width * (0.18 + emphasis * 0.04), y: input.horizonY - 46 },
+      { x: input.chamberCenterX, y: input.horizonY + 6 + emphasis * 6 },
     ],
     [0, Math.PI, Math.PI / 2],
     [-4, 4, 0],

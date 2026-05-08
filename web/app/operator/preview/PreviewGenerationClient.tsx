@@ -134,8 +134,13 @@ function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPr
         {diagnostics.pose_governance_summary ? <p><strong className="text-ink">Pose governance:</strong> {diagnostics.pose_governance_summary}</p> : null}
         {diagnostics.multi_entity_choreography_summary ? <p><strong className="text-ink">Multi-entity choreography:</strong> {diagnostics.multi_entity_choreography_summary}</p> : null}
         {diagnostics.spacing_governance_summary ? <p><strong className="text-ink">Spacing governance:</strong> {diagnostics.spacing_governance_summary}</p> : null}
+        {diagnostics.cinematic_staging_summary ? <p><strong className="text-ink">Cinematic staging:</strong> {diagnostics.cinematic_staging_summary}</p> : null}
         {diagnostics.active_entity_type ? <p><strong className="text-ink">Entity type:</strong> {diagnostics.active_entity_type}</p> : null}
         {diagnostics.active_formation_type ? <p><strong className="text-ink">Active formation:</strong> {diagnostics.active_formation_type}</p> : null}
+        {diagnostics.active_beat_type ? <p><strong className="text-ink">Active beat:</strong> {diagnostics.active_beat_type}</p> : null}
+        {diagnostics.focus_subject ? <p><strong className="text-ink">Focus subject:</strong> {diagnostics.focus_subject}</p> : null}
+        {typeof diagnostics.beat_phase === "number" ? <p><strong className="text-ink">Beat phase:</strong> {diagnostics.beat_phase.toFixed(2)}</p> : null}
+        {typeof diagnostics.staging_intensity === "number" ? <p><strong className="text-ink">Staging intensity:</strong> {diagnostics.staging_intensity.toFixed(2)}</p> : null}
         {typeof diagnostics.entity_count === "number" ? <p><strong className="text-ink">Entity count:</strong> {diagnostics.entity_count}</p> : null}
         {diagnostics.entity_ids?.length ? <p><strong className="text-ink">Entity IDs:</strong> {diagnostics.entity_ids.join(", ")}</p> : null}
         {typeof diagnostics.joint_count === "number" ? <p><strong className="text-ink">Joint count:</strong> {diagnostics.joint_count}</p> : null}
@@ -153,6 +158,16 @@ function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPr
         {typeof diagnostics.group_spatial_persistence_score === "number" ? <p><strong className="text-ink">Group spatial persistence:</strong> {diagnostics.group_spatial_persistence_score}/100</p> : null}
         {typeof diagnostics.rejected_formation_transition_count === "number" ? <p><strong className="text-ink">Rejected formation transitions:</strong> {diagnostics.rejected_formation_transition_count}</p> : null}
         {typeof diagnostics.rollback_restored_formation === "boolean" ? <p><strong className="text-ink">Rollback restored formation:</strong> {diagnostics.rollback_restored_formation ? "yes" : "no"}</p> : null}
+        {typeof diagnostics.emphasis_score === "number" ? <p><strong className="text-ink">Emphasis score:</strong> {diagnostics.emphasis_score}/100</p> : null}
+        {typeof diagnostics.beat_readability_score === "number" ? <p><strong className="text-ink">Beat readability:</strong> {diagnostics.beat_readability_score}/100</p> : null}
+        {typeof diagnostics.focus_persistence_score === "number" ? <p><strong className="text-ink">Focus persistence:</strong> {diagnostics.focus_persistence_score}/100</p> : null}
+        {typeof diagnostics.event_focus_alignment_score === "number" ? <p><strong className="text-ink">Event focus alignment:</strong> {diagnostics.event_focus_alignment_score}/100</p> : null}
+        {typeof diagnostics.staging_camera_compatibility_score === "number" ? <p><strong className="text-ink">Staging-camera compatibility:</strong> {diagnostics.staging_camera_compatibility_score}/100</p> : null}
+        {typeof diagnostics.reaction_continuity_score === "number" ? <p><strong className="text-ink">Reaction continuity:</strong> {diagnostics.reaction_continuity_score}/100</p> : null}
+        {typeof diagnostics.event_causality_score === "number" ? <p><strong className="text-ink">Event causality:</strong> {diagnostics.event_causality_score}/100</p> : null}
+        {typeof diagnostics.camera_event_framing_score === "number" ? <p><strong className="text-ink">Camera event framing:</strong> {diagnostics.camera_event_framing_score}/100</p> : null}
+        {typeof diagnostics.rejected_staging_transition_count === "number" ? <p><strong className="text-ink">Rejected staging transitions:</strong> {diagnostics.rejected_staging_transition_count}</p> : null}
+        {typeof diagnostics.rollback_restored_staging === "boolean" ? <p><strong className="text-ink">Rollback restored staging:</strong> {diagnostics.rollback_restored_staging ? "yes" : "no"}</p> : null}
         {diagnostics.rollback_integrity_status ? <p><strong className="text-ink">Rollback integrity:</strong> {diagnostics.rollback_integrity_status}</p> : null}
         <p><strong className="text-ink">Camera:</strong> {diagnostics.camera_profile}</p>
         <p><strong className="text-ink">Continuity anchor:</strong> {diagnostics.continuity_anchor_visualization}</p>
@@ -605,6 +620,18 @@ export function PreviewGenerationClient() {
                   {typeof execution.preview_diagnostics?.group_spatial_persistence_score === "number" ? <p><strong className="text-ink">Group spatial persistence:</strong> {execution.preview_diagnostics.group_spatial_persistence_score}/100</p> : null}
                   {typeof execution.preview_diagnostics?.rejected_formation_transition_count === "number" ? <p><strong className="text-ink">Rejected formation transitions:</strong> {execution.preview_diagnostics.rejected_formation_transition_count}</p> : null}
                   {typeof execution.preview_diagnostics?.rollback_restored_formation === "boolean" ? <p><strong className="text-ink">Rollback restored formation:</strong> {execution.preview_diagnostics.rollback_restored_formation ? "yes" : "no"}</p> : null}
+                  {execution.preview_diagnostics?.active_beat_type ? <p><strong className="text-ink">Active beat:</strong> {execution.preview_diagnostics.active_beat_type}</p> : null}
+                  {execution.preview_diagnostics?.focus_subject ? <p><strong className="text-ink">Focus subject:</strong> {execution.preview_diagnostics.focus_subject}</p> : null}
+                  {typeof execution.preview_diagnostics?.emphasis_score === "number" ? <p><strong className="text-ink">Emphasis score:</strong> {execution.preview_diagnostics.emphasis_score}/100</p> : null}
+                  {typeof execution.preview_diagnostics?.beat_readability_score === "number" ? <p><strong className="text-ink">Beat readability:</strong> {execution.preview_diagnostics.beat_readability_score}/100</p> : null}
+                  {typeof execution.preview_diagnostics?.focus_persistence_score === "number" ? <p><strong className="text-ink">Focus persistence:</strong> {execution.preview_diagnostics.focus_persistence_score}/100</p> : null}
+                  {typeof execution.preview_diagnostics?.event_focus_alignment_score === "number" ? <p><strong className="text-ink">Event focus alignment:</strong> {execution.preview_diagnostics.event_focus_alignment_score}/100</p> : null}
+                  {typeof execution.preview_diagnostics?.staging_camera_compatibility_score === "number" ? <p><strong className="text-ink">Staging-camera compatibility:</strong> {execution.preview_diagnostics.staging_camera_compatibility_score}/100</p> : null}
+                  {typeof execution.preview_diagnostics?.reaction_continuity_score === "number" ? <p><strong className="text-ink">Reaction continuity:</strong> {execution.preview_diagnostics.reaction_continuity_score}/100</p> : null}
+                  {typeof execution.preview_diagnostics?.event_causality_score === "number" ? <p><strong className="text-ink">Event causality:</strong> {execution.preview_diagnostics.event_causality_score}/100</p> : null}
+                  {typeof execution.preview_diagnostics?.camera_event_framing_score === "number" ? <p><strong className="text-ink">Camera event framing:</strong> {execution.preview_diagnostics.camera_event_framing_score}/100</p> : null}
+                  {typeof execution.preview_diagnostics?.rejected_staging_transition_count === "number" ? <p><strong className="text-ink">Rejected staging transitions:</strong> {execution.preview_diagnostics.rejected_staging_transition_count}</p> : null}
+                  {typeof execution.preview_diagnostics?.rollback_restored_staging === "boolean" ? <p><strong className="text-ink">Rollback restored staging:</strong> {execution.preview_diagnostics.rollback_restored_staging ? "yes" : "no"}</p> : null}
                   {execution.preview_diagnostics ? <p><strong className="text-ink">Camera stability:</strong> {execution.preview_diagnostics.camera_stability_score}/100</p> : null}
                   {execution.preview_diagnostics ? <p><strong className="text-ink">Spatial continuity:</strong> {execution.preview_diagnostics.spatial_continuity_score}/100</p> : null}
                   {execution.preview_diagnostics ? <p><strong className="text-ink">Lighting consistency:</strong> {execution.preview_diagnostics.lighting_consistency_score}/100</p> : null}
@@ -631,10 +658,16 @@ export function PreviewGenerationClient() {
                   {typeof microSequence.preview_diagnostics?.entity_separation_score === "number" ? <p><strong className="text-ink">Entity separation:</strong> {microSequence.preview_diagnostics.entity_separation_score}/100</p> : null}
                   {typeof microSequence.preview_diagnostics?.formation_stability_score === "number" ? <p><strong className="text-ink">Formation stability:</strong> {microSequence.preview_diagnostics.formation_stability_score}/100</p> : null}
                   {typeof microSequence.preview_diagnostics?.group_spatial_persistence_score === "number" ? <p><strong className="text-ink">Group spatial persistence:</strong> {microSequence.preview_diagnostics.group_spatial_persistence_score}/100</p> : null}
+                  {microSequence.preview_diagnostics?.active_beat_type ? <p><strong className="text-ink">Active beat:</strong> {microSequence.preview_diagnostics.active_beat_type}</p> : null}
+                  {microSequence.preview_diagnostics?.focus_subject ? <p><strong className="text-ink">Focus subject:</strong> {microSequence.preview_diagnostics.focus_subject}</p> : null}
+                  {typeof microSequence.preview_diagnostics?.emphasis_score === "number" ? <p><strong className="text-ink">Emphasis score:</strong> {microSequence.preview_diagnostics.emphasis_score}/100</p> : null}
+                  {typeof microSequence.preview_diagnostics?.beat_readability_score === "number" ? <p><strong className="text-ink">Beat readability:</strong> {microSequence.preview_diagnostics.beat_readability_score}/100</p> : null}
+                  {typeof microSequence.preview_diagnostics?.focus_persistence_score === "number" ? <p><strong className="text-ink">Focus persistence:</strong> {microSequence.preview_diagnostics.focus_persistence_score}/100</p> : null}
                   {microSequence.preview_diagnostics ? <p><strong className="text-ink">Interaction relationships:</strong> {microSequence.preview_diagnostics.object_relationship_summary}</p> : null}
                   {microSequence.preview_diagnostics?.shot_engine_summary ? <p><strong className="text-ink">Shot engine:</strong> {microSequence.preview_diagnostics.shot_engine_summary}</p> : null}
                   {microSequence.preview_diagnostics?.articulated_entity_summary ? <p><strong className="text-ink">Articulated entity:</strong> {microSequence.preview_diagnostics.articulated_entity_summary}</p> : null}
                   {microSequence.preview_diagnostics?.multi_entity_choreography_summary ? <p><strong className="text-ink">Multi-entity choreography:</strong> {microSequence.preview_diagnostics.multi_entity_choreography_summary}</p> : null}
+                  {microSequence.preview_diagnostics?.cinematic_staging_summary ? <p><strong className="text-ink">Cinematic staging:</strong> {microSequence.preview_diagnostics.cinematic_staging_summary}</p> : null}
                   {microSequence.preview_diagnostics ? <p><strong className="text-ink">Camera profile:</strong> {microSequence.preview_diagnostics.camera_profile}</p> : null}
                   <p><strong className="text-ink">Preview cleanup after prerequisite run:</strong> {microSequence.rollback_status || "No preview cleanup actions were required."}</p>
                 </article>
@@ -680,8 +713,9 @@ export function PreviewGenerationClient() {
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Silhouette {card.diagnostic.silhouette_score}/100 • Readability {card.diagnostic.readability_score}/100</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Env {card.diagnostic.environment_coherence_score}/100 • Depth {card.diagnostic.spatial_depth_score}/100 • Fog {card.diagnostic.fog_density}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Framing {card.diagnostic.framing_score ?? card.diagnostic.readability_score}/100 • Visibility {card.diagnostic.visibility_score ?? card.diagnostic.silhouette_score}/100 • Edge clip {card.diagnostic.edge_clipping_score ?? 100}/100</p> : null}
-                        {card.diagnostic?.active_entity_type ? <p className="text-xs leading-6 text-slate">Entity {card.diagnostic.active_entity_type} • Formation {card.diagnostic.active_formation_type ?? "unset"} • Count {card.diagnostic.entity_count ?? 0} • Joints {card.diagnostic.joint_count ?? 0}</p> : null}
+                        {card.diagnostic?.active_entity_type ? <p className="text-xs leading-6 text-slate">Entity {card.diagnostic.active_entity_type} • Formation {card.diagnostic.active_formation_type ?? "unset"} • Beat {card.diagnostic.active_beat_type ?? "unset"} • Count {card.diagnostic.entity_count ?? 0}</p> : null}
                         {typeof card.diagnostic?.entity_separation_score === "number" ? <p className="text-xs leading-6 text-slate">Separation {card.diagnostic.entity_separation_score}/100 • Stability {card.diagnostic.formation_stability_score ?? 0}/100 • Group persistence {card.diagnostic.group_spatial_persistence_score ?? 0}/100</p> : null}
+                        {typeof card.diagnostic?.emphasis_score === "number" ? <p className="text-xs leading-6 text-slate">Focus {card.diagnostic.focus_subject ?? "unset"} • Emphasis {card.diagnostic.emphasis_score}/100 • Readability {card.diagnostic.beat_readability_score ?? 0}/100</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Spacing drift {card.diagnostic.spacing_drift}px • Depth {card.diagnostic.depth_ordering_status}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Overlap {card.diagnostic.overlap_warning} • Stage {card.diagnostic.interaction_staging_note}</p> : null}
                         {card.diagnostic?.shot_transition_summary ? <p className="text-xs leading-6 text-slate">Transition {card.diagnostic.shot_transition_summary}</p> : null}
@@ -694,6 +728,7 @@ export function PreviewGenerationClient() {
                         {card.diagnostic?.camera_state_overlay ? <p className="text-xs leading-6 text-slate">Camera {card.diagnostic.camera_state_overlay}</p> : null}
                         {card.diagnostic?.articulated_entity_overlay ? <p className="text-xs leading-6 text-slate">Entity state {card.diagnostic.articulated_entity_overlay}</p> : null}
                         {card.diagnostic?.multi_entity_overlay ? <p className="text-xs leading-6 text-slate">Formation state {card.diagnostic.multi_entity_overlay}</p> : null}
+                        {card.diagnostic?.cinematic_staging_overlay ? <p className="text-xs leading-6 text-slate">Staging state {card.diagnostic.cinematic_staging_overlay}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Anchor {card.diagnostic.continuity_anchor_visualization}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
                         <div className="flex flex-wrap gap-2">
@@ -739,20 +774,23 @@ export function PreviewGenerationClient() {
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Coherence {card.diagnostic.coherence_anchor_strength}/100 • Lighting {card.diagnostic.lighting_stability_score}/100</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Camera {card.diagnostic.camera_stability_score}/100 • Horizon {card.diagnostic.horizon_consistency_score}/100 • Lighting consistency {card.diagnostic.lighting_consistency_score}/100</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Framing {card.diagnostic.framing_score ?? card.diagnostic.readability_score}/100 • Visibility {card.diagnostic.visibility_score ?? card.diagnostic.silhouette_score}/100 • Continuity {card.diagnostic.camera_continuity_score ?? card.diagnostic.camera_stability_score}/100</p> : null}
-                        {card.diagnostic?.active_entity_type ? <p className="text-xs leading-6 text-slate">Entity {card.diagnostic.active_entity_type} • Formation {card.diagnostic.active_formation_type ?? "unset"} • Count {card.diagnostic.entity_count ?? 0} • Joints {card.diagnostic.joint_count ?? 0}</p> : null}
+                        {card.diagnostic?.active_entity_type ? <p className="text-xs leading-6 text-slate">Entity {card.diagnostic.active_entity_type} • Formation {card.diagnostic.active_formation_type ?? "unset"} • Beat {card.diagnostic.active_beat_type ?? "unset"} • Count {card.diagnostic.entity_count ?? 0}</p> : null}
                         {typeof card.diagnostic?.entity_separation_score === "number" ? <p className="text-xs leading-6 text-slate">Separation {card.diagnostic.entity_separation_score}/100 • Stability {card.diagnostic.formation_stability_score ?? 0}/100 • Choreography {card.diagnostic.choreography_continuity_score ?? 0}/100</p> : null}
+                        {typeof card.diagnostic?.emphasis_score === "number" ? <p className="text-xs leading-6 text-slate">Focus {card.diagnostic.focus_subject ?? "unset"} • Emphasis {card.diagnostic.emphasis_score}/100 • Beat readability {card.diagnostic.beat_readability_score ?? 0}/100</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Spacing {card.diagnostic.cube_to_beacon_distance}px • Drift {card.diagnostic.spacing_drift}px • Overlap {card.diagnostic.overlap_warning}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Depth {card.diagnostic.depth_ordering_status} • Staging {card.diagnostic.interaction_staging_note}</p> : null}
                         {card.diagnostic?.shot_transition_summary ? <p className="text-xs leading-6 text-slate">Transition {card.diagnostic.shot_transition_summary}</p> : null}
                         {card.diagnostic?.rollback_restored_state ? <p className="text-xs leading-6 text-slate">Rollback restored prior governed camera snapshot for this frame.</p> : null}
                         {card.diagnostic?.rollback_restored_pose ? <p className="text-xs leading-6 text-slate">Rollback restored prior governed articulated pose for this frame.</p> : null}
                         {card.diagnostic?.rollback_restored_formation ? <p className="text-xs leading-6 text-slate">Rollback restored prior governed formation state for this frame.</p> : null}
+                        {card.diagnostic?.rollback_restored_staging ? <p className="text-xs leading-6 text-slate">Rollback restored prior governed staging state for this frame.</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Influence {card.diagnostic.beacon_influence_overlay}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Reflection and shadow {card.diagnostic.reflection_shadow_overlay}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Environmental response {card.diagnostic.environmental_response_overlay}</p> : null}
                         {card.diagnostic?.camera_state_overlay ? <p className="text-xs leading-6 text-slate">Camera state {card.diagnostic.camera_state_overlay}</p> : null}
                         {card.diagnostic?.articulated_entity_overlay ? <p className="text-xs leading-6 text-slate">Entity state {card.diagnostic.articulated_entity_overlay}</p> : null}
                         {card.diagnostic?.multi_entity_overlay ? <p className="text-xs leading-6 text-slate">Formation state {card.diagnostic.multi_entity_overlay}</p> : null}
+                        {card.diagnostic?.cinematic_staging_overlay ? <p className="text-xs leading-6 text-slate">Staging state {card.diagnostic.cinematic_staging_overlay}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Overlay {card.diagnostic.scene_readability_overlay}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Relationship overlay {card.diagnostic.object_relationship_overlay}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>

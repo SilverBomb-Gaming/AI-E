@@ -521,10 +521,22 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
     assert.ok((microDiagnostics.multi_entity_silhouette_score ?? 0) >= 90);
     assert.ok((microDiagnostics.choreography_continuity_score ?? 0) >= 95);
     assert.ok((microDiagnostics.group_spatial_persistence_score ?? 0) >= 95);
+    assert.equal(microDiagnostics.active_beat_type, "BEACON_REVEAL");
+    assert.equal(microDiagnostics.focus_subject, "BEACON");
+    assert.ok((microDiagnostics.staging_intensity ?? 0) >= 0.6);
+    assert.ok((microDiagnostics.emphasis_score ?? 0) >= 92);
+    assert.ok((microDiagnostics.beat_readability_score ?? 0) >= 94);
+    assert.ok((microDiagnostics.focus_persistence_score ?? 0) >= 95);
+    assert.ok((microDiagnostics.event_focus_alignment_score ?? 0) >= 94);
+    assert.ok((microDiagnostics.staging_camera_compatibility_score ?? 0) >= 92);
+    assert.ok((microDiagnostics.reaction_continuity_score ?? 0) >= 95);
+    assert.ok((microDiagnostics.event_causality_score ?? 0) >= 95);
+    assert.ok((microDiagnostics.camera_event_framing_score ?? 0) >= 92);
     assert.match(microDiagnostics.articulated_entity_summary ?? "", /Segmented drone/i);
     assert.match(microDiagnostics.pose_governance_summary ?? "", /rollback governance/i);
     assert.match(microDiagnostics.multi_entity_choreography_summary ?? "", /formation|drones|choreography/i);
     assert.match(microDiagnostics.spacing_governance_summary ?? "", /spacing|separation/i);
+    assert.match(microDiagnostics.cinematic_staging_summary ?? "", /BEACON_REVEAL|focus|readability/i);
     assert.ok(microDiagnostics.entity_ids?.every((entry) => /governed-segmented-drone-00[1-3]/.test(entry)) ?? false);
     assert.match(microDiagnostics.shot_engine_summary ?? "", /STATIC_ESTABLISHING|REVEAL_ARC|WIDE_ENVIRONMENT/i);
     assert.match(microDiagnostics.camera_governance_summary ?? "", /transition smoothness/i);
@@ -535,6 +547,10 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
     assert.match(microDiagnostics.continuity_anchor_visualization, /platform/i);
 
     let sawFormationRollback = false;
+    let sawStagingRollback = false;
+    const beatTypes = motionDiagnostics.frame_diagnostics.map((frame) => frame.active_beat_type);
+    assert.ok(beatTypes.includes("BASELINE"));
+    assert.ok(beatTypes.includes("ANTICIPATION"));
     for (const frame of motionDiagnostics.frame_diagnostics) {
       assert.ok(frame.cube_to_beacon_distance >= 40);
       assert.ok(frame.spacing_drift <= 3);
@@ -575,6 +591,14 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
       assert.ok((frame.multi_entity_silhouette_score ?? 0) >= 90);
       assert.ok((frame.choreography_continuity_score ?? 0) >= 95);
       assert.ok((frame.group_spatial_persistence_score ?? 0) >= 95);
+      assert.ok(typeof frame.active_beat_type === "string");
+      assert.ok(typeof frame.focus_subject === "string");
+      assert.ok((frame.staging_intensity ?? 0) >= 0.4);
+      assert.ok((frame.emphasis_score ?? 0) >= 92);
+      assert.ok((frame.beat_readability_score ?? 0) >= 94);
+      assert.ok((frame.focus_persistence_score ?? 0) >= 95);
+      assert.ok((frame.event_focus_alignment_score ?? 0) >= 94);
+      assert.ok((frame.staging_camera_compatibility_score ?? 0) >= 92);
       assert.ok((frame.entity_ids?.length ?? 0) === frame.entity_count);
       assert.ok(frame.entity_ids?.every((entry) => /governed-segmented-drone-00[1-3]/.test(entry)) ?? false);
       assert.ok(typeof frame.active_shot_type === "string");
@@ -589,7 +613,9 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
       assert.match(frame.shot_transition_summary ?? "", /deterministic|Transitioned|restored/i);
       assert.match(frame.articulated_entity_overlay ?? "", /formation|pose/i);
       assert.match(frame.multi_entity_overlay ?? "", /formation|spacing|group/i);
+      assert.match(frame.cinematic_staging_overlay ?? "", /focus|readability|rollback/i);
       sawFormationRollback ||= frame.rollback_restored_formation === true;
+      sawStagingRollback ||= frame.rollback_restored_staging === true;
     }
 
     assert.ok(motionDiagnostics.camera_stability_score >= 96);
@@ -602,10 +628,20 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
     assert.ok((motionDiagnostics.multi_entity_silhouette_score ?? 0) >= 90);
     assert.ok((motionDiagnostics.choreography_continuity_score ?? 0) >= 95);
     assert.ok((motionDiagnostics.group_spatial_persistence_score ?? 0) >= 95);
+    assert.ok((motionDiagnostics.emphasis_score ?? 0) >= 92);
+    assert.ok((motionDiagnostics.beat_readability_score ?? 0) >= 94);
+    assert.ok((motionDiagnostics.focus_persistence_score ?? 0) >= 95);
+    assert.ok((motionDiagnostics.event_focus_alignment_score ?? 0) >= 94);
+    assert.ok((motionDiagnostics.staging_camera_compatibility_score ?? 0) >= 92);
+    assert.ok((motionDiagnostics.reaction_continuity_score ?? 0) >= 95);
+    assert.ok((motionDiagnostics.event_causality_score ?? 0) >= 95);
+    assert.ok((motionDiagnostics.camera_event_framing_score ?? 0) >= 92);
     assert.ok(motionDiagnostics.frame_diagnostics.some((entry) => entry.rollback_restored_state === true));
     assert.ok(motionDiagnostics.frame_diagnostics.some((entry) => entry.rollback_restored_pose === true));
     assert.ok(sawFormationRollback);
+    assert.ok(sawStagingRollback);
     assert.ok((motionDiagnostics.rejected_formation_transition_count ?? 0) >= 1);
+    assert.ok((motionDiagnostics.rejected_staging_transition_count ?? 0) >= 1);
     assert.equal(motionDiagnostics.rollback_integrity_status, "PASS");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

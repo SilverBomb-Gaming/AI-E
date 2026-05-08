@@ -80,6 +80,33 @@ Remaining blocked cinematic escalations:
 - autonomous continuation remains blocked
 - any bypass of rollback, manual approval, bounded preview duration, or deterministic governance remains blocked
 
+## Governed Event-Driven Cinematic Staging
+
+AI-E now stages deterministic beacon-pulse moments as bounded primitive cinematic beats rather than treating them as generic reactive scene changes.
+
+Current Phase 1 progress:
+
+- event-driven staging progress now includes deterministic `BASELINE`, `ANTICIPATION`, `BEACON_REVEAL`, and `SETTLE` beat progression inside the existing preview window
+- cinematic beat capability now drives bounded emphasis selection for focus subject, staging intensity, reveal preference, composition priority, and environment emphasis
+- beacon reveal staging now widens readable formation emphasis, reinforces chamber glow and fog response, and preserves group readability around the existing cube/beacon focal system
+- bounded focus targeting now feeds deterministic staging hints into the authoritative camera rig without allowing event systems to set camera position directly
+- rollback preservation now covers staging state, beat transitions, bounded focus hints, and operator-visible rejected staging transitions alongside camera, formation, and pose rollback
+
+Governance preserved:
+
+- sandbox containment, manual approval, continuity validation, and bounded preview duration remain unchanged
+- low-resolution preview restrictions remain enforced
+- multi-entity count remains capped at 3
+- deterministic replay remains mandatory across event timing, camera hints, formation emphasis, and environment response
+
+Remaining blocked cinematic escalations:
+
+- humanoids, faces, and dialogue remain blocked
+- narrative autonomy and autonomous continuation remain blocked
+- long-form rendering remains blocked
+- direct event control over camera position remains blocked
+- future cinematic escalation beyond bounded preview remains scaffold-only until explicitly unlocked
+
 ## Autonomous Session Loop
 
 The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.
