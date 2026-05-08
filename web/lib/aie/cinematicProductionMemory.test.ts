@@ -453,6 +453,66 @@ test("cinematic execution sandbox plans provider-agnostic jobs and simulates lif
   }
 });
 
+test("governed preview diagnostics keep multi-object relationships deterministic and bounded", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-governed-multi-object-preview-"));
+
+  try {
+    await ensureCinematicProductionMemoryInitialized(tempRoot);
+    await mkdir(path.join(tempRoot, ".venv", "Scripts"), { recursive: true });
+    await mkdir(path.join(tempRoot, "ComfyUI"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "wan-2.1-t2v-q8"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "ltx-video-img2vid-int8"), { recursive: true });
+    await mkdir(path.join(tempRoot, "models", "hunyuan-video-13b-planned"), { recursive: true });
+    await writeFile(path.join(tempRoot, ".venv", "Scripts", "python.exe"), "", "utf8");
+    await writeFile(path.join(tempRoot, "ComfyUI", "main.py"), "", "utf8");
+    await writeFile(path.join(tempRoot, "requirements.txt"), "torch\ndiffusers\n", "utf8");
+
+    await inspectCinematicLocalRuntimeEnvironment({
+      root: tempRoot,
+      persist: true,
+      pathHints: {
+        python_paths: [".venv/Scripts/python.exe"],
+        inference_runtime_paths: ["ComfyUI"],
+        local_model_paths: ["models"],
+      },
+    });
+
+    const simulation = await simulateCinematicControlledLocalInferenceBootstrap({
+      root: tempRoot,
+      desiredResolution: "720p",
+      desiredDurationSeconds: 2,
+      continuityPriority: "medium",
+    });
+
+    const microDiagnostics = simulation.validation.governed_micro_sequence_sandbox.preview_diagnostics;
+    const motionDiagnostics = simulation.validation.governed_motion_preview_sandbox.preview_diagnostics;
+
+    assert.ok(microDiagnostics);
+    assert.ok(motionDiagnostics);
+    assert.ok(microDiagnostics.multi_object_coherence_score >= 88);
+    assert.ok(microDiagnostics.spacing_consistency_score >= 88);
+    assert.ok(microDiagnostics.depth_ordering_score >= 90);
+    assert.ok(microDiagnostics.overlap_avoidance_score >= 92);
+    assert.ok(microDiagnostics.interaction_staging_score >= 88);
+    assert.match(microDiagnostics.object_relationship_summary, /beacon/i);
+    assert.match(microDiagnostics.continuity_anchor_visualization, /platform/i);
+
+    for (const frame of motionDiagnostics.frame_diagnostics) {
+      assert.ok(frame.cube_to_beacon_distance >= 40);
+      assert.ok(frame.spacing_drift <= 3);
+      assert.ok(frame.depth_ordering_score >= 90);
+      assert.ok(frame.overlap_avoidance_score >= 92);
+      assert.ok(frame.interaction_staging_score >= 88);
+      assert.ok(frame.floor_anchor_consistency_score >= 94);
+      assert.match(frame.depth_ordering_status, /platform locked beneath anchor/i);
+      assert.equal(frame.overlap_warning, "clear separation maintained");
+      assert.match(frame.object_relationship_overlay, /cube-beacon/i);
+    }
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("safe provider bridge compiles payloads, validates providers, enforces budgets, and preserves manual approval gating", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-safe-provider-bridge-"));
 

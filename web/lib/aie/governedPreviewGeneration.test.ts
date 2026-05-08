@@ -11,15 +11,21 @@ import { compileGovernedPreviewRequest } from "./governedPreviewGenerationContra
 
 function buildPreviewDiagnosticsMock(frameCount: number) {
   return {
-    recognizable_object: "anchored cube primitive",
+    recognizable_object: "anchored cube with secondary sphere beacon and locked floor marker",
+    object_relationship_summary: "Cube anchor, orbiting beacon, and floor marker remain readable with 1.8px spacing drift and stable foreground-to-background ordering.",
     environment_profile: "dark-room sci-fi chamber with bounded fog gradient",
     lighting_profile: "single directional key with stable rim lighting",
     camera_profile: "governed locked-off camera with persistent horizon framing",
-    continuity_anchor_visualization: "floor horizon + chamber aperture + centered cube anchor",
-    scene_readability_overlay: "silhouette / camera / environment overlay",
+    continuity_anchor_visualization: "floor horizon + chamber aperture + centered cube anchor + locked floor marker",
+    scene_readability_overlay: "silhouette / camera / environment / relationship overlay",
     frame_coherence_score: 90,
     motion_smoothness_score: 89,
     environment_coherence_score: 91,
+    multi_object_coherence_score: 92,
+    spacing_consistency_score: 91,
+    depth_ordering_score: 93,
+    overlap_avoidance_score: 95,
+    interaction_staging_score: 92,
     camera_stability_score: 90,
     spatial_continuity_score: 89,
     lighting_stability_score: 94,
@@ -42,6 +48,19 @@ function buildPreviewDiagnosticsMock(frameCount: number) {
       object_kind: "cube",
       anchor_x: 128,
       anchor_y: 144,
+      beacon_x: 166,
+      beacon_y: 102,
+      platform_y: 176,
+      cube_to_beacon_distance: 56,
+      spacing_drift: 1.8,
+      depth_ordering_score: 93,
+      overlap_avoidance_score: 95,
+      interaction_staging_score: 92,
+      floor_anchor_consistency_score: 96,
+      depth_ordering_status: "beacon elevated behind cube; platform locked beneath anchor",
+      overlap_warning: "clear separation maintained",
+      interaction_staging_note: "beacon orbiting cube while floor marker stays locked beneath anchor",
+      object_relationship_overlay: "cube-beacon 56px • drift 1.80px • clear separation maintained",
       rotation_degrees: -12 + index * 7,
       camera_center_offset_x: 1.2,
       camera_center_offset_y: 0.6,
@@ -262,6 +281,10 @@ test("executeGovernedPreviewRequest returns sandbox outputs and does not call pr
   assert.equal(result.preview_diagnostics?.frame_coherence_score, 90);
   assert.equal(result.preview_diagnostics?.camera_stability_score, 90);
   assert.equal(result.preview_diagnostics?.environment_coherence_score, 91);
+  assert.equal(result.preview_diagnostics?.multi_object_coherence_score, 92);
+  assert.equal(result.preview_diagnostics?.spacing_consistency_score, 91);
+  assert.equal(result.preview_diagnostics?.overlap_avoidance_score, 95);
+  assert.match(result.preview_diagnostics?.object_relationship_summary ?? "", /floor marker/i);
   assert.equal(result.prerequisite_state.preview_diagnostics?.object_fidelity_score, 92);
   assert.equal(result.prerequisite_state.preview_diagnostics?.camera_profile, "governed locked-off camera with persistent horizon framing");
 });
@@ -372,7 +395,8 @@ test("executeGovernedPreviewMicroSequenceRequest returns micro-sequence frame re
   assert.equal(result.preview_cleanup_targets.length, 1);
   assert.equal(result.preview_diagnostics?.object_fidelity_score, 92);
   assert.equal(result.preview_diagnostics?.environment_coherence_score, 91);
-  assert.equal(result.preview_diagnostics?.scene_readability_overlay, "silhouette / camera / environment overlay");
+  assert.equal(result.preview_diagnostics?.scene_readability_overlay, "silhouette / camera / environment / relationship overlay");
+  assert.equal(result.preview_diagnostics?.interaction_staging_score, 92);
   assert.equal(result.preview_diagnostics?.frame_diagnostics.length, 3);
 });
 

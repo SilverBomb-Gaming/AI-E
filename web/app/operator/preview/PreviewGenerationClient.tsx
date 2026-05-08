@@ -121,6 +121,7 @@ function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPr
       </div>
       <div className="rounded-[1.25rem] border border-ink/10 bg-white/90 p-4 text-sm leading-7 body-muted">
         <p><strong className="text-ink">Recognizable object:</strong> {diagnostics.recognizable_object}</p>
+        <p><strong className="text-ink">Relationships:</strong> {diagnostics.object_relationship_summary}</p>
         <p><strong className="text-ink">Environment:</strong> {diagnostics.environment_profile}</p>
         <p><strong className="text-ink">Lighting:</strong> {diagnostics.lighting_profile}</p>
         <p><strong className="text-ink">Camera:</strong> {diagnostics.camera_profile}</p>
@@ -548,6 +549,11 @@ export function PreviewGenerationClient() {
                   <p><strong className="text-ink">Continuity validation:</strong> {execution.continuity_validation.valid ? "passed" : "blocked"}</p>
                   <p><strong className="text-ink">Continuity summary:</strong> {execution.continuity_validation.summary}</p>
                   {execution.preview_diagnostics ? <p><strong className="text-ink">Motion smoothness:</strong> {execution.preview_diagnostics.motion_smoothness_score}/100</p> : null}
+                  {execution.preview_diagnostics ? <p><strong className="text-ink">Multi-object coherence:</strong> {execution.preview_diagnostics.multi_object_coherence_score}/100</p> : null}
+                  {execution.preview_diagnostics ? <p><strong className="text-ink">Spacing consistency:</strong> {execution.preview_diagnostics.spacing_consistency_score}/100</p> : null}
+                  {execution.preview_diagnostics ? <p><strong className="text-ink">Depth ordering:</strong> {execution.preview_diagnostics.depth_ordering_score}/100</p> : null}
+                  {execution.preview_diagnostics ? <p><strong className="text-ink">Overlap avoidance:</strong> {execution.preview_diagnostics.overlap_avoidance_score}/100</p> : null}
+                  {execution.preview_diagnostics ? <p><strong className="text-ink">Interaction staging:</strong> {execution.preview_diagnostics.interaction_staging_score}/100</p> : null}
                   {execution.preview_diagnostics ? <p><strong className="text-ink">Camera stability:</strong> {execution.preview_diagnostics.camera_stability_score}/100</p> : null}
                   {execution.preview_diagnostics ? <p><strong className="text-ink">Spatial continuity:</strong> {execution.preview_diagnostics.spatial_continuity_score}/100</p> : null}
                   {execution.preview_diagnostics ? <p><strong className="text-ink">Lighting consistency:</strong> {execution.preview_diagnostics.lighting_consistency_score}/100</p> : null}
@@ -561,6 +567,9 @@ export function PreviewGenerationClient() {
                   <p><strong className="text-ink">Continuity summary:</strong> {microSequence.continuity_validation.summary}</p>
                   {microSequence.preview_diagnostics ? <p><strong className="text-ink">Object fidelity:</strong> {microSequence.preview_diagnostics.object_fidelity_score}/100</p> : null}
                   {microSequence.preview_diagnostics ? <p><strong className="text-ink">Environment coherence:</strong> {microSequence.preview_diagnostics.environment_coherence_score}/100</p> : null}
+                  {microSequence.preview_diagnostics ? <p><strong className="text-ink">Multi-object coherence:</strong> {microSequence.preview_diagnostics.multi_object_coherence_score}/100</p> : null}
+                  {microSequence.preview_diagnostics ? <p><strong className="text-ink">Spacing consistency:</strong> {microSequence.preview_diagnostics.spacing_consistency_score}/100</p> : null}
+                  {microSequence.preview_diagnostics ? <p><strong className="text-ink">Interaction relationships:</strong> {microSequence.preview_diagnostics.object_relationship_summary}</p> : null}
                   {microSequence.preview_diagnostics ? <p><strong className="text-ink">Camera profile:</strong> {microSequence.preview_diagnostics.camera_profile}</p> : null}
                   <p><strong className="text-ink">Preview cleanup after prerequisite run:</strong> {microSequence.rollback_status || "No preview cleanup actions were required."}</p>
                 </article>
@@ -604,6 +613,8 @@ export function PreviewGenerationClient() {
                         <p className="text-xs uppercase tracking-[0.18em] text-slate">{card.format} • {card.source}</p>
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Silhouette {card.diagnostic.silhouette_score}/100 • Readability {card.diagnostic.readability_score}/100</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Env {card.diagnostic.environment_coherence_score}/100 • Depth {card.diagnostic.spatial_depth_score}/100 • Fog {card.diagnostic.fog_density}</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Spacing drift {card.diagnostic.spacing_drift}px • Depth {card.diagnostic.depth_ordering_status}</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Overlap {card.diagnostic.overlap_warning} • Stage {card.diagnostic.interaction_staging_note}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Anchor {card.diagnostic.continuity_anchor_visualization}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
                         <div className="flex flex-wrap gap-2">
@@ -647,7 +658,10 @@ export function PreviewGenerationClient() {
                         <p className="text-xs uppercase tracking-[0.18em] text-slate">{card.format} • {card.source}</p>
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Coherence {card.diagnostic.coherence_anchor_strength}/100 • Lighting {card.diagnostic.lighting_stability_score}/100</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Camera {card.diagnostic.camera_stability_score}/100 • Horizon {card.diagnostic.horizon_consistency_score}/100 • Lighting consistency {card.diagnostic.lighting_consistency_score}/100</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Spacing {card.diagnostic.cube_to_beacon_distance}px • Drift {card.diagnostic.spacing_drift}px • Overlap {card.diagnostic.overlap_warning}</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Depth {card.diagnostic.depth_ordering_status} • Staging {card.diagnostic.interaction_staging_note}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Overlay {card.diagnostic.scene_readability_overlay}</p> : null}
+                        {card.diagnostic ? <p className="text-xs leading-6 text-slate">Relationship overlay {card.diagnostic.object_relationship_overlay}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
                         <div className="flex flex-wrap gap-2">
                           <a href={card.assetUrl} target="_blank" rel="noreferrer" className="rounded-full border border-ocean/20 bg-ocean px-3 py-1.5 text-xs font-semibold text-white">Open</a>
