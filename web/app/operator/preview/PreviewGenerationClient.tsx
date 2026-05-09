@@ -96,6 +96,22 @@ import {
   type GuidedWorkflowStepId,
   type GuidedWorkflowStepView,
 } from "./guidedWorkflow";
+import {
+  INITIAL_GOVERNED_EXECUTION_STATE,
+  advanceGovernedExecutionPhase,
+  buildGovernedExecutionTimeline,
+  completeGovernedExecution,
+  completeGovernedRollback,
+  failGovernedExecution,
+  getGovernedExecutionPhaseLabel,
+  getGovernedExecutionPhaseTone,
+  isGovernedExecutionLocked,
+  startGovernedExecution,
+  type GovernedExecutionAction,
+  type GovernedExecutionPhase,
+  type GovernedExecutionState,
+  type GovernedExecutionTimelineItem,
+} from "./governedExecutionState";
 
 const DEFAULT_FORM: GovernedPreviewFormInput = {
   prompt: "",
@@ -483,6 +499,120 @@ function StatusPill({ label, tone }: { label: string; tone: "ok" | "warn" | "blo
   return <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${toneClassName}`}>{label}</span>;
 }
 
+function waitForExecutionPhase(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function createOperatorRequestId(action: GovernedExecutionAction): string {
+  return `operator-${action}-${Date.now()}`;
+}
+
+function formatExecutionTimestamp(value: number | null): string {
+  return value ? new Date(value).toLocaleTimeString() : "not started";
+}
+
+function formatArtifactName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function actionRenderMode(action: GovernedExecutionAction | null): string {
+  return action === "micro-sequence"
+    ? "Micro-sequence prerequisite"
+    : action === "preview"
+      ? "Governed preview render"
+      : action === "anime-character-render"
+        ? "Anime character render"
+        : action === "rollback"
+          ? "Rollback cleanup"
+          : "No active render";
+}
+
+function timelineStatusClass(status: GovernedExecutionTimelineItem["status"]): string {
+  return status === "complete"
+    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    : status === "active"
+      ? "border-amber-200 bg-amber-50 text-amber-700"
+      : status === "failed" || status === "blocked"
+        ? "border-coral/20 bg-coral/10 text-ember"
+        : "border-ink/10 bg-white text-ink/70";
+}
+
+function ExecutionStatusPanel({ executionState, timeline }: { executionState: GovernedExecutionState; timeline: GovernedExecutionTimelineItem[] }) {
+  const phaseTone = getGovernedExecutionPhaseTone(executionState.currentPhase);
+  const isActive = isGovernedExecutionLocked(executionState);
+  const pngArtifacts = executionState.exportedArtifactPaths.filter((path) => path.toLowerCase().endsWith(".png"));
+  const gifArtifacts = executionState.exportedArtifactPaths.filter((path) => path.toLowerCase().endsWith(".gif"));
+  const otherArtifacts = executionState.exportedArtifactPaths.filter((path) => !path.toLowerCase().endsWith(".png") && !path.toLowerCase().endsWith(".gif"));
+
+  return (
+    <article className={`rounded-[1.25rem] border p-4 ${phaseTone === "blocked" ? "border-coral/20 bg-coral/10" : isActive ? "border-amber-200 bg-amber-50/80" : "border-ink/10 bg-white/85"}`} data-execution-status-panel="true">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="section-label">Execution Status</p>
+          <h3 className="mt-2 text-xl font-semibold text-ink">Governed Runtime State</h3>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {isActive ? <span aria-label="Processing" className="h-4 w-4 animate-spin rounded-full border-2 border-amber-300 border-t-ocean" /> : null}
+          <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${isActive ? "animate-pulse border-amber-200 bg-amber-50 text-amber-700" : "border-ink/10 bg-white text-ink/70"}`}>
+            {isActive ? "processing" : "not processing"}
+          </span>
+          <StatusPill label={getGovernedExecutionPhaseLabel(executionState.currentPhase)} tone={phaseTone} />
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 text-sm leading-7 body-muted md:grid-cols-2">
+        <p><strong className="text-ink">Current phase:</strong> {getGovernedExecutionPhaseLabel(executionState.currentPhase)}</p>
+        <p><strong className="text-ink">Active request:</strong> {executionState.activeRequestId ?? "none"}</p>
+        <p><strong className="text-ink">Render mode:</strong> {actionRenderMode(executionState.activeAction)}</p>
+        <p><strong className="text-ink">Approval status:</strong> {executionState.waitingForApproval ? "waiting for approval" : executionState.renderRejected ? "rejected" : "approved or not required for idle"}</p>
+        <p><strong className="text-ink">Started:</strong> {formatExecutionTimestamp(executionState.executionStartedAt)}</p>
+        <p><strong className="text-ink">Finished:</strong> {formatExecutionTimestamp(executionState.executionFinishedAt)}</p>
+        <p><strong className="text-ink">GIF packaging:</strong> {executionState.gifPackagingInProgress ? "running" : executionState.gifArtifactPath ? "complete" : "not exported yet"}</p>
+        <p><strong className="text-ink">Export status:</strong> {executionState.exportInProgress ? "exporting" : executionState.exportedArtifactPaths.length ? "complete" : "waiting"}</p>
+        <p><strong className="text-ink">Rollback state:</strong> {executionState.rollbackInProgress ? "restoring" : executionState.activeAction === "rollback" && executionState.renderCompleted ? "complete" : "idle"}</p>
+        <p><strong className="text-ink">Diagnostics:</strong> {executionState.diagnosticsGenerated ? "generated" : "not generated yet"}</p>
+      </div>
+
+      <div className="mt-4 rounded-[1rem] border border-ink/10 bg-white/80 p-4 text-sm leading-7 body-muted">
+        <p><strong className="text-ink">Estimated current action:</strong> {executionState.statusMessage}</p>
+        <p><strong className="text-ink">Next action:</strong> {executionState.nextActionRecommendation}</p>
+        {executionState.duplicateClickBlocked ? <p className="mt-2 rounded-[0.75rem] border border-amber-200 bg-amber-50 px-3 py-2 font-semibold text-amber-800">Execution already in progress.</p> : null}
+        {executionState.failureReason ? <p className="mt-2 rounded-[0.75rem] border border-coral/20 bg-coral/10 px-3 py-2 font-semibold text-ember">{executionState.failureReason}</p> : null}
+      </div>
+
+      {executionState.exportedArtifactPaths.length ? (
+        <div className="mt-4 grid gap-3 text-sm leading-7 body-muted md:grid-cols-3">
+          <div className="rounded-[1rem] border border-ink/10 bg-white/80 p-4">
+            <p className="font-semibold text-ink">PNG</p>
+            {pngArtifacts.length ? <ul className="mt-2 space-y-1">{pngArtifacts.map((path) => <li key={path}>{formatArtifactName(path)}</li>)}</ul> : <p className="mt-2">No PNG exported.</p>}
+          </div>
+          <div className="rounded-[1rem] border border-ink/10 bg-white/80 p-4">
+            <p className="font-semibold text-ink">GIF</p>
+            {gifArtifacts.length ? <ul className="mt-2 space-y-1">{gifArtifacts.map((path) => <li key={path}>{formatArtifactName(path)}</li>)}</ul> : <p className="mt-2">No GIF exported.</p>}
+          </div>
+          <div className="rounded-[1rem] border border-ink/10 bg-white/80 p-4">
+            <p className="font-semibold text-ink">Sandbox</p>
+            <p className="mt-2 break-words">{executionState.sandboxPath ?? "not created"}</p>
+            {otherArtifacts.length ? <p className="mt-2 break-words">Other: {otherArtifacts.map(formatArtifactName).join(", ")}</p> : null}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-4 grid gap-2 md:grid-cols-2">
+        {timeline.map((item) => (
+          <div key={item.id} className={`rounded-[1rem] border px-4 py-3 text-sm leading-6 ${timelineStatusClass(item.status)}`}>
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-semibold text-ink">{item.label}</p>
+              <span className="text-xs uppercase tracking-[0.18em]">{item.status}</span>
+            </div>
+            <p className="mt-1">{item.detail}</p>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
 function CollapsibleActivitySection({
   sectionLabel,
   title,
@@ -575,7 +705,7 @@ function CollapsibleActivitySection({
           {activity.summary}
         </div>
       ) : null}
-      {isOpen ? <div className="px-6 pb-6">{children}</div> : null}
+      {isOpen ? <div className="px-5 pb-5">{children}</div> : null}
     </article>
   );
 }
@@ -918,6 +1048,7 @@ export function PreviewGenerationClient() {
   const [guidedWorkflowState, setGuidedWorkflowState] = useState<GuidedWorkflowState>(INITIAL_GUIDED_WORKFLOW_STATE);
   const [guidedWorkflowNotice, setGuidedWorkflowNotice] = useState<string | null>(null);
   const [activeGuidedTargetStepId, setActiveGuidedTargetStepId] = useState<GuidedWorkflowStepId>(INITIAL_GUIDED_WORKFLOW_STATE.activeStepId);
+  const [governedExecutionState, setGovernedExecutionState] = useState<GovernedExecutionState>(INITIAL_GOVERNED_EXECUTION_STATE);
   const [subjectStyleConfirmed, setSubjectStyleConfirmed] = useState<boolean>(false);
   const [microSequenceReviewed, setMicroSequenceReviewed] = useState<boolean>(false);
   const [previewOutputReviewed, setPreviewOutputReviewed] = useState<boolean>(false);
@@ -927,6 +1058,7 @@ export function PreviewGenerationClient() {
   const [finalScaffoldFallbackInactive, setFinalScaffoldFallbackInactive] = useState<boolean>(false);
   const [finalDiagnosticsClear, setFinalDiagnosticsClear] = useState<boolean>(false);
   const activeGuidedStepRef = useRef<HTMLButtonElement>(null);
+  const executionLockRef = useRef<boolean>(false);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -1155,6 +1287,74 @@ export function PreviewGenerationClient() {
       package_gif_preview: true,
     }));
     setMessage(`Loaded anime character ${profile.label} into the governed preview form.`);
+  }
+
+  function beginOperatorExecution(action: GovernedExecutionAction, manualApprovalGranted: boolean): string | null {
+    const requestId = createOperatorRequestId(action);
+    const startedAt = Date.now();
+
+    if (executionLockRef.current) {
+      const duplicate = startGovernedExecution(governedExecutionState, {
+        action,
+        requestId,
+        startedAt,
+        manualApprovalGranted,
+        gifPackagingRequested: form.package_gif_preview,
+      });
+      setGovernedExecutionState(duplicate.state);
+      setMessage("Execution already in progress.");
+      return null;
+    }
+
+    const started = startGovernedExecution(governedExecutionState, {
+      action,
+      requestId,
+      startedAt,
+      manualApprovalGranted,
+      gifPackagingRequested: form.package_gif_preview,
+    });
+
+    if (!started.started) {
+      setGovernedExecutionState(started.state);
+      setMessage(started.reason);
+      return null;
+    }
+
+    executionLockRef.current = true;
+    setGovernedExecutionState(started.state);
+    setMessage(started.reason);
+    return requestId;
+  }
+
+  function updateOperatorExecutionPhase(phase: GovernedExecutionPhase) {
+    setGovernedExecutionState((current) => advanceGovernedExecutionPhase(current, phase));
+  }
+
+  function completeOperatorExecution(updater: (current: GovernedExecutionState) => GovernedExecutionState) {
+    executionLockRef.current = false;
+    setGovernedExecutionState((current) => updater(current));
+  }
+
+  function exportedAnimeCharacterArtifacts(report: AnimeCharacterReport): string[] {
+    const packageArtifacts = report.visualReviewPackage
+      ? [
+        ...report.visualReviewPackage.framePaths,
+        report.visualReviewPackage.firstPngToInspect,
+        report.visualReviewPackage.gifToInspect,
+        report.visualReviewPackage.manifestPath,
+        report.visualReviewPackage.diagnosticsPath,
+        report.visualReviewPackage.operatorSummaryPath,
+      ]
+      : [];
+
+    return Array.from(new Set(packageArtifacts.filter((path): path is string => Boolean(path))));
+  }
+
+  async function runVisibleExecutionPhases(action: GovernedExecutionAction) {
+    await waitForExecutionPhase(90);
+    updateOperatorExecutionPhase("VALIDATING");
+    await waitForExecutionPhase(160);
+    updateOperatorExecutionPhase(action === "micro-sequence" ? "MICRO_SEQUENCE_RUNNING" : action === "rollback" ? "ROLLBACK_RESTORING" : "PREVIEW_RENDER_RUNNING");
   }
 
   function handleClassifyPromptVariation() {
@@ -1488,10 +1688,15 @@ export function PreviewGenerationClient() {
   }
 
   function handleRunAnimeCharacter(profileId: string) {
+    if (!beginOperatorExecution("anime-character-render", form.governance_approval && animeCharacterApproval)) {
+      return;
+    }
     setError(null);
     setRollback(null);
-    startTransition(() => {
-      void fetch("/api/operator/preview-generation", {
+    void (async () => {
+      const phaseProgress = runVisibleExecutionPhases("anime-character-render");
+      try {
+        const response = await fetch("/api/operator/preview-generation", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -1503,37 +1708,59 @@ export function PreviewGenerationClient() {
           characterApproval: animeCharacterApproval,
           priorReports: animeCharacterReports,
         }),
-      })
-        .then(async (response) => {
-          const payload = await response.json() as AnimeCharacterRunPayload;
-          if (!response.ok || !payload.report) {
-            throw new Error(payload.error ?? "Anime character render failed.");
-          }
-
-          setSelectedAnimeCharacterProfileId(profileId);
-          setCompiledRequest(payload.compiledRequest ?? null);
-          setMicroSequence(payload.report.microSequence);
-          setExecution(payload.report.previewExecution);
-          setRollback(payload.report.rollback);
-          setPrerequisiteState(payload.prerequisiteState ?? payload.report.prerequisiteAfter ?? payload.report.prerequisiteBefore);
-          setAnimeCharacterReports(payload.reports ?? [payload.report]);
-          setAnimeCharacterSummary(payload.reportSummary ?? null);
-          setAnimeCharacterHarnessState(payload.harnessState ?? null);
-          setApprovedAnimeCharacterProfiles(payload.animeCharacters?.profiles ?? approvedAnimeCharacterProfiles);
-          setAnimeCharacterPoseTemplates(payload.animeCharacters?.poseTemplates ?? animeCharacterPoseTemplates);
-          setAnimeCharacterExpressionTemplates(payload.animeCharacters?.expressionTemplates ?? animeCharacterExpressionTemplates);
-          setAnimeCharacterPlan(payload.animeCharacters?.executionPlan ?? animeCharacterPlan);
-          setMessage(payload.report.pass
-            ? `Anime character ${payload.report.characterLabel} passed governed face, silhouette, pose, and anime identity thresholds.`
-            : payload.report.failureReason ?? `Anime character ${payload.report.characterLabel} failed governed character rendering thresholds.`);
-        })
-        .catch((nextError) => {
-          setError(nextError instanceof Error ? nextError.message : "Anime character render failed.");
         });
-    });
+        const payload = await response.json() as AnimeCharacterRunPayload;
+        if (!response.ok || !payload.report) {
+          throw new Error(payload.error ?? "Anime character render failed.");
+        }
+        const report = payload.report;
+        await phaseProgress;
+
+        const exportedArtifactPaths = exportedAnimeCharacterArtifacts(report);
+        if (report.visualReviewPackage?.gifToInspect) {
+          updateOperatorExecutionPhase("GIF_PACKAGING");
+          await waitForExecutionPhase(180);
+        }
+        updateOperatorExecutionPhase("EXPORTING_OUTPUTS");
+        await waitForExecutionPhase(180);
+
+        setSelectedAnimeCharacterProfileId(profileId);
+        setCompiledRequest(payload.compiledRequest ?? null);
+  setMicroSequence(report.microSequence);
+  setExecution(report.previewExecution);
+  setRollback(report.rollback);
+  setPrerequisiteState(payload.prerequisiteState ?? report.prerequisiteAfter ?? report.prerequisiteBefore);
+  setAnimeCharacterReports(payload.reports ?? [report]);
+        setAnimeCharacterSummary(payload.reportSummary ?? null);
+        setAnimeCharacterHarnessState(payload.harnessState ?? null);
+        setApprovedAnimeCharacterProfiles(payload.animeCharacters?.profiles ?? approvedAnimeCharacterProfiles);
+        setAnimeCharacterPoseTemplates(payload.animeCharacters?.poseTemplates ?? animeCharacterPoseTemplates);
+        setAnimeCharacterExpressionTemplates(payload.animeCharacters?.expressionTemplates ?? animeCharacterExpressionTemplates);
+        setAnimeCharacterPlan(payload.animeCharacters?.executionPlan ?? animeCharacterPlan);
+        setMessage(report.pass
+          ? `Anime character ${report.characterLabel} passed governed face, silhouette, pose, and anime identity thresholds.`
+          : report.failureReason ?? `Anime character ${report.characterLabel} failed governed character rendering thresholds.`);
+        completeOperatorExecution((current) => completeGovernedExecution(current, {
+          finishedAt: Date.now(),
+          status: report.pass ? "complete" : "rejected",
+          failureReason: report.pass ? null : report.failureReason ?? "Anime character render did not pass governed truth checks.",
+          exportedArtifactPaths,
+          sandboxPath: report.visualReviewPackage?.sandboxDirectory ?? report.previewExecution?.sandbox_path ?? null,
+          diagnosticsGenerated: Boolean(report.diagnostics || report.truthCheck),
+          gifPackagingRequested: Boolean(report.visualReviewPackage?.gifToInspect),
+        }));
+      } catch (nextError) {
+        const failureReason = nextError instanceof Error ? nextError.message : "Anime character render failed.";
+        setError(failureReason);
+        completeOperatorExecution((current) => failGovernedExecution(current, { finishedAt: Date.now(), failureReason }));
+      }
+    })();
   }
 
   function handleGenerate() {
+    if (!beginOperatorExecution("preview", form.governance_approval)) {
+      return;
+    }
     setError(null);
     setRollback(null);
     setPreviewOutputReviewed(false);
@@ -1542,111 +1769,159 @@ export function PreviewGenerationClient() {
     setFinalTruthChecksPassed(false);
     setFinalScaffoldFallbackInactive(false);
     setFinalDiagnosticsClear(false);
-    startTransition(() => {
-      void fetch("/api/operator/preview-generation", {
+    void (async () => {
+      const phaseProgress = runVisibleExecutionPhases("preview");
+      try {
+        const response = await fetch("/api/operator/preview-generation", {
         method: "POST",
         headers: {
           "content-type": "application/json",
         },
         body: JSON.stringify({ action: "generate", input: form }),
-      })
-        .then(async (response) => {
-          const payload = await response.json() as {
-            error?: string;
-            compiledRequest?: GovernedPreviewRequest;
-            execution?: GovernedPreviewExecutionResult;
-            prerequisiteState?: GovernedPreviewPrerequisiteState;
-          };
-
-          if (!response.ok || !payload.compiledRequest || !payload.execution) {
-            throw new Error(payload.error ?? "Governed preview generation failed.");
-          }
-
-          setCompiledRequest(payload.compiledRequest);
-          setExecution(payload.execution);
-          setMicroSequence(null);
-          setPrerequisiteState(payload.prerequisiteState ?? payload.execution.prerequisite_state);
-          setMessage(payload.execution.status === "accepted"
-            ? "Governed preview request accepted inside the low-duration sandbox."
-            : payload.execution.blockers.includes("micro-sequence-prerequisite")
-              ? "Governed motion preview is blocked until the micro-sequence continuity prerequisite is satisfied."
-              : "Governed preview request blocked by approval or compile-time safety checks.");
-        })
-        .catch((nextError) => {
-          setError(nextError instanceof Error ? nextError.message : "Governed preview generation failed.");
         });
-    });
+        const payload = await response.json() as {
+          error?: string;
+          compiledRequest?: GovernedPreviewRequest;
+          execution?: GovernedPreviewExecutionResult;
+          prerequisiteState?: GovernedPreviewPrerequisiteState;
+        };
+
+        if (!response.ok || !payload.compiledRequest || !payload.execution) {
+          throw new Error(payload.error ?? "Governed preview generation failed.");
+        }
+        const previewExecution = payload.execution;
+        await phaseProgress;
+        if (previewExecution.status === "accepted" && form.package_gif_preview) {
+          updateOperatorExecutionPhase("GIF_PACKAGING");
+          await waitForExecutionPhase(180);
+        }
+        updateOperatorExecutionPhase("EXPORTING_OUTPUTS");
+        await waitForExecutionPhase(180);
+
+        setCompiledRequest(payload.compiledRequest);
+        setExecution(previewExecution);
+        setMicroSequence(null);
+        setPrerequisiteState(payload.prerequisiteState ?? previewExecution.prerequisite_state);
+        setMessage(previewExecution.status === "accepted"
+          ? "Governed preview request accepted inside the low-duration sandbox."
+          : previewExecution.blockers.includes("micro-sequence-prerequisite")
+            ? "Governed motion preview is blocked until the micro-sequence continuity prerequisite is satisfied."
+            : "Governed preview request blocked by approval or compile-time safety checks.");
+        completeOperatorExecution((current) => completeGovernedExecution(current, {
+          finishedAt: Date.now(),
+          status: previewExecution.status === "accepted" && previewExecution.generated_preview_references.length > 0 ? "complete" : "rejected",
+          failureReason: previewExecution.status === "accepted" ? null : previewExecution.governance_status || previewExecution.blockers.join(", ") || "Governed preview was rejected.",
+          exportedArtifactPaths: previewExecution.generated_preview_references,
+          sandboxPath: previewExecution.sandbox_path,
+          diagnosticsGenerated: Boolean(previewExecution.preview_diagnostics),
+          gifPackagingRequested: form.package_gif_preview,
+        }));
+      } catch (nextError) {
+        const failureReason = nextError instanceof Error ? nextError.message : "Governed preview generation failed.";
+        setError(failureReason);
+        completeOperatorExecution((current) => failGovernedExecution(current, { finishedAt: Date.now(), failureReason }));
+      }
+    })();
   }
 
   function handleGenerateMicroSequence() {
+    if (!beginOperatorExecution("micro-sequence", form.governance_approval)) {
+      return;
+    }
     setError(null);
     setRollback(null);
     setMicroSequenceReviewed(false);
     setPreviewOutputReviewed(false);
     setDiagnosticsReviewed(false);
-    startTransition(() => {
-      void fetch("/api/operator/preview-generation", {
+    void (async () => {
+      const phaseProgress = runVisibleExecutionPhases("micro-sequence");
+      try {
+        const response = await fetch("/api/operator/preview-generation", {
         method: "POST",
         headers: {
           "content-type": "application/json",
         },
         body: JSON.stringify({ action: "generate-micro-sequence", input: form }),
-      })
-        .then(async (response) => {
-          const payload = await response.json() as {
-            error?: string;
-            compiledRequest?: GovernedPreviewRequest;
-            microSequence?: GovernedPreviewMicroSequenceResult;
-            prerequisiteState?: GovernedPreviewPrerequisiteState;
-          };
-
-          if (!response.ok || !payload.compiledRequest || !payload.microSequence) {
-            throw new Error(payload.error ?? "Governed micro-sequence generation failed.");
-          }
-
-          setCompiledRequest(payload.compiledRequest);
-          setExecution(null);
-          setMicroSequence(payload.microSequence);
-          setPrerequisiteState(payload.prerequisiteState ?? payload.microSequence.prerequisite_state);
-          setMessage(payload.microSequence.status === "generated"
-            ? "Governed micro-sequence continuity preview generated. Motion preview can be retried once continuity remains green."
-            : payload.microSequence.request.blockers.length > 0
-              ? "Governed micro-sequence generation remains blocked by approval or compile-time safety checks."
-              : `Governed micro-sequence continuity preview ran, but motion preview remains blocked by ${payload.microSequence.blockers.join(", ") || "continuity validation blockers"}.`);
-        })
-        .catch((nextError) => {
-          setError(nextError instanceof Error ? nextError.message : "Governed micro-sequence generation failed.");
         });
-    });
+        const payload = await response.json() as {
+          error?: string;
+          compiledRequest?: GovernedPreviewRequest;
+          microSequence?: GovernedPreviewMicroSequenceResult;
+          prerequisiteState?: GovernedPreviewPrerequisiteState;
+        };
+
+        if (!response.ok || !payload.compiledRequest || !payload.microSequence) {
+          throw new Error(payload.error ?? "Governed micro-sequence generation failed.");
+        }
+        const microSequenceResult = payload.microSequence as GovernedPreviewMicroSequenceResult;
+        await phaseProgress;
+        updateOperatorExecutionPhase("EXPORTING_OUTPUTS");
+        await waitForExecutionPhase(180);
+
+        setCompiledRequest(payload.compiledRequest);
+        setExecution(null);
+        setMicroSequence(microSequenceResult);
+        setPrerequisiteState(payload.prerequisiteState ?? microSequenceResult.prerequisite_state);
+        setMessage(microSequenceResult.status === "generated"
+          ? "Governed micro-sequence continuity preview generated. Motion preview can be retried once continuity remains green."
+          : microSequenceResult.request.blockers.length > 0
+            ? "Governed micro-sequence generation remains blocked by approval or compile-time safety checks."
+            : `Governed micro-sequence continuity preview ran, but motion preview remains blocked by ${microSequenceResult.blockers.join(", ") || "continuity validation blockers"}.`);
+        completeOperatorExecution((current) => completeGovernedExecution(current, {
+          finishedAt: Date.now(),
+          status: microSequenceResult.status === "generated" ? "complete" : "rejected",
+          failureReason: microSequenceResult.status === "generated" ? null : microSequenceResult.governance_status || microSequenceResult.blockers.join(", ") || "Governed micro-sequence was rejected.",
+          exportedArtifactPaths: microSequenceResult.generated_frame_references,
+          sandboxPath: microSequenceResult.sandbox_path,
+          diagnosticsGenerated: Boolean(microSequenceResult.preview_diagnostics),
+          gifPackagingRequested: false,
+        }));
+      } catch (nextError) {
+        const failureReason = nextError instanceof Error ? nextError.message : "Governed micro-sequence generation failed.";
+        setError(failureReason);
+        completeOperatorExecution((current) => failGovernedExecution(current, { finishedAt: Date.now(), failureReason }));
+      }
+    })();
   }
 
   function handleRollback() {
+    if (!beginOperatorExecution("rollback", true)) {
+      return;
+    }
     setError(null);
-    startTransition(() => {
-      void fetch("/api/operator/preview-generation", {
+    void (async () => {
+      const phaseProgress = runVisibleExecutionPhases("rollback");
+      try {
+        const response = await fetch("/api/operator/preview-generation", {
         method: "POST",
         headers: {
           "content-type": "application/json",
         },
         body: JSON.stringify({ action: "rollback" }),
-      })
-        .then(async (response) => {
-          const payload = await response.json() as {
-            error?: string;
-            rollback?: GovernedPreviewRollbackResult;
-          };
-          if (!response.ok || !payload.rollback) {
-            throw new Error(payload.error ?? "Governed preview rollback failed.");
-          }
-          setRollback(payload.rollback);
-          setMessage(payload.rollback.status === "rolled_back"
-            ? "Governed preview sandbox rollback completed."
-            : "No governed preview sandbox outputs were present to clear.");
-        })
-        .catch((nextError) => {
-          setError(nextError instanceof Error ? nextError.message : "Governed preview rollback failed.");
         });
-    });
+        const payload = await response.json() as {
+          error?: string;
+          rollback?: GovernedPreviewRollbackResult;
+        };
+        if (!response.ok || !payload.rollback) {
+          throw new Error(payload.error ?? "Governed preview rollback failed.");
+        }
+        await phaseProgress;
+        setRollback(payload.rollback);
+        setMessage(payload.rollback.status === "rolled_back"
+          ? "Governed preview sandbox rollback completed."
+          : "No governed preview sandbox outputs were present to clear.");
+        completeOperatorExecution((current) => completeGovernedRollback(current, {
+          finishedAt: Date.now(),
+          deletedOutputTargets: payload.rollback?.deleted_output_targets ?? [],
+          sandboxPath: payload.rollback?.sandbox_path ?? null,
+        }));
+      } catch (nextError) {
+        const failureReason = nextError instanceof Error ? nextError.message : "Governed preview rollback failed.";
+        setError(failureReason);
+        completeOperatorExecution((current) => failGovernedExecution(current, { finishedAt: Date.now(), failureReason }));
+      }
+    })();
   }
 
   const statusTone: "ok" | "warn" | "blocked" | "default" = execution?.status === "accepted"
@@ -1654,6 +1929,7 @@ export function PreviewGenerationClient() {
     : execution?.status === "blocked"
       ? "blocked"
       : "default";
+  const executionLocked = isPending || isGovernedExecutionLocked(governedExecutionState);
   const motionPreviewReady = prerequisiteState?.motion_preview_ready === true;
   const latestMicroSequenceFrameReferences = microSequence?.generated_frame_references.length
     ? microSequence.generated_frame_references
@@ -1713,13 +1989,27 @@ export function PreviewGenerationClient() {
       summary: error,
       critical: true,
     }
-    : isPending
+    : executionLocked
       ? {
-        label: "work pending",
+        label: getGovernedExecutionPhaseLabel(governedExecutionState.currentPhase).toLowerCase().replaceAll(" ", "-"),
         tone: "warn" as const,
-        summary: "A governed preview action is currently pending.",
-        critical: false,
+        summary: governedExecutionState.statusMessage,
+        critical: true,
       }
+      : governedExecutionState.renderRejected || governedExecutionState.renderFailed
+        ? {
+          label: getGovernedExecutionPhaseLabel(governedExecutionState.currentPhase).toLowerCase().replaceAll(" ", "-"),
+          tone: "blocked" as const,
+          summary: governedExecutionState.failureReason ?? governedExecutionState.statusMessage,
+          critical: true,
+        }
+        : governedExecutionState.renderCompleted
+          ? {
+            label: "export-complete",
+            tone: "ok" as const,
+            summary: governedExecutionState.statusMessage,
+            critical: false,
+          }
       : {
         label: execution?.status === "accepted" ? "request-accepted" : execution?.status ?? "ready",
         tone: statusTone === "blocked" ? "blocked" as const : statusTone === "warn" ? "warn" as const : "info" as const,
@@ -1796,6 +2086,12 @@ export function PreviewGenerationClient() {
   const activeGuidedSectionId = activeGuidedTarget.workflowSectionId;
   const guidedWarningSectionIds = new Set(guidedWorkflowSteps.filter((step) => step.hasPersistentWarning || step.status === "warning" || step.status === "failed" || step.status === "blocked").map((step) => step.sectionId));
   const finalOperatorVerdict = evaluateFinalOperatorVerdict(workflowFacts);
+  const governedExecutionTimeline = buildGovernedExecutionTimeline(governedExecutionState, {
+    outputReviewed: previewOutputReviewed || microSequenceReviewed,
+    diagnosticsReviewed,
+    truthChecksPassed,
+    finalVerdictReady: finalOperatorVerdict === "PASS",
+  });
 
   function guidedSectionProps(sectionId: GuidedWorkflowSectionId) {
     const anchoredStep = activeGuidedTarget.workflowSectionId === sectionId
@@ -3021,10 +3317,10 @@ export function PreviewGenerationClient() {
                     <button
                       type="button"
                       onClick={() => handleRunAnimeCharacter(profile.id)}
-                      disabled={isPending}
+                      disabled={executionLocked || !animeCharacterApproval || !form.governance_approval}
                       className="rounded-full border border-ocean/20 bg-ocean px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Render Character
+                      {governedExecutionState.previewInProgress ? "Processing..." : "Render Character"}
                     </button>
                   </div>
                 </article>
@@ -3315,28 +3611,28 @@ export function PreviewGenerationClient() {
               <button
                 type="button"
                 onClick={handleGenerate}
-                disabled={isPending || !motionPreviewReady}
+                disabled={executionLocked || !motionPreviewReady}
                 data-guided-focus="generate-preview"
                 className="rounded-full border border-ocean/20 bg-ocean px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Generate Preview
+                {governedExecutionState.previewInProgress && governedExecutionState.activeAction === "preview" ? "Processing Preview..." : "Generate Preview"}
               </button>
               <button
                 type="button"
                 onClick={handleGenerateMicroSequence}
-                disabled={isPending}
+                disabled={executionLocked}
                 data-guided-focus="generate-micro-sequence"
                 className="rounded-full border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Generate Micro-Sequence First
+                {governedExecutionState.microSequenceInProgress ? "Processing Micro-Sequence..." : "Generate Micro-Sequence First"}
               </button>
               <button
                 type="button"
                 onClick={handleRollback}
-                disabled={isPending}
+                disabled={executionLocked}
                 className="rounded-full border border-coral/20 bg-coral px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Clear Preview Sandbox
+                {governedExecutionState.rollbackInProgress ? "Restoring Rollback..." : "Clear Preview Sandbox"}
               </button>
             </div>
             {!motionPreviewReady ? (
@@ -3350,13 +3646,15 @@ export function PreviewGenerationClient() {
             sectionLabel="Execution Status"
             title="Governed Preview Runtime State"
             activity={executionActivity}
-            defaultOpen={executionActivity.critical || Boolean(error)}
+            defaultOpen={true}
+            sectionDomId="execution-status-section"
             {...guidedSectionProps("execution-status")}
           >
             <div className="mt-5 space-y-4">
+              <ExecutionStatusPanel executionState={governedExecutionState} timeline={governedExecutionTimeline} />
               <div className="flex flex-wrap items-center gap-2">
                 <StatusPill label={execution?.status === "accepted" ? "request-accepted" : execution?.status ?? "idle"} tone={statusTone} />
-                <StatusPill label={isPending ? "pending" : "ready"} tone={isPending ? "warn" : "default"} />
+                <StatusPill label={executionLocked ? "processing-locked" : "ready"} tone={executionLocked ? "warn" : "default"} />
                 <StatusPill label={motionPreviewReady ? "prerequisite-ready" : "prerequisite-required"} tone={motionPreviewReady ? "ok" : "warn"} />
               </div>
               <p className="text-sm leading-7 body-muted">{message}</p>
@@ -3388,10 +3686,10 @@ export function PreviewGenerationClient() {
                   <button
                     type="button"
                     onClick={handleGenerateMicroSequence}
-                    disabled={isPending}
+                    disabled={executionLocked}
                     className="mt-4 rounded-full border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Generate Micro-Sequence First
+                    {governedExecutionState.microSequenceInProgress ? "Processing Micro-Sequence..." : "Generate Micro-Sequence First"}
                   </button>
                 </div>
               ) : null}

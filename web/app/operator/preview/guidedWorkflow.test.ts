@@ -165,3 +165,33 @@ test("final verdict cannot pass without output review and truth-check confirmati
     finalDiagnosticsClear: true,
   })), "PASS");
 });
+
+test("completed execution still requires visual review before final verdict", () => {
+  const reviewState: GuidedWorkflowState = { activeStepId: "review-preview-output", warningStepIds: [] };
+  const result = advanceGuidedWorkflow(reviewState, facts({
+    promptReady: true,
+    subjectStyleAligned: true,
+    manualApprovalEnabled: true,
+    microSequenceGenerated: true,
+    microSequenceReviewed: true,
+    previewRequestAccepted: true,
+    previewGenerationCompleted: true,
+    previewOutputReviewed: false,
+    truthChecksPassed: true,
+    scaffoldFallbackInactive: true,
+  }));
+
+  assert.equal(result.advanced, false);
+  assert.match(result.reason, /Inspect the preview frames/i);
+  assert.equal(evaluateFinalOperatorVerdict(facts({
+    previewGenerationCompleted: true,
+    truthChecksPassed: true,
+    scaffoldFallbackInactive: true,
+    diagnosticsReviewed: true,
+    diagnosticsClear: true,
+    finalVisualIntentMatched: true,
+    finalTruthChecksPassed: true,
+    finalScaffoldFallbackInactive: true,
+    finalDiagnosticsClear: true,
+  })), "NEEDS REVIEW");
+});
