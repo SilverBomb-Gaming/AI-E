@@ -170,6 +170,63 @@ Remaining blocked cinematic escalations:
 - any tension persistence beyond the current preview run remains blocked
 - any momentum persistence beyond the current preview run remains blocked
 
+## Governed Cinematic Transition Blending
+
+AI-E now smooths beat-to-beat handoffs across the same bounded preview phrase by layering deterministic transition blending on top of staging, focus flow, tension curves, and momentum flow without introducing a new authority path.
+
+Current Phase 1 progress:
+
+- deterministic blend phases now follow `BUILD_TO_REVEAL`, `REVEAL_TO_RESPONSE`, `RESPONSE_TO_AFTERMATH`, and `AFTERMATH_TO_SETTLE` from `ANTICIPATION` through `SETTLE`
+- reveal-to-response and response-to-aftermath handoffs now preserve readability and visual continuity so the phrase reads as one cohesive micro-cinematic flow instead of separate local beats
+- bounded transition-blend hints now advise camera easing, formation smoothing, and environment residue while camera, formation, staging, focus, tension, and momentum governance remain authoritative
+- transition-blend rollback now restores the prior blend snapshot and surfaces rejected blend transitions alongside staging, focus, tension, momentum, formation, pose, and camera rollback reporting
+
+Governance preserved:
+
+- sandbox containment, manual approval, continuity validation, and bounded preview duration remain unchanged
+- low-resolution preview restrictions remain enforced
+- transition blending remains preview-local and advisory-only
+- no persistence of blend state is allowed across preview runs
+
+Remaining blocked cinematic escalations:
+
+- humanoid character continuity, faces, and dialogue remain blocked
+- narrative autonomy and autonomous continuation remain blocked
+- long-form rendering remains blocked
+- any focus persistence beyond the current preview run remains blocked
+- any tension persistence beyond the current preview run remains blocked
+- any momentum persistence beyond the current preview run remains blocked
+- any transition-blend persistence beyond the current preview run remains blocked
+
+## Governed Cinematic Scene Cohesion
+
+AI-E now preserves one deterministic scene identity across the same bounded preview phrase by layering governed scene cohesion on top of staging, focus flow, tension curves, momentum flow, and transition blending without introducing a new authority path.
+
+Current Phase 1 progress:
+
+- deterministic scene identities now follow `SCI_FI_BEACON_CHAMBER`, `REACTIVE_ENVIRONMENT_REVEAL`, `MECHANICAL_DRONE_RITUAL`, `ATMOSPHERIC_AFTERIMAGE`, and `STABLE_FINAL_COMPOSITION` from `ANTICIPATION` through `SETTLE`
+- visual language, phrase continuity, environment identity, and formation identity now stay bounded across the whole micro-phrase so the preview reads as one cohesive cinematic scene instead of a smooth chain of separate beats
+- bounded scene-cohesion hints now advise camera framing consistency, formation identity, and chamber residue while camera, formation, staging, focus, tension, momentum, and transition-blend governance remain authoritative
+- scene-cohesion rollback now restores the prior cohesion snapshot and surfaces rejected cohesion transitions alongside staging, focus, tension, momentum, blend, formation, pose, and camera rollback reporting
+
+Governance preserved:
+
+- sandbox containment, manual approval, continuity validation, and bounded preview duration remain unchanged
+- low-resolution preview restrictions remain enforced
+- scene cohesion remains preview-local and advisory-only
+- no persistence of scene-cohesion state is allowed across preview runs
+
+Remaining blocked cinematic escalations:
+
+- humanoid character continuity, faces, and dialogue remain blocked
+- narrative autonomy and autonomous continuation remain blocked
+- long-form rendering remains blocked
+- any focus persistence beyond the current preview run remains blocked
+- any tension persistence beyond the current preview run remains blocked
+- any momentum persistence beyond the current preview run remains blocked
+- any transition-blend persistence beyond the current preview run remains blocked
+- any scene-cohesion persistence beyond the current preview run remains blocked
+
 ## Autonomous Session Loop
 
 The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.

@@ -138,6 +138,8 @@ function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPr
         {diagnostics.cinematic_focus_flow_summary ? <p><strong className="text-ink">Cinematic focus flow:</strong> {diagnostics.cinematic_focus_flow_summary}</p> : null}
         {diagnostics.cinematic_tension_curve_summary ? <p><strong className="text-ink">Cinematic tension curve:</strong> {diagnostics.cinematic_tension_curve_summary}</p> : null}
         {diagnostics.cinematic_momentum_flow_summary ? <p><strong className="text-ink">Cinematic momentum flow:</strong> {diagnostics.cinematic_momentum_flow_summary}</p> : null}
+        {diagnostics.cinematic_transition_blend_summary ? <p><strong className="text-ink">Cinematic transition blend:</strong> {diagnostics.cinematic_transition_blend_summary}</p> : null}
+        {diagnostics.cinematic_scene_cohesion_summary ? <p><strong className="text-ink">Cinematic scene cohesion:</strong> {diagnostics.cinematic_scene_cohesion_summary}</p> : null}
         {diagnostics.active_entity_type ? <p><strong className="text-ink">Entity type:</strong> {diagnostics.active_entity_type}</p> : null}
         {diagnostics.active_formation_type ? <p><strong className="text-ink">Active formation:</strong> {diagnostics.active_formation_type}</p> : null}
         {diagnostics.active_beat_type ? <p><strong className="text-ink">Active beat:</strong> {diagnostics.active_beat_type}</p> : null}
@@ -145,6 +147,10 @@ function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPr
         {diagnostics.previous_focus_subject ? <p><strong className="text-ink">Previous focus subject:</strong> {diagnostics.previous_focus_subject}</p> : null}
         {diagnostics.active_tension_phase ? <p><strong className="text-ink">Active tension phase:</strong> {diagnostics.active_tension_phase}</p> : null}
         {diagnostics.active_momentum_phase ? <p><strong className="text-ink">Active momentum phase:</strong> {diagnostics.active_momentum_phase}</p> : null}
+        {diagnostics.active_blend_phase ? <p><strong className="text-ink">Active blend phase:</strong> {diagnostics.active_blend_phase}</p> : null}
+        {diagnostics.active_scene_identity ? <p><strong className="text-ink">Active scene identity:</strong> {diagnostics.active_scene_identity}</p> : null}
+        {diagnostics.from_beat ? <p><strong className="text-ink">From beat:</strong> {diagnostics.from_beat}</p> : null}
+        {diagnostics.to_beat ? <p><strong className="text-ink">To beat:</strong> {diagnostics.to_beat}</p> : null}
         {diagnostics.focus_subject ? <p><strong className="text-ink">Focus subject:</strong> {diagnostics.focus_subject}</p> : null}
         {typeof diagnostics.focus_transition_phase === "number" ? <p><strong className="text-ink">Focus transition phase:</strong> {diagnostics.focus_transition_phase.toFixed(2)}</p> : null}
         {typeof diagnostics.focus_priority_score === "number" ? <p><strong className="text-ink">Focus priority:</strong> {diagnostics.focus_priority_score}/100</p> : null}
@@ -172,6 +178,22 @@ function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPr
         {typeof diagnostics.reaction_carryover_score === "number" ? <p><strong className="text-ink">Reaction carryover:</strong> {diagnostics.reaction_carryover_score}/100</p> : null}
         {typeof diagnostics.decay_inertia_score === "number" ? <p><strong className="text-ink">Decay inertia:</strong> {diagnostics.decay_inertia_score}/100</p> : null}
         {typeof diagnostics.momentum_camera_compatibility_score === "number" ? <p><strong className="text-ink">Momentum-camera compatibility:</strong> {diagnostics.momentum_camera_compatibility_score}/100</p> : null}
+        {typeof diagnostics.blend_progress === "number" ? <p><strong className="text-ink">Blend progress:</strong> {diagnostics.blend_progress.toFixed(2)}</p> : null}
+        {typeof diagnostics.blend_weight === "number" ? <p><strong className="text-ink">Blend weight:</strong> {diagnostics.blend_weight.toFixed(2)}</p> : null}
+        {typeof diagnostics.transition_smoothness_score === "number" ? <p><strong className="text-ink">Transition smoothness:</strong> {diagnostics.transition_smoothness_score}/100</p> : null}
+        {typeof diagnostics.visual_continuity_score === "number" ? <p><strong className="text-ink">Visual continuity:</strong> {diagnostics.visual_continuity_score}/100</p> : null}
+        {typeof diagnostics.reveal_transition_preservation_score === "number" ? <p><strong className="text-ink">Reveal transition preservation:</strong> {diagnostics.reveal_transition_preservation_score}/100</p> : null}
+        {typeof diagnostics.response_to_aftermath_score === "number" ? <p><strong className="text-ink">Response to aftermath:</strong> {diagnostics.response_to_aftermath_score}/100</p> : null}
+        {typeof diagnostics.settle_blend_stability_score === "number" ? <p><strong className="text-ink">Settle blend stability:</strong> {diagnostics.settle_blend_stability_score}/100</p> : null}
+        {typeof diagnostics.blend_camera_compatibility_score === "number" ? <p><strong className="text-ink">Blend-camera compatibility:</strong> {diagnostics.blend_camera_compatibility_score}/100</p> : null}
+        {typeof diagnostics.cohesion_weight === "number" ? <p><strong className="text-ink">Cohesion weight:</strong> {diagnostics.cohesion_weight.toFixed(2)}</p> : null}
+        {typeof diagnostics.visual_language_score === "number" ? <p><strong className="text-ink">Visual language:</strong> {diagnostics.visual_language_score}/100</p> : null}
+        {typeof diagnostics.phrase_continuity_score === "number" ? <p><strong className="text-ink">Phrase continuity:</strong> {diagnostics.phrase_continuity_score}/100</p> : null}
+        {typeof diagnostics.scene_cohesion_score === "number" ? <p><strong className="text-ink">Scene cohesion:</strong> {diagnostics.scene_cohesion_score}/100</p> : null}
+        {typeof diagnostics.environment_identity_score === "number" ? <p><strong className="text-ink">Environment identity:</strong> {diagnostics.environment_identity_score}/100</p> : null}
+        {typeof diagnostics.formation_identity_score === "number" ? <p><strong className="text-ink">Formation identity:</strong> {diagnostics.formation_identity_score}/100</p> : null}
+        {typeof diagnostics.final_composition_score === "number" ? <p><strong className="text-ink">Final composition:</strong> {diagnostics.final_composition_score}/100</p> : null}
+        {typeof diagnostics.cohesion_camera_compatibility_score === "number" ? <p><strong className="text-ink">Cohesion-camera compatibility:</strong> {diagnostics.cohesion_camera_compatibility_score}/100</p> : null}
         {typeof diagnostics.beat_phase === "number" ? <p><strong className="text-ink">Beat phase:</strong> {diagnostics.beat_phase.toFixed(2)}</p> : null}
         {typeof diagnostics.staging_intensity === "number" ? <p><strong className="text-ink">Staging intensity:</strong> {diagnostics.staging_intensity.toFixed(2)}</p> : null}
         {typeof diagnostics.entity_count === "number" ? <p><strong className="text-ink">Entity count:</strong> {diagnostics.entity_count}</p> : null}
@@ -203,10 +225,14 @@ function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPr
         {typeof diagnostics.rejected_focus_transition_count === "number" ? <p><strong className="text-ink">Rejected focus transitions:</strong> {diagnostics.rejected_focus_transition_count}</p> : null}
         {typeof diagnostics.rejected_tension_transition_count === "number" ? <p><strong className="text-ink">Rejected tension transitions:</strong> {diagnostics.rejected_tension_transition_count}</p> : null}
         {typeof diagnostics.rejected_momentum_transition_count === "number" ? <p><strong className="text-ink">Rejected momentum transitions:</strong> {diagnostics.rejected_momentum_transition_count}</p> : null}
+        {typeof diagnostics.rejected_blend_transition_count === "number" ? <p><strong className="text-ink">Rejected blend transitions:</strong> {diagnostics.rejected_blend_transition_count}</p> : null}
+        {typeof diagnostics.rejected_cohesion_transition_count === "number" ? <p><strong className="text-ink">Rejected cohesion transitions:</strong> {diagnostics.rejected_cohesion_transition_count}</p> : null}
         {typeof diagnostics.rollback_restored_staging === "boolean" ? <p><strong className="text-ink">Rollback restored staging:</strong> {diagnostics.rollback_restored_staging ? "yes" : "no"}</p> : null}
         {typeof diagnostics.rollback_restored_focus === "boolean" ? <p><strong className="text-ink">Rollback restored focus:</strong> {diagnostics.rollback_restored_focus ? "yes" : "no"}</p> : null}
         {typeof diagnostics.rollback_restored_tension === "boolean" ? <p><strong className="text-ink">Rollback restored tension:</strong> {diagnostics.rollback_restored_tension ? "yes" : "no"}</p> : null}
         {typeof diagnostics.rollback_restored_momentum === "boolean" ? <p><strong className="text-ink">Rollback restored momentum:</strong> {diagnostics.rollback_restored_momentum ? "yes" : "no"}</p> : null}
+        {typeof diagnostics.rollback_restored_blend === "boolean" ? <p><strong className="text-ink">Rollback restored blend:</strong> {diagnostics.rollback_restored_blend ? "yes" : "no"}</p> : null}
+        {typeof diagnostics.rollback_restored_cohesion === "boolean" ? <p><strong className="text-ink">Rollback restored cohesion:</strong> {diagnostics.rollback_restored_cohesion ? "yes" : "no"}</p> : null}
         {diagnostics.rollback_integrity_status ? <p><strong className="text-ink">Rollback integrity:</strong> {diagnostics.rollback_integrity_status}</p> : null}
         <p><strong className="text-ink">Camera:</strong> {diagnostics.camera_profile}</p>
         <p><strong className="text-ink">Continuity anchor:</strong> {diagnostics.continuity_anchor_visualization}</p>
@@ -713,6 +739,8 @@ export function PreviewGenerationClient() {
                   {microSequence.preview_diagnostics?.cinematic_focus_flow_summary ? <p><strong className="text-ink">Cinematic focus flow:</strong> {microSequence.preview_diagnostics.cinematic_focus_flow_summary}</p> : null}
                   {microSequence.preview_diagnostics?.cinematic_tension_curve_summary ? <p><strong className="text-ink">Cinematic tension curve:</strong> {microSequence.preview_diagnostics.cinematic_tension_curve_summary}</p> : null}
                   {microSequence.preview_diagnostics?.cinematic_momentum_flow_summary ? <p><strong className="text-ink">Cinematic momentum flow:</strong> {microSequence.preview_diagnostics.cinematic_momentum_flow_summary}</p> : null}
+                  {microSequence.preview_diagnostics?.cinematic_transition_blend_summary ? <p><strong className="text-ink">Cinematic transition blend:</strong> {microSequence.preview_diagnostics.cinematic_transition_blend_summary}</p> : null}
+                  {microSequence.preview_diagnostics?.cinematic_scene_cohesion_summary ? <p><strong className="text-ink">Cinematic scene cohesion:</strong> {microSequence.preview_diagnostics.cinematic_scene_cohesion_summary}</p> : null}
                   {microSequence.preview_diagnostics ? <p><strong className="text-ink">Camera profile:</strong> {microSequence.preview_diagnostics.camera_profile}</p> : null}
                   <p><strong className="text-ink">Preview cleanup after prerequisite run:</strong> {microSequence.rollback_status || "No preview cleanup actions were required."}</p>
                 </article>
@@ -777,6 +805,8 @@ export function PreviewGenerationClient() {
                         {card.diagnostic?.cinematic_focus_flow_overlay ? <p className="text-xs leading-6 text-slate">Focus flow {card.diagnostic.cinematic_focus_flow_overlay}</p> : null}
                         {card.diagnostic?.cinematic_tension_curve_overlay ? <p className="text-xs leading-6 text-slate">Tension curve {card.diagnostic.cinematic_tension_curve_overlay}</p> : null}
                         {card.diagnostic?.cinematic_momentum_flow_overlay ? <p className="text-xs leading-6 text-slate">Momentum flow {card.diagnostic.cinematic_momentum_flow_overlay}</p> : null}
+                        {card.diagnostic?.cinematic_transition_blend_overlay ? <p className="text-xs leading-6 text-slate">Transition blend {card.diagnostic.cinematic_transition_blend_overlay}</p> : null}
+                        {card.diagnostic?.cinematic_scene_cohesion_overlay ? <p className="text-xs leading-6 text-slate">Scene cohesion {card.diagnostic.cinematic_scene_cohesion_overlay}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Anchor {card.diagnostic.continuity_anchor_visualization}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
                         <div className="flex flex-wrap gap-2">
@@ -845,6 +875,8 @@ export function PreviewGenerationClient() {
                         {card.diagnostic?.cinematic_focus_flow_overlay ? <p className="text-xs leading-6 text-slate">Focus flow {card.diagnostic.cinematic_focus_flow_overlay}</p> : null}
                         {card.diagnostic?.cinematic_tension_curve_overlay ? <p className="text-xs leading-6 text-slate">Tension curve {card.diagnostic.cinematic_tension_curve_overlay}</p> : null}
                         {card.diagnostic?.cinematic_momentum_flow_overlay ? <p className="text-xs leading-6 text-slate">Momentum flow {card.diagnostic.cinematic_momentum_flow_overlay}</p> : null}
+                        {card.diagnostic?.cinematic_transition_blend_overlay ? <p className="text-xs leading-6 text-slate">Transition blend {card.diagnostic.cinematic_transition_blend_overlay}</p> : null}
+                        {card.diagnostic?.cinematic_scene_cohesion_overlay ? <p className="text-xs leading-6 text-slate">Scene cohesion {card.diagnostic.cinematic_scene_cohesion_overlay}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Overlay {card.diagnostic.scene_readability_overlay}</p> : null}
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Relationship overlay {card.diagnostic.object_relationship_overlay}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>

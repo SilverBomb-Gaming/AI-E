@@ -36,6 +36,11 @@ export type GovernedFormationControllerInput = {
   formationCompressionPreference?: number;
   movementCarryoverPreference?: number;
   formationExpansionPreference?: number;
+  transitionSoftnessPreference?: number;
+  settleStabilizationPreference?: number;
+  formationIdentityPreference?: number;
+  environmentIdentityIntensity?: number;
+  residueContinuityPreference?: number;
   chamberCenterX: number;
   horizonY: number;
   platformY: number;
@@ -94,17 +99,22 @@ export function buildGovernedFormationPlan(input: GovernedFormationControllerInp
   const formationCompressionPreference = input.formationCompressionPreference ?? 0;
   const movementCarryoverPreference = input.movementCarryoverPreference ?? 0;
   const formationExpansionPreference = input.formationExpansionPreference ?? 0;
-  const orbitRadiusX = input.width * (0.17 + emphasis * 0.08 + reactionEnergyPreference * 0.015 + formationExpansionPreference * 0.014 - formationCompressionPreference * 0.01);
+  const transitionSoftnessPreference = input.transitionSoftnessPreference ?? 0;
+  const settleStabilizationPreference = input.settleStabilizationPreference ?? 0;
+  const formationIdentityPreference = input.formationIdentityPreference ?? 0;
+  const environmentIdentityIntensity = input.environmentIdentityIntensity ?? 0;
+  const residueContinuityPreference = input.residueContinuityPreference ?? 0;
+  const orbitRadiusX = input.width * (0.17 + emphasis * 0.08 + reactionEnergyPreference * 0.015 + formationExpansionPreference * 0.014 + transitionSoftnessPreference * 0.008 + formationIdentityPreference * 0.008 - formationCompressionPreference * 0.01 - settleStabilizationPreference * 0.006 - residueContinuityPreference * 0.004);
   const orbitRadiusY = input.height * 0.06;
 
   if (formationType === "DUAL_ORBIT") {
     const left = {
       x: cubeBeaconCenterX - orbitRadiusX + Math.sin(choreographyPhase) * 5,
-      y: cubeBeaconCenterY - input.height * 0.02 + Math.cos(choreographyPhase) * orbitRadiusY * 0.4,
+      y: cubeBeaconCenterY - input.height * 0.02 + Math.cos(choreographyPhase) * orbitRadiusY * (0.4 + formationIdentityPreference * 0.03),
     };
     const right = {
       x: cubeBeaconCenterX + orbitRadiusX - Math.sin(choreographyPhase) * 5,
-      y: cubeBeaconCenterY - input.height * 0.02 - Math.cos(choreographyPhase) * orbitRadiusY * 0.4,
+      y: cubeBeaconCenterY - input.height * 0.02 - Math.cos(choreographyPhase) * orbitRadiusY * (0.4 + formationIdentityPreference * 0.03),
     };
     return buildPlanFromPositions(formationType, [left, right], [0, Math.PI], [-3, 3], choreographyPhase);
   }
@@ -113,8 +123,8 @@ export function buildGovernedFormationPlan(input: GovernedFormationControllerInp
     return buildPlanFromPositions(
       formationType,
       [
-        { x: input.chamberCenterX - input.width * (0.2 + emphasis * 0.07), y: input.horizonY - 34 },
-        { x: input.chamberCenterX + input.width * (0.2 + emphasis * 0.07), y: input.horizonY - 34 },
+        { x: input.chamberCenterX - input.width * (0.2 + emphasis * 0.07 + formationIdentityPreference * 0.02), y: input.horizonY - (34 + environmentIdentityIntensity * 1.4) },
+        { x: input.chamberCenterX + input.width * (0.2 + emphasis * 0.07 + formationIdentityPreference * 0.02), y: input.horizonY - (34 + environmentIdentityIntensity * 1.4) },
       ],
       [0, Math.PI],
       [-4, 4],
@@ -125,13 +135,13 @@ export function buildGovernedFormationPlan(input: GovernedFormationControllerInp
   if (formationType === "STAGGERED_PASS") {
     const foregroundRight = {
       x: input.chamberCenterX + input.width * (0.24 + emphasis * 0.05 + groupReadabilityPreference * 0.03 + formationExpansionPreference * 0.02),
-      y: input.horizonY - (26 + reactionEnergyPreference * 2 + movementCarryoverPreference * 1.5),
+      y: input.horizonY - (26 + reactionEnergyPreference * 2 + movementCarryoverPreference * 1.5 - transitionSoftnessPreference * 0.8 + settleStabilizationPreference * 0.4 + environmentIdentityIntensity * 0.8),
     };
     const backgroundLeft = {
       x: input.frameIndex === 2 && input.mode === "motion-preview"
         ? input.chamberCenterX + input.width * (0.14 + beaconClearancePreference * 0.04)
         : input.chamberCenterX - input.width * (0.23 + emphasis * 0.04 + beaconClearancePreference * 0.04),
-      y: input.horizonY - (50 + groupReadabilityPreference * 5 + movementCarryoverPreference * 1.2 - formationCompressionPreference * 4),
+      y: input.horizonY - (50 + groupReadabilityPreference * 5 + movementCarryoverPreference * 1.2 - formationCompressionPreference * 4 + transitionSoftnessPreference * 0.7 + settleStabilizationPreference * 0.5 + residueContinuityPreference * 1.2),
     };
     return buildPlanFromPositions(formationType, [foregroundRight, backgroundLeft], [0, Math.PI], [5, -7], choreographyPhase);
   }
@@ -140,16 +150,16 @@ export function buildGovernedFormationPlan(input: GovernedFormationControllerInp
     "BEACON_TRIANGULATION",
     [
       {
-        x: input.beaconX - input.width * (0.18 + emphasis * 0.04 + beaconClearancePreference * 0.06),
-        y: input.horizonY - (46 + groupReadabilityPreference * 3 + movementCarryoverPreference * 1.2),
+        x: input.beaconX - input.width * (0.18 + emphasis * 0.04 + beaconClearancePreference * 0.06 + formationIdentityPreference * 0.02),
+        y: input.horizonY - (46 + groupReadabilityPreference * 3 + movementCarryoverPreference * 1.2 + transitionSoftnessPreference * 0.6 + environmentIdentityIntensity * 0.8),
       },
       {
-        x: input.beaconX + input.width * (0.18 + emphasis * 0.04 + beaconClearancePreference * 0.06),
-        y: input.horizonY - (46 + groupReadabilityPreference * 3 + movementCarryoverPreference * 1.2),
+        x: input.beaconX + input.width * (0.18 + emphasis * 0.04 + beaconClearancePreference * 0.06 + formationIdentityPreference * 0.02),
+        y: input.horizonY - (46 + groupReadabilityPreference * 3 + movementCarryoverPreference * 1.2 + transitionSoftnessPreference * 0.6 + environmentIdentityIntensity * 0.8),
       },
       {
         x: input.chamberCenterX,
-        y: input.horizonY + 6 + emphasis * 6 - compositionBalancePreference * 4 - reactionEnergyPreference * 3 - movementCarryoverPreference * 2,
+        y: input.horizonY + 6 + emphasis * 6 - compositionBalancePreference * 4 - reactionEnergyPreference * 3 - movementCarryoverPreference * 2 + settleStabilizationPreference * 1.2 + residueContinuityPreference * 1.1,
       },
     ],
     [0, Math.PI, Math.PI / 2],

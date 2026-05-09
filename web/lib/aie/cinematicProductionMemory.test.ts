@@ -559,6 +559,26 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
     assert.ok((microDiagnostics.reaction_carryover_score ?? 0) >= 94);
     assert.ok((microDiagnostics.decay_inertia_score ?? 0) >= 92);
     assert.ok((microDiagnostics.momentum_camera_compatibility_score ?? 0) >= 92);
+    assert.equal(microDiagnostics.active_blend_phase, "BUILD_TO_REVEAL");
+    assert.equal(microDiagnostics.from_beat, "ANTICIPATION");
+    assert.equal(microDiagnostics.to_beat, "BEACON_REVEAL");
+    assert.ok((microDiagnostics.blend_progress ?? 0) >= 0.95);
+    assert.ok((microDiagnostics.blend_weight ?? 0) >= 0.95);
+    assert.ok((microDiagnostics.transition_smoothness_score ?? 0) >= 95);
+    assert.ok((microDiagnostics.visual_continuity_score ?? 0) >= 94);
+    assert.ok((microDiagnostics.reveal_transition_preservation_score ?? 0) >= 95);
+    assert.ok((microDiagnostics.response_to_aftermath_score ?? 0) >= 94);
+    assert.ok((microDiagnostics.settle_blend_stability_score ?? 0) >= 92);
+    assert.ok((microDiagnostics.blend_camera_compatibility_score ?? 0) >= 92);
+    assert.equal(microDiagnostics.active_scene_identity, "REACTIVE_ENVIRONMENT_REVEAL");
+    assert.ok((microDiagnostics.cohesion_weight ?? 0) >= 0.9);
+    assert.ok((microDiagnostics.visual_language_score ?? 0) >= 94);
+    assert.ok((microDiagnostics.phrase_continuity_score ?? 0) >= 95);
+    assert.ok((microDiagnostics.scene_cohesion_score ?? 0) >= 95);
+    assert.ok((microDiagnostics.environment_identity_score ?? 0) >= 94);
+    assert.ok((microDiagnostics.formation_identity_score ?? 0) >= 92);
+    assert.ok((microDiagnostics.final_composition_score ?? 0) >= 92);
+    assert.ok((microDiagnostics.cohesion_camera_compatibility_score ?? 0) >= 92);
     assert.match(microDiagnostics.articulated_entity_summary ?? "", /Segmented drone/i);
     assert.match(microDiagnostics.pose_governance_summary ?? "", /rollback governance/i);
     assert.match(microDiagnostics.multi_entity_choreography_summary ?? "", /formation|drones|choreography/i);
@@ -567,6 +587,8 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
     assert.match(microDiagnostics.cinematic_focus_flow_summary ?? "", /BEACON|continuity|camera/i);
     assert.match(microDiagnostics.cinematic_tension_curve_summary ?? "", /RESOLUTION|continuity|decay stability/i);
     assert.match(microDiagnostics.cinematic_momentum_flow_summary ?? "", /STABILIZATION|carry|decay inertia/i);
+    assert.match(microDiagnostics.cinematic_transition_blend_summary ?? "", /blend|smooth|continuity/i);
+    assert.match(microDiagnostics.cinematic_scene_cohesion_summary ?? "", /scene cohesion|visual language|phrase continuity/i);
     assert.ok(microDiagnostics.entity_ids?.every((entry) => /governed-segmented-drone-00[1-3]/.test(entry)) ?? false);
     assert.match(microDiagnostics.shot_engine_summary ?? "", /STATIC_ESTABLISHING|REVEAL_ARC|WIDE_ENVIRONMENT/i);
     assert.match(microDiagnostics.camera_governance_summary ?? "", /transition smoothness/i);
@@ -581,9 +603,12 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
     let sawFocusRollback = false;
     let sawTensionRollback = false;
     let sawMomentumRollback = false;
+    let sawBlendRollback = false;
+    let sawCohesionRollback = false;
     const beatTypes = motionDiagnostics.frame_diagnostics.map((frame) => frame.active_beat_type);
     const tensionPhases = motionDiagnostics.frame_diagnostics.map((frame) => frame.active_tension_phase);
     const momentumPhases = motionDiagnostics.frame_diagnostics.map((frame) => frame.active_momentum_phase);
+    const blendPhases = motionDiagnostics.frame_diagnostics.map((frame) => frame.active_blend_phase);
     assert.ok(beatTypes.includes("ANTICIPATION"));
     assert.ok(beatTypes.includes("BEACON_REVEAL"));
     assert.ok(beatTypes.includes("DRONE_RESPONSE"));
@@ -597,6 +622,9 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
     assert.ok(momentumPhases.includes("REVEAL_PROPAGATION"));
     assert.ok(momentumPhases.includes("REACTION_CARRYOVER"));
     assert.ok(momentumPhases.includes("STABILIZATION"));
+    assert.ok(blendPhases.includes("BUILD_TO_REVEAL"));
+    assert.ok(blendPhases.includes("REVEAL_TO_RESPONSE"));
+    assert.ok(blendPhases.includes("AFTERMATH_TO_SETTLE") || blendPhases.includes("REVEAL_TO_RESPONSE"));
     for (const frame of motionDiagnostics.frame_diagnostics) {
       assert.ok(frame.cube_to_beacon_distance >= 40);
       assert.ok(frame.spacing_drift <= 3);
@@ -673,17 +701,47 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
       assert.ok((frame.reaction_carryover_score ?? 0) >= 94);
       assert.ok((frame.decay_inertia_score ?? 0) >= 92);
       assert.ok((frame.momentum_camera_compatibility_score ?? 0) >= 92);
+      assert.ok(typeof frame.active_blend_phase === "string");
+      assert.ok(typeof frame.from_beat === "string");
+      assert.ok(typeof frame.to_beat === "string");
+      assert.ok((frame.blend_progress ?? 0) >= 0);
+      assert.ok((frame.blend_progress ?? 0) <= 1);
+      assert.ok((frame.blend_weight ?? 0) >= 0.2);
+      assert.ok((frame.blend_weight ?? 0) <= 1);
+      assert.ok((frame.transition_smoothness_score ?? 0) >= 95);
+      assert.ok((frame.visual_continuity_score ?? 0) >= 94);
+      assert.ok((frame.reveal_transition_preservation_score ?? 0) >= 95);
+      assert.ok((frame.response_to_aftermath_score ?? 0) >= 94);
+      assert.ok((frame.settle_blend_stability_score ?? 0) >= 92);
+      assert.ok((frame.blend_camera_compatibility_score ?? 0) >= 92);
+      assert.ok(typeof frame.active_scene_identity === "string");
+      assert.ok((frame.cohesion_weight ?? 0) >= 0.72);
+      assert.ok((frame.cohesion_weight ?? 0) <= 0.98);
+      assert.ok((frame.visual_language_score ?? 0) >= 94);
+      assert.ok((frame.phrase_continuity_score ?? 0) >= 95);
+      assert.ok((frame.scene_cohesion_score ?? 0) >= 95);
+      assert.ok((frame.environment_identity_score ?? 0) >= 94);
+      assert.ok((frame.formation_identity_score ?? 0) >= 92);
+      assert.ok((frame.final_composition_score ?? 0) >= 92);
+      assert.ok((frame.cohesion_camera_compatibility_score ?? 0) >= 92);
       assert.ok((frame.entity_ids?.length ?? 0) === frame.entity_count);
       assert.ok(frame.entity_ids?.every((entry) => /governed-segmented-drone-00[1-3]/.test(entry)) ?? false);
       if (frame.active_beat_type === "ANTICIPATION") {
         assert.equal(frame.active_tension_phase, "LOW_BUILD");
         assert.equal(frame.active_momentum_phase, "MOMENTUM_BUILD");
+        assert.equal(frame.active_blend_phase, "BUILD_TO_REVEAL");
+        assert.equal(frame.active_scene_identity, "SCI_FI_BEACON_CHAMBER");
+        assert.equal(frame.from_beat, "ANTICIPATION");
+        assert.equal(frame.to_beat, "BEACON_REVEAL");
       }
       if (frame.active_beat_type === "BEACON_REVEAL") {
         assert.equal(frame.active_tension_phase, "PEAK_REVEAL");
         assert.ok((frame.tension_intensity ?? 0) >= 0.95);
         assert.equal(frame.active_momentum_phase, "REVEAL_PROPAGATION");
         assert.ok((frame.momentum_intensity ?? 0) >= 0.95);
+        assert.equal(frame.active_blend_phase, "BUILD_TO_REVEAL");
+        assert.equal(frame.active_scene_identity, "REACTIVE_ENVIRONMENT_REVEAL");
+        assert.ok((frame.blend_weight ?? 0) >= 0.95);
       }
       if (frame.active_beat_type === "DRONE_RESPONSE") {
         assert.equal(frame.active_tension_phase, "PEAK_REVEAL");
@@ -691,6 +749,10 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
         assert.ok((frame.rejected_tension_transition_count ?? 0) >= 1);
         assert.equal(frame.active_momentum_phase, "REACTION_CARRYOVER");
         assert.ok((frame.reaction_carryover_score ?? 0) >= 94);
+        assert.equal(frame.active_blend_phase, "REVEAL_TO_RESPONSE");
+        assert.equal(frame.active_scene_identity, "MECHANICAL_DRONE_RITUAL");
+        assert.equal(frame.from_beat, "BEACON_REVEAL");
+        assert.equal(frame.to_beat, "DRONE_RESPONSE");
       }
       if (frame.active_beat_type === "AFTERMATH_HOLD") {
         assert.equal(frame.active_tension_phase, "CONTROLLED_DECAY");
@@ -698,11 +760,21 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
         assert.equal(frame.active_momentum_phase, "REACTION_CARRYOVER");
         assert.equal(frame.rollback_restored_momentum, true);
         assert.ok((frame.rejected_momentum_transition_count ?? 0) >= 1);
+        assert.equal(frame.active_blend_phase, "REVEAL_TO_RESPONSE");
+        assert.equal(frame.rollback_restored_blend, true);
+        assert.ok((frame.rejected_blend_transition_count ?? 0) >= 1);
+        assert.equal(frame.rollback_restored_cohesion, false);
+        assert.equal(frame.active_scene_identity, "ATMOSPHERIC_AFTERIMAGE");
       }
       if (frame.active_beat_type === "SETTLE") {
         assert.equal(frame.active_tension_phase, "RESOLUTION");
         assert.equal(frame.active_momentum_phase, "STABILIZATION");
         assert.ok((frame.momentum_intensity ?? 0) <= 0.25);
+        assert.equal(frame.active_blend_phase, "AFTERMATH_TO_SETTLE");
+        assert.equal(frame.rollback_restored_cohesion, true);
+        assert.ok((frame.rejected_cohesion_transition_count ?? 0) >= 1);
+        assert.equal(frame.active_scene_identity, "ATMOSPHERIC_AFTERIMAGE");
+        assert.ok((frame.blend_weight ?? 0) <= 0.25);
       }
       assert.ok(typeof frame.active_shot_type === "string");
       assert.ok((frame.orbital_radius ?? 0) >= 5);
@@ -720,11 +792,15 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
       assert.match(frame.cinematic_focus_flow_overlay ?? "", /continuity|readability|rollback/i);
       assert.match(frame.cinematic_tension_curve_overlay ?? "", /tension|rollback|readability|decay/i);
       assert.match(frame.cinematic_momentum_flow_overlay ?? "", /momentum|rollback|continuity|carry/i);
+      assert.match(frame.cinematic_transition_blend_overlay ?? "", /blend|rollback|REVEAL|AFTERMATH/i);
+      assert.match(frame.cinematic_scene_cohesion_overlay ?? "", /cohesion|scene|rollback/i);
       sawFormationRollback ||= frame.rollback_restored_formation === true;
       sawStagingRollback ||= frame.rollback_restored_staging === true;
       sawFocusRollback ||= frame.rollback_restored_focus === true;
       sawTensionRollback ||= frame.rollback_restored_tension === true;
       sawMomentumRollback ||= frame.rollback_restored_momentum === true;
+      sawBlendRollback ||= frame.rollback_restored_blend === true;
+      sawCohesionRollback ||= frame.rollback_restored_cohesion === true;
     }
 
     assert.ok(motionDiagnostics.camera_stability_score >= 96);
@@ -767,6 +843,26 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
     assert.ok((motionDiagnostics.reaction_carryover_score ?? 0) >= 94);
     assert.ok((motionDiagnostics.decay_inertia_score ?? 0) >= 92);
     assert.ok((motionDiagnostics.momentum_camera_compatibility_score ?? 0) >= 92);
+    assert.equal(motionDiagnostics.active_blend_phase, "AFTERMATH_TO_SETTLE");
+    assert.equal(motionDiagnostics.from_beat, "AFTERMATH_HOLD");
+    assert.equal(motionDiagnostics.to_beat, "SETTLE");
+    assert.ok((motionDiagnostics.blend_weight ?? 0) <= 0.25);
+    assert.ok((motionDiagnostics.transition_smoothness_score ?? 0) >= 95);
+    assert.ok((motionDiagnostics.visual_continuity_score ?? 0) >= 94);
+    assert.ok((motionDiagnostics.reveal_transition_preservation_score ?? 0) >= 95);
+    assert.ok((motionDiagnostics.response_to_aftermath_score ?? 0) >= 94);
+    assert.ok((motionDiagnostics.settle_blend_stability_score ?? 0) >= 92);
+    assert.ok((motionDiagnostics.blend_camera_compatibility_score ?? 0) >= 92);
+    assert.equal(motionDiagnostics.active_scene_identity, "ATMOSPHERIC_AFTERIMAGE");
+    assert.ok((motionDiagnostics.cohesion_weight ?? 0) >= 0.8);
+    assert.ok((motionDiagnostics.visual_language_score ?? 0) >= 94);
+    assert.ok((motionDiagnostics.phrase_continuity_score ?? 0) >= 95);
+    assert.ok((motionDiagnostics.scene_cohesion_score ?? 0) >= 95);
+    assert.ok((motionDiagnostics.environment_identity_score ?? 0) >= 94);
+    assert.ok((motionDiagnostics.formation_identity_score ?? 0) >= 92);
+    assert.ok((motionDiagnostics.final_composition_score ?? 0) >= 92);
+    assert.ok((motionDiagnostics.cohesion_camera_compatibility_score ?? 0) >= 92);
+    assert.equal(motionDiagnostics.rollback_restored_cohesion, true);
     assert.ok(motionDiagnostics.frame_diagnostics.some((entry) => entry.rollback_restored_state === true));
     assert.ok(motionDiagnostics.frame_diagnostics.some((entry) => entry.rollback_restored_pose === true));
     assert.ok(sawFormationRollback);
@@ -774,11 +870,15 @@ test("governed preview diagnostics keep reactive cinematic shot transitions dete
     assert.ok(sawFocusRollback);
     assert.ok(sawTensionRollback);
     assert.ok(sawMomentumRollback);
+    assert.ok(sawBlendRollback);
+    assert.ok(sawCohesionRollback);
     assert.ok((motionDiagnostics.rejected_formation_transition_count ?? 0) >= 1);
     assert.ok((motionDiagnostics.rejected_staging_transition_count ?? 0) >= 1);
     assert.ok((motionDiagnostics.rejected_focus_transition_count ?? 0) >= 1);
     assert.ok((motionDiagnostics.rejected_tension_transition_count ?? 0) >= 1);
     assert.ok((motionDiagnostics.rejected_momentum_transition_count ?? 0) >= 1);
+    assert.ok((motionDiagnostics.rejected_blend_transition_count ?? 0) >= 1);
+    assert.ok((motionDiagnostics.rejected_cohesion_transition_count ?? 0) >= 1);
     assert.equal(motionDiagnostics.rollback_integrity_status, "PASS");
   } finally {
     await rm(tempRoot, { recursive: true, force: true });

@@ -48,12 +48,22 @@ export type GovernedCameraRigFrameInput = {
   escalationFramingPreference?: number;
   propagationFramingPreference?: number;
   revealCarryoverPreference?: number;
+  transitionSoftnessPreference?: number;
+  revealToResponseCarryPreference?: number;
   decayStabilizationPreference?: number;
   inertiaStabilizationPreference?: number;
+  aftermathEasingPreference?: number;
   settleCompositionPreference?: number;
   settleRecoveryPreference?: number;
+  settleStabilizationPreference?: number;
+  sceneIdentityFramingPreference?: number;
+  globalCompositionConsistencyPreference?: number;
+  chamberReadabilityPreference?: number;
+  finalCompositionStabilizationPreference?: number;
+  phraseLevelContinuityPriority?: number;
   pressureReadabilityPriority?: number;
   pacingContinuityPreference?: number;
+  visualContinuityPriority?: number;
   compositionPriority?: number;
   chamberCenterX?: number;
   chamberCenterY?: number;
@@ -135,17 +145,17 @@ export function computeGovernedCameraRigFrame(input: GovernedCameraRigFrameInput
 
   const weightedTargetX = (
     input.anchorX * 0.34
-    + input.beaconX * (0.12 + (input.revealPreference ?? 0.5) * 0.06 + (input.revealProtectionPreference ?? 0.5) * 0.05 + (input.escalationFramingPreference ?? 0.5) * 0.02 + (input.propagationFramingPreference ?? 0.5) * 0.02 + (input.revealCarryoverPreference ?? 0.5) * 0.02)
-    + (input.entityX ?? input.anchorX) * (0.15 + (input.groupReadabilityPreference ?? 0.5) * 0.05 + (input.pressureReadabilityPriority ?? 0.5) * 0.03 + (input.pacingContinuityPreference ?? 0.5) * 0.02)
+    + input.beaconX * (0.12 + (input.revealPreference ?? 0.5) * 0.06 + (input.revealProtectionPreference ?? 0.5) * 0.05 + (input.escalationFramingPreference ?? 0.5) * 0.02 + (input.propagationFramingPreference ?? 0.5) * 0.02 + (input.revealCarryoverPreference ?? 0.5) * 0.02 + (input.transitionSoftnessPreference ?? 0.5) * 0.02 + (input.revealToResponseCarryPreference ?? 0.5) * 0.02 + (input.sceneIdentityFramingPreference ?? 0.5) * 0.02 + (input.chamberReadabilityPreference ?? 0.5) * 0.02)
+    + (input.entityX ?? input.anchorX) * (0.15 + (input.groupReadabilityPreference ?? 0.5) * 0.05 + (input.pressureReadabilityPriority ?? 0.5) * 0.03 + (input.pacingContinuityPreference ?? 0.5) * 0.02 + (input.visualContinuityPriority ?? 0.5) * 0.02 + (input.phraseLevelContinuityPriority ?? 0.5) * 0.02)
     + (input.focusX ?? input.entityX ?? input.anchorX) * (0.2 + (input.focusSubjectPriority ?? 0.5) * 0.08)
-    + (input.chamberCenterX ?? input.width * 0.5) * (0.12 + (input.compositionPriority ?? 0.7) * 0.05 + (input.settleCompositionPreference ?? 0.5) * 0.03 + (input.settleRecoveryPreference ?? 0.5) * 0.02)
+    + (input.chamberCenterX ?? input.width * 0.5) * (0.12 + (input.compositionPriority ?? 0.7) * 0.05 + (input.settleCompositionPreference ?? 0.5) * 0.03 + (input.settleRecoveryPreference ?? 0.5) * 0.02 + (input.settleStabilizationPreference ?? 0.5) * 0.02 + (input.globalCompositionConsistencyPreference ?? 0.5) * 0.02 + (input.finalCompositionStabilizationPreference ?? 0.5) * 0.02)
   ) / input.width;
   const weightedTargetY = (
     input.anchorY * 0.34
-    + input.beaconY * (0.11 + (input.revealPreference ?? 0.5) * 0.05 + (input.revealProtectionPreference ?? 0.5) * 0.04 + (input.escalationFramingPreference ?? 0.5) * 0.02 + (input.propagationFramingPreference ?? 0.5) * 0.02 + (input.revealCarryoverPreference ?? 0.5) * 0.02)
-    + (input.entityY ?? input.anchorY) * (0.18 + (input.groupReadabilityPreference ?? 0.5) * 0.04 + (input.pressureReadabilityPriority ?? 0.5) * 0.02 + (input.pacingContinuityPreference ?? 0.5) * 0.02)
+    + input.beaconY * (0.11 + (input.revealPreference ?? 0.5) * 0.05 + (input.revealProtectionPreference ?? 0.5) * 0.04 + (input.escalationFramingPreference ?? 0.5) * 0.02 + (input.propagationFramingPreference ?? 0.5) * 0.02 + (input.revealCarryoverPreference ?? 0.5) * 0.02 + (input.transitionSoftnessPreference ?? 0.5) * 0.02 + (input.revealToResponseCarryPreference ?? 0.5) * 0.02 + (input.sceneIdentityFramingPreference ?? 0.5) * 0.02 + (input.chamberReadabilityPreference ?? 0.5) * 0.02)
+    + (input.entityY ?? input.anchorY) * (0.18 + (input.groupReadabilityPreference ?? 0.5) * 0.04 + (input.pressureReadabilityPriority ?? 0.5) * 0.02 + (input.pacingContinuityPreference ?? 0.5) * 0.02 + (input.visualContinuityPriority ?? 0.5) * 0.02 + (input.phraseLevelContinuityPriority ?? 0.5) * 0.02)
     + (input.focusY ?? input.entityY ?? input.anchorY) * (0.19 + (input.focusSubjectPriority ?? 0.5) * 0.06)
-    + (input.chamberCenterY ?? input.height * 0.56) * (0.15 + (input.compositionPriority ?? 0.7) * 0.04 + (input.decayStabilizationPreference ?? 0.5) * 0.02 + (input.inertiaStabilizationPreference ?? 0.5) * 0.02 + (input.settleRecoveryPreference ?? 0.5) * 0.02)
+    + (input.chamberCenterY ?? input.height * 0.56) * (0.15 + (input.compositionPriority ?? 0.7) * 0.04 + (input.decayStabilizationPreference ?? 0.5) * 0.02 + (input.inertiaStabilizationPreference ?? 0.5) * 0.02 + (input.aftermathEasingPreference ?? 0.5) * 0.02 + (input.settleRecoveryPreference ?? 0.5) * 0.02 + (input.settleStabilizationPreference ?? 0.5) * 0.02 + (input.globalCompositionConsistencyPreference ?? 0.5) * 0.02 + (input.finalCompositionStabilizationPreference ?? 0.5) * 0.02)
   ) / input.height;
   const desiredTarget: Vec3 = {
     x: weightedTargetX - 0.5,
