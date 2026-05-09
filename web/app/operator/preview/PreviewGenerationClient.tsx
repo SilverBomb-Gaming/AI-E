@@ -2504,6 +2504,10 @@ export function PreviewGenerationClient() {
                 <p><strong className="text-ink">Character renders executed:</strong> {animeCharacterHarnessState.characterRenderExecutionCount}</p>
                 <p><strong className="text-ink">Failed character renders:</strong> {animeCharacterHarnessState.failedCharacterRenderCount}</p>
                 <p><strong className="text-ink">Rollback restored latest character run:</strong> {animeCharacterHarnessState.rollbackRestoredCharacterRun ? "yes" : "no"}</p>
+                <p><strong className="text-ink">Scaffold status:</strong> {animeCharacterHarnessState.scaffoldStatus}</p>
+                <p><strong className="text-ink">Renderer path:</strong> {animeCharacterHarnessState.rendererPath}</p>
+                <p><strong className="text-ink">Fallback dominance:</strong> {animeCharacterHarnessState.fallbackPrimitiveDominance ? "yes" : "no"}</p>
+                <p><strong className="text-ink">User visual review ready:</strong> {animeCharacterHarnessState.visualReviewReady ? "yes" : "no"}</p>
                 {animeCharacterHarnessState.lastCharacterFailureType ? <p><strong className="text-ink">Last failure:</strong> {animeCharacterHarnessState.lastCharacterFailureType}</p> : null}
               </div>
             ) : (
@@ -2536,6 +2540,9 @@ export function PreviewGenerationClient() {
                   <p><strong className="text-ink">Average scene integration:</strong> {animeCharacterSummary.averageCharacterSceneIntegration}/100</p>
                   <p><strong className="text-ink">Average focus priority:</strong> {animeCharacterSummary.averageCharacterFocusPriority}/100</p>
                   <p><strong className="text-ink">Rollback pass rate:</strong> {Math.round(animeCharacterSummary.rollbackPassRate * 100)}%</p>
+                    <p><strong className="text-ink">Scaffold status:</strong> {animeCharacterSummary.scaffoldStatus}</p>
+                    <p><strong className="text-ink">Visual review ready:</strong> {animeCharacterSummary.visualReviewReadyCount}</p>
+                    <p><strong className="text-ink">Fallback primitive dominance:</strong> {animeCharacterSummary.fallbackPrimitiveDominanceCount}</p>
                   {animeCharacterSummary.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect runtime layer:</strong> {animeCharacterSummary.recommendedRuntimeLayer}</p> : null}
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
@@ -2550,6 +2557,12 @@ export function PreviewGenerationClient() {
                         <p><strong className="text-ink">Character approval:</strong> {report.characterApproved ? "approved" : "blocked"}</p>
                         <p><strong className="text-ink">Pose:</strong> {report.poseLabel}</p>
                         <p><strong className="text-ink">Expression:</strong> {report.expressionLabel}</p>
+                        <p><strong className="text-ink">Scaffold status:</strong> {report.scaffoldStatus}</p>
+                        <p><strong className="text-ink">Renderer path:</strong> {report.truthCheck.renderer_path}</p>
+                        <p><strong className="text-ink">Character pixels generated:</strong> {report.truthCheck.character_pixels_generated ? "yes" : "no"}</p>
+                        <p><strong className="text-ink">Character primary subject:</strong> {report.truthCheck.character_primary_subject ? "yes" : "no"}</p>
+                        <p><strong className="text-ink">Fallback primitive dominance:</strong> {report.truthCheck.fallback_primitive_dominance ? "yes" : "no"}</p>
+                        <p><strong className="text-ink">Diagnostics match output:</strong> {report.truthCheck.diagnostics_match_rendered_output ? "yes" : "no"}</p>
                         {report.compatibility ? <p><strong className="text-ink">Compatibility score:</strong> {report.compatibility.compatibilityScore}/100</p> : null}
                         {report.metrics ? <p><strong className="text-ink">Face readability:</strong> {report.metrics.characterFaceReadability}/100</p> : null}
                         {report.metrics ? <p><strong className="text-ink">Silhouette:</strong> {report.metrics.characterSilhouette}/100</p> : null}
@@ -2561,6 +2574,10 @@ export function PreviewGenerationClient() {
                         {report.recoveryRecommendation ? <p><strong className="text-ink">Recovery:</strong> {report.recoveryRecommendation.recommendation}</p> : null}
                         <p><strong className="text-ink">Rollback visible:</strong> {report.rollbackVisible ? "yes" : "no"}</p>
                         <p><strong className="text-ink">Rollback restored character run:</strong> {report.rollbackRestoredCharacterRun ? "yes" : "no"}</p>
+                        {report.visualReviewPackage ? <p><strong className="text-ink">Visual review:</strong> {report.visualReviewPackage.reviewLabel}</p> : null}
+                        {report.visualReviewPackage?.firstPngToInspect ? <p><strong className="text-ink">First PNG:</strong> {report.visualReviewPackage.firstPngToInspect}</p> : null}
+                        {report.visualReviewPackage?.gifToInspect ? <p><strong className="text-ink">GIF:</strong> {report.visualReviewPackage.gifToInspect}</p> : null}
+                        {report.visualReviewPackage?.operatorSummaryPath ? <p><strong className="text-ink">Review summary:</strong> {report.visualReviewPackage.operatorSummaryPath}</p> : null}
                         {report.failureReason ? <p><strong className="text-ink">Failure reason:</strong> {report.failureReason}</p> : null}
                       </div>
                     </article>

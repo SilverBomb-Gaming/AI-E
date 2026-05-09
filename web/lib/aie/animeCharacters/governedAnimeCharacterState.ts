@@ -39,6 +39,39 @@ export type AnimeCharacterExpressionId =
 
 export type AnimeCharacterExecutionStatus = "PENDING" | "RUNNING" | "PASSED" | "FAILED";
 export type AnimeCharacterSafetyStatus = "APPROVED" | "REJECTED";
+export type AnimeCharacterRendererPath = "CHARACTER_FIRST" | "FALLBACK_PRIMITIVE";
+export type AnimeCharacterScaffoldStatus = "SCAFFOLD_ACTIVE" | "PARTIAL_REAL_OUTPUT" | "REAL_OUTPUT_ACTIVE";
+export type AnimeCharacterVisualReviewLabel = "USER_VISUAL_CHECK_READY" | "NOT_READY_SCAFFOLD_FALLBACK_STILL_ACTIVE";
+
+export type AnimeCharacterTruthCheck = {
+  renderer_path: AnimeCharacterRendererPath;
+  character_pixels_generated: boolean;
+  character_primary_subject: boolean;
+  fallback_primitive_dominance: boolean;
+  diagnostics_match_rendered_output: boolean;
+  scaffold_status: AnimeCharacterScaffoldStatus;
+};
+
+export type AnimeCharacterVisualReviewPackage = {
+  reviewLabel: AnimeCharacterVisualReviewLabel;
+  sandboxDirectory: string;
+  firstPngToInspect: string | null;
+  gifToInspect: string | null;
+  manifestPath: string | null;
+  diagnosticsPath: string | null;
+  operatorSummaryPath: string | null;
+  framePaths: string[];
+  browserPreviewPaths: string[];
+  characterVisible: boolean;
+  faceReadable: boolean;
+  eyesVisible: boolean;
+  hairSilhouetteObvious: boolean;
+  characterPrimarySubject: boolean;
+  backgroundSupportsCharacter: boolean;
+  fallbackPrimitiveDominance: boolean;
+  shouldUserInspect: boolean;
+  visualReviewNotes: string[];
+};
 
 export type GovernedAnimeCharacterState = {
   activeCharacterProfileId: string;
@@ -47,6 +80,10 @@ export type GovernedAnimeCharacterState = {
   failedCharacterRenderCount: number;
   rollbackRestoredCharacterRun: boolean;
   lastCharacterFailureType: AnimeCharacterFailureType | null;
+  scaffoldStatus: AnimeCharacterScaffoldStatus;
+  rendererPath: AnimeCharacterRendererPath;
+  fallbackPrimitiveDominance: boolean;
+  visualReviewReady: boolean;
 };
 
 export type AnimeCharacterProfile = {
@@ -156,6 +193,7 @@ export type AnimeCharacterRenderDiagnostics = {
   rollback_restored_character_run: boolean;
   failed_character_render_count: number;
   last_character_failure_type: AnimeCharacterFailureType | null;
+  anime_character_truth_check: AnimeCharacterTruthCheck;
 };
 
 export type AnimeCharacterThresholdFailure = {
@@ -192,6 +230,7 @@ export type AnimeCharacterCompatibilityResult = {
   weakestMetric: string | null;
   recommendedRuntimeLayer: string | null;
   reasons: string[];
+  truthCheck: AnimeCharacterTruthCheck;
 };
 
 export type AnimeCharacterReport = {
@@ -220,6 +259,9 @@ export type AnimeCharacterReport = {
   failureAnalysis: AnimeCharacterFailureAnalysis | null;
   recoveryRecommendation: AnimeCharacterRecoveryRecommendation | null;
   recommendedRuntimeLayer: string | null;
+  truthCheck: AnimeCharacterTruthCheck;
+  scaffoldStatus: AnimeCharacterScaffoldStatus;
+  visualReviewPackage: AnimeCharacterVisualReviewPackage | null;
   rollbackSnapshot: AnimeCharacterRollbackSnapshot | null;
   rollbackVisible: boolean;
   rollbackRestoredCharacterRun: boolean;
@@ -246,6 +288,9 @@ export type AnimeCharacterDiagnosticSummary = {
   averageCharacterSceneIntegration: number;
   averageCharacterFocusPriority: number;
   rollbackPassRate: number;
+  scaffoldStatus: AnimeCharacterScaffoldStatus;
+  visualReviewReadyCount: number;
+  fallbackPrimitiveDominanceCount: number;
   recommendedNextAction:
     | "CONTINUE_CHARACTER_RENDERS"
     | "TUNE_CHARACTER_FRAMING"
@@ -297,7 +342,7 @@ function average(values: number[]): number {
 }
 
 export function buildGovernedAnimeCharacterState(input: {
-  report: Pick<AnimeCharacterReport, "characterProfileId" | "characterApproved" | "rollbackRestoredCharacterRun" | "failureAnalysis">;
+  report: Pick<AnimeCharacterReport, "characterProfileId" | "characterApproved" | "rollbackRestoredCharacterRun" | "failureAnalysis" | "truthCheck" | "visualReviewPackage">;
   priorReports?: AnimeCharacterReport[];
 }): GovernedAnimeCharacterState {
   const priorReports = input.priorReports ?? [];
@@ -310,6 +355,10 @@ export function buildGovernedAnimeCharacterState(input: {
     failedCharacterRenderCount: failedReports.length,
     rollbackRestoredCharacterRun: input.report.rollbackRestoredCharacterRun,
     lastCharacterFailureType: input.report.failureAnalysis?.failureType ?? null,
+    scaffoldStatus: input.report.truthCheck.scaffold_status,
+    rendererPath: input.report.truthCheck.renderer_path,
+    fallbackPrimitiveDominance: input.report.truthCheck.fallback_primitive_dominance,
+    visualReviewReady: input.report.visualReviewPackage?.reviewLabel === "USER_VISUAL_CHECK_READY",
   };
 }
 

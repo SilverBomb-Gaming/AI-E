@@ -26,10 +26,19 @@ export function summarizeAnimeCharacterDiagnostics(reports: AnimeCharacterReport
   const failedReports = reports.filter((entry) => !entry.pass);
   const rollbackPasses = metricReports.filter((entry) => entry.metrics?.rollbackIntegrityStatus === "PASS").length;
   const blockedReports = reports.filter((entry) => entry.safetyStatus === "REJECTED").length;
+  const fallbackPrimitiveDominanceCount = reports.filter((entry) => entry.truthCheck.fallback_primitive_dominance).length;
+  const visualReviewReadyCount = reports.filter((entry) => entry.visualReviewPackage?.reviewLabel === "USER_VISUAL_CHECK_READY").length;
   const recommendedRuntimeLayer = failedReports.find((entry) => entry.recommendedRuntimeLayer)?.recommendedRuntimeLayer ?? null;
+  const scaffoldStatus = reports.some((entry) => entry.scaffoldStatus === "SCAFFOLD_ACTIVE")
+    ? "SCAFFOLD_ACTIVE"
+    : reports.some((entry) => entry.scaffoldStatus === "PARTIAL_REAL_OUTPUT")
+      ? "PARTIAL_REAL_OUTPUT"
+      : reports.length > 0
+        ? "REAL_OUTPUT_ACTIVE"
+        : "SCAFFOLD_ACTIVE";
 
   let recommendedNextAction: AnimeCharacterDiagnosticSummary["recommendedNextAction"] = "CONTINUE_CHARACTER_RENDERS";
-  if (blockedReports > 0 || metricReports.some((entry) => entry.metrics?.rollbackIntegrityStatus !== "PASS")) {
+  if (blockedReports > 0 || fallbackPrimitiveDominanceCount > 0 || metricReports.some((entry) => entry.metrics?.rollbackIntegrityStatus !== "PASS")) {
     recommendedNextAction = "BLOCK_CHARACTER_RENDERING";
   } else if (failedReports.length > 0) {
     recommendedNextAction = "TUNE_CHARACTER_FRAMING";
@@ -48,6 +57,9 @@ export function summarizeAnimeCharacterDiagnostics(reports: AnimeCharacterReport
     averageCharacterSceneIntegration: averageAnimeCharacterMetric(reports, (report) => report.metrics?.characterSceneIntegration ?? 0),
     averageCharacterFocusPriority: averageAnimeCharacterMetric(reports, (report) => report.metrics?.characterFocusPriority ?? 0),
     rollbackPassRate: metricReports.length === 0 ? 0 : Number((rollbackPasses / metricReports.length).toFixed(2)),
+    scaffoldStatus,
+    visualReviewReadyCount,
+    fallbackPrimitiveDominanceCount,
     recommendedNextAction,
     recommendedRuntimeLayer,
   };

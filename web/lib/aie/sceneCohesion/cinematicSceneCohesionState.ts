@@ -5,7 +5,8 @@ export type SceneIdentityType =
   | "MECHANICAL_DRONE_RITUAL"
   | "REACTIVE_ENVIRONMENT_REVEAL"
   | "ATMOSPHERIC_AFTERIMAGE"
-  | "STABLE_FINAL_COMPOSITION";
+  | "STABLE_FINAL_COMPOSITION"
+  | "ANIME_CHARACTER_SCENE";
 
 export type CinematicSceneCohesionState = {
   activeSceneIdentity: SceneIdentityType;

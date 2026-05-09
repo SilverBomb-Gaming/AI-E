@@ -479,13 +479,27 @@ Remaining blocked cinematic escalations:
 
 AI-E now adds a dedicated governed anime character rendering harness for explicitly approved single-character previews. This phase deliberately allows bounded young-adult anime characters only through approved profiles, separate character approval, character-specific diagnostics, rollback snapshots, and the same low-duration sandbox preview contract.
 
+Scaffold Status: `✅ SCAFFOLD REMOVED — REAL OUTPUT ACTIVE` for approved anime character runs that pass the character-first truth check. Metadata-only approvals, old cube/beacon/drone preview files, or diagnostics that do not match generated character frames are treated as scaffold/fallback failures.
+
 Current Phase 1 progress:
 
 - the operator preview surface now exposes four approved character profiles only: `CELESTIAL_APPRENTICE`, `NEON_COURIER`, `RITUAL_TECH_ADEPT`, and `INDUSTRIAL_SENTINEL`
-- anime character execution requires both the existing manual preview governance approval and a separate explicit anime character approval before any micro-sequence or preview execution is attempted
+- anime character execution requires both the existing manual preview governance approval and a separate explicit anime character approval before any character-first preview package is generated
+- approved anime character runs now call the deterministic character-first renderer in `web/lib/aie/animeCharacters/animeCharacterPrimitiveRenderer.ts` instead of claiming success from the old cube/beacon/drone primitive preview path
+- the real renderer writes visible PNG frames, GIF preview, manifest, diagnostics JSON, and an operator visual-review summary under `.aie/governed_anime_character_preview_sandbox/<profile>-real-render-001/`
+- generated PNG frames visibly render a 2D anime character primitive as the primary subject: face, large eyes, hair silhouette, torso/jacket, arms, and supporting chamber/beacon background
 - each render snapshots character identity, pose template, expression template, style state, domain state, runtime configuration, diagnostics baseline, and approval state before execution
 - character diagnostics evaluate face readability, silhouette clarity, pose readability, anime style identity, expression stability, background suppression, character-scene integration, character focus priority, rollback integrity, and rollback pressure
-- the operator report shows selected profile, pose, expression, approval state, pass/fail, strongest and weakest character metrics, rollback state, failure classification, recovery recommendation, and recommended next action
+- each report includes an anime character truth check covering renderer path, generated character pixels, character-primary subject status, fallback primitive dominance, and diagnostics/render-output agreement
+- the operator report shows selected profile, pose, expression, approval state, scaffold status, renderer path, visual review readiness, first PNG, GIF, manifest, diagnostics JSON, visual summary path, pass/fail, strongest and weakest character metrics, rollback state, failure classification, recovery recommendation, and recommended next action
+
+Visual validation contract:
+
+- every implementation report must include `Scaffold Status` with exactly one of `🚧 SCAFFOLD ACTIVE`, `🧪 PARTIAL REAL OUTPUT`, or `✅ SCAFFOLD REMOVED — REAL OUTPUT ACTIVE`
+- the report must state what is still scaffolded and what is real, whether the user can visually validate the output, whether diagnostics match actual rendered output, and whether old fallback paths still dominate
+- the first PNG and GIF paths are the operator's visual proof points; `anime_character_manifest.json`, `anime_character_diagnostics.json`, and `operator_visual_review_summary.md` are the auditable metadata proof points
+- old files named `governed_preview_sequence_frame_*.png`, `governed_motion_preview_frame_*.png`, or diagnostics dominated by cube/beacon/drone primitive subjects must not pass anime character success
+- fallback primitive dominance sets scaffold status back to scaffold/fallback failure even if approval metadata or style-profile diagnostics look healthy
 
 Approved character profiles:
 
@@ -520,6 +534,7 @@ Governance preserved:
 - approved profiles cap cast size at one and block dialogue, lip-sync, combat choreography, explicit sexualization, unrestricted costume generation, long-form rendering, and unrestricted emotional acting
 - failed character renders preserve diagnostics, expose rollback state, restore rollback snapshots when needed, increment failure visibility, and block auto-escalation
 - this dedicated character harness is the only approved path for anime character prompts; the broader style/intensity/HIGH harnesses remain non-character, silhouette/readability-focused paths
+- long-form anime rendering, autonomous continuation, dialogue/lip-sync, combat choreography, unrestricted costume generation, cast expansion, and cross-run character persistence remain blocked
 
 ## Autonomous Session Loop
 

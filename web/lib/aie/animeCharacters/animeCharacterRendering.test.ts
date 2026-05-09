@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -14,8 +17,13 @@ import {
 } from "./governedAnimeCharacterRendering";
 import { classifyAnimeCharacterFailure } from "./animeCharacterFailureAnalyzer";
 import { getApprovedAnimeCharacterProfileById, listApprovedAnimeCharacterProfiles } from "./animeCharacterProfileRegistry";
-import { selectDefaultAnimeCharacterPose } from "./animeCharacterPoseTemplates";
+import { selectDefaultAnimeCharacterExpression, selectDefaultAnimeCharacterPose } from "./animeCharacterPoseTemplates";
 import { recommendAnimeCharacterRecovery } from "./animeCharacterRecovery";
+import { buildFallbackPrimitiveTruthCheck, executeAnimeCharacterPrimitiveRender } from "./animeCharacterPrimitiveRenderer";
+
+async function createTempRoot() {
+  return mkdtemp(path.join(tmpdir(), "aie-anime-character-"));
+}
 
 function buildPreviewDiagnostics(score: number, overrides?: Partial<Record<string, number | string | boolean>>) {
   return {
@@ -94,46 +102,11 @@ function buildReadyPrerequisiteState(diagnostics: ReturnType<typeof buildPreview
 }
 
 async function runPassingCharacter(profileId: string) {
-  const diagnostics = buildPreviewDiagnostics(98);
+  const root = await createTempRoot();
   return runGovernedAnimeCharacterRenderById(
-    { characterProfileId: profileId, governanceApproval: true, characterApproval: true, characterIndex: 1, totalCharacters: 4 },
+    { root, characterProfileId: profileId, governanceApproval: true, characterApproval: true, characterIndex: 1, totalCharacters: 4 },
     {
       readPrerequisiteState: async () => buildReadyPrerequisiteState(),
-      executeMicroSequence: async () => ({
-        status: "generated",
-        request: {} as never,
-        governance_status: "ok",
-        sandbox_path: ".aie/micro",
-        sandbox_output_root: ".aie",
-        generated_frame_references: [],
-        rollback_status: "bounded",
-        rollback_enabled: true,
-        preview_diagnostics: diagnostics,
-        continuity_validation: { valid: true, blockers: [], summary: "ready" },
-        preview_cleanup_targets: [],
-        live_workspace_blocked_output: true,
-        errors: [],
-        blockers: [],
-        prerequisite_state: buildReadyPrerequisiteState(diagnostics),
-      }),
-      executePreview: async () => ({
-        status: "accepted",
-        request: {} as never,
-        governance_status: "ok",
-        sandbox_path: ".aie/preview",
-        sandbox_output_root: ".aie",
-        generated_preview_references: [],
-        manifest_file_path: null,
-        rollback_status: "available",
-        rollback_enabled: true,
-        preview_diagnostics: diagnostics,
-        continuity_validation: { valid: true, blockers: [], summary: "ready" },
-        execution_ledger_state: { ledger_id: "ledger-001", attempt_count: 1 },
-        live_workspace_blocked_output: false,
-        errors: [],
-        blockers: [],
-        prerequisite_state: buildReadyPrerequisiteState(diagnostics),
-      }),
     },
   );
 }
@@ -211,60 +184,109 @@ test("approved character render executes bounded preview and reports anime diagn
   const report = await runPassingCharacter("CHARACTER_001");
 
   assert.equal(report.pass, true);
+  assert.equal(report.scaffoldStatus, "REAL_OUTPUT_ACTIVE");
+  assert.equal(report.truthCheck.renderer_path, "CHARACTER_FIRST");
+  assert.equal(report.truthCheck.character_pixels_generated, true);
+  assert.equal(report.truthCheck.character_primary_subject, true);
+  assert.equal(report.truthCheck.fallback_primitive_dominance, false);
+  assert.equal(report.truthCheck.diagnostics_match_rendered_output, true);
+  assert.equal(report.visualReviewPackage?.reviewLabel, "USER_VISUAL_CHECK_READY");
   assert.equal(report.characterApproved, true);
   assert.equal(report.poseTemplateId, "NEUTRAL_HERO_STANCE");
   assert.equal(report.expressionTemplateId, "FOCUSED_DETERMINATION");
   assert.equal(report.animeCharacterRenderDiagnostics?.active_character_profile_id, "CHARACTER_001");
+  assert.equal(report.animeCharacterRenderDiagnostics?.anime_character_truth_check.renderer_path, "CHARACTER_FIRST");
   assert.equal((report.metrics?.characterFaceReadability ?? 0) >= 95, true);
   assert.equal(report.rollbackVisible, true);
+  assert.ok(report.visualReviewPackage?.firstPngToInspect?.endsWith("anime_character_frame_001.png"));
+  assert.ok(report.visualReviewPackage?.gifToInspect?.endsWith("anime_character_preview.gif"));
+  assert.ok(report.visualReviewPackage?.manifestPath?.endsWith("anime_character_manifest.json"));
+  assert.ok(report.visualReviewPackage?.diagnosticsPath?.endsWith("anime_character_diagnostics.json"));
+  assert.ok(report.visualReviewPackage?.operatorSummaryPath?.endsWith("operator_visual_review_summary.md"));
+  assert.ok(report.previewExecution?.generated_preview_references.some((entry) => entry.endsWith("anime_character_frame_001.png")));
+  assert.equal(report.previewExecution?.generated_preview_references.some((entry) => entry.includes("governed_motion_preview_frame")), false);
+});
+
+test("character-first renderer writes inspectable PNG GIF manifest diagnostics and summary", async () => {
+  const root = await createTempRoot();
+  const profile = getApprovedAnimeCharacterProfileById("CHARACTER_001");
+  assert.ok(profile);
+  const result = await executeAnimeCharacterPrimitiveRender({
+    root,
+    profile,
+    poseTemplate: selectDefaultAnimeCharacterPose(profile.poseDefault),
+    expressionTemplate: selectDefaultAnimeCharacterExpression(profile.expressionDefault),
+    packageGifPreview: true,
+  });
+
+  assert.equal(result.truthCheck.scaffold_status, "REAL_OUTPUT_ACTIVE");
+  assert.equal(result.visualReviewPackage.reviewLabel, "USER_VISUAL_CHECK_READY");
+  assert.equal(result.framePaths.length, 5);
+  assert.ok(result.firstPngPath);
+  assert.ok(result.gifPath);
+  assert.ok(result.manifestPath);
+  assert.ok(result.diagnosticsPath);
+  assert.ok(result.operatorSummaryPath);
+
+  for (const artifactPath of [result.firstPngPath, result.gifPath, result.manifestPath, result.diagnosticsPath, result.operatorSummaryPath]) {
+    assert.ok(artifactPath);
+    const artifact = await stat(path.join(root, artifactPath));
+    assert.equal(artifact.size > 0, true);
+  }
+
+  const manifest = JSON.parse(await readFile(path.join(root, result.manifestPath), "utf8"));
+  assert.equal(manifest.primary_subject, "ANIME_CHARACTER");
+  assert.equal(manifest.focus_subject, "CHARACTER_FACE");
+  assert.equal(manifest.anime_character_truth_check.renderer_path, "CHARACTER_FIRST");
+  assert.equal(manifest.anime_character_truth_check.fallback_primitive_dominance, false);
+  assert.equal(manifest.first_png_to_inspect.endsWith("anime_character_frame_001.png"), true);
+});
+
+test("fallback primitive truth check cannot pass anime character compatibility", () => {
+  const profile = getApprovedAnimeCharacterProfileById("CHARACTER_001");
+  assert.ok(profile);
+  const metrics = buildAnimeCharacterMetricSnapshot({ diagnostics: buildPreviewDiagnostics(98), profile });
+  const truthCheck = buildFallbackPrimitiveTruthCheck({ generatedPaths: [".aie/governed_motion_preview_sandbox/governed_motion_preview_frame_001.png"], recognizableObject: "cube and beacon", focusSubject: "cube" });
+
+  const result = evaluateAnimeCharacterCompatibility({ profile, metrics, characterApproved: true, truthCheck });
+
+  assert.equal(result.pass, false);
+  assert.equal(result.truthCheck.fallback_primitive_dominance, true);
+  assert.equal(result.recommendedRuntimeLayer, "character-first renderer truth check");
+  assert.equal(result.reasons.some((entry) => entry.includes("Fallback cube/beacon/drone")), true);
 });
 
 test("failed character renders preserve diagnostics and restore rollback", async () => {
-  const diagnostics = buildPreviewDiagnostics(98, { readability_score: 92, focus_continuity_score: 90 });
+  const root = await createTempRoot();
+  const fallbackTruthCheck = buildFallbackPrimitiveTruthCheck({ generatedPaths: [".aie/governed_motion_preview_sandbox/governed_motion_preview_frame_001.png"], recognizableObject: "cube beacon drone", focusSubject: "cube" });
   const report = await runGovernedAnimeCharacterRenderById(
-    { characterProfileId: "CHARACTER_002", governanceApproval: true, characterApproval: true, characterIndex: 1, totalCharacters: 4 },
+    { root, characterProfileId: "CHARACTER_002", governanceApproval: true, characterApproval: true, characterIndex: 1, totalCharacters: 4 },
     {
       readPrerequisiteState: async () => buildReadyPrerequisiteState(),
-      executeMicroSequence: async () => ({
-        status: "generated",
-        request: {} as never,
-        governance_status: "ok",
-        sandbox_path: ".aie/micro",
-        sandbox_output_root: ".aie",
-        generated_frame_references: [],
-        rollback_status: "bounded",
-        rollback_enabled: true,
-        preview_diagnostics: diagnostics,
-        continuity_validation: { valid: true, blockers: [], summary: "ready" },
-        preview_cleanup_targets: [],
-        live_workspace_blocked_output: true,
-        errors: [],
-        blockers: [],
-        prerequisite_state: buildReadyPrerequisiteState(diagnostics),
-      }),
-      executePreview: async () => ({
-        status: "accepted",
-        request: {} as never,
-        governance_status: "ok",
-        sandbox_path: ".aie/preview",
-        sandbox_output_root: ".aie",
-        generated_preview_references: [],
-        manifest_file_path: null,
-        rollback_status: "available",
-        rollback_enabled: true,
-        preview_diagnostics: diagnostics,
-        continuity_validation: { valid: true, blockers: [], summary: "ready" },
-        execution_ledger_state: { ledger_id: "ledger-002", attempt_count: 1 },
-        live_workspace_blocked_output: false,
-        errors: [],
-        blockers: [],
-        prerequisite_state: buildReadyPrerequisiteState(diagnostics),
-      }),
+      executeCharacterRenderer: async (renderInput) => {
+        const result = await executeAnimeCharacterPrimitiveRender(renderInput);
+        return {
+          ...result,
+          metrics: { ...result.metrics, characterFaceReadability: 92, characterSilhouette: 92, animeStyleIdentity: 91 },
+          truthCheck: fallbackTruthCheck,
+          diagnostics: { ...result.diagnostics, recognizable_object: "cube beacon drone fallback", anime_character_truth_check: fallbackTruthCheck },
+          visualReviewPackage: {
+            ...result.visualReviewPackage,
+            reviewLabel: "NOT_READY_SCAFFOLD_FALLBACK_STILL_ACTIVE",
+            characterVisible: false,
+            characterPrimarySubject: false,
+            fallbackPrimitiveDominance: true,
+          },
+        };
+      },
       rollbackPreviewSandbox: async () => ({ status: "rolled_back", sandbox_path: ".aie/preview", deleted_output_targets: [".aie/preview/frame_001.png"], rollback_status: "Rollback completed.", sandbox_limited: true }),
     },
   );
 
   assert.equal(report.pass, false);
+  assert.equal(report.scaffoldStatus, "SCAFFOLD_ACTIVE");
+  assert.equal(report.truthCheck.renderer_path, "FALLBACK_PRIMITIVE");
+  assert.equal(report.truthCheck.fallback_primitive_dominance, true);
   assert.equal(report.rollbackRestoredCharacterRun, true);
   assert.equal(report.failureAnalysis?.failureType, "FACE_READABILITY_DROP");
   assert.equal(report.recoveryRecommendation?.autonomousTuningAllowed, false);
@@ -311,18 +333,31 @@ test("cross-character diagnostics summarize strongest and weakest profiles", asy
   assert.equal(summary.testedCharacterCount, 2);
   assert.equal(summary.passedCharacterCount, 2);
   assert.equal(summary.rollbackPassRate, 1);
+  assert.equal(summary.scaffoldStatus, "REAL_OUTPUT_ACTIVE");
+  assert.equal(summary.visualReviewReadyCount, 2);
+  assert.equal(summary.fallbackPrimitiveDominanceCount, 0);
   assert.equal(summary.strongestCharacterProfileId, "CHARACTER_001");
   assert.equal(summary.weakestCharacterProfileId, "CHARACTER_002");
   assert.equal(summary.recommendedNextAction, "CONTINUE_CHARACTER_RENDERS");
   assert.equal(state?.characterRenderExecutionCount, 2);
+  assert.equal(state?.scaffoldStatus, "REAL_OUTPUT_ACTIVE");
+  assert.equal(state?.visualReviewReady, true);
 });
 
 test("anime character compatibility passes when character metrics meet governed floors", () => {
   const profile = getApprovedAnimeCharacterProfileById("CHARACTER_001");
   assert.ok(profile);
   const metrics = buildAnimeCharacterMetricSnapshot({ diagnostics: buildPreviewDiagnostics(98), profile });
+  const truthCheck = {
+    renderer_path: "CHARACTER_FIRST" as const,
+    character_pixels_generated: true,
+    character_primary_subject: true,
+    fallback_primitive_dominance: false,
+    diagnostics_match_rendered_output: true,
+    scaffold_status: "REAL_OUTPUT_ACTIVE" as const,
+  };
 
-  const result = evaluateAnimeCharacterCompatibility({ profile, metrics, characterApproved: true });
+  const result = evaluateAnimeCharacterCompatibility({ profile, metrics, characterApproved: true, truthCheck });
 
   assert.equal(result.pass, true);
   assert.equal(result.compatibilityScore >= 95, true);

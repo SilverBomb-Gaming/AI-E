@@ -3,6 +3,7 @@ export type CinematicBeatType =
   | "ANTICIPATION"
   | "BEACON_REVEAL"
   | "DRONE_RESPONSE"
+  | "AFTERMATH_HOLD"
   | "SETTLE";
 
 export type StagingFocusSubject =
@@ -10,7 +11,9 @@ export type StagingFocusSubject =
   | "BEACON"
   | "DRONE_GROUP"
   | "FORMATION_CENTER"
-  | "CHAMBER";
+  | "CHAMBER"
+  | "CHARACTER_FACE"
+  | "CHARACTER_SILHOUETTE";
 
 export type CinematicStagingState = {
   activeBeatType: CinematicBeatType;

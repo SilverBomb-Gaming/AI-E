@@ -16,6 +16,7 @@ import {
   type AnimeCharacterProfileId,
   type AnimeCharacterReport,
   type AnimeCharacterRenderDiagnostics,
+  type AnimeCharacterTruthCheck,
   type AnimeCharacterThresholdFailure,
   type GovernedAnimeCharacterState,
 } from "./governedAnimeCharacterState";
@@ -30,6 +31,11 @@ import {
   selectDefaultAnimeCharacterPose,
 } from "./animeCharacterPoseTemplates";
 import { recommendAnimeCharacterRecovery } from "./animeCharacterRecovery";
+import {
+  buildFallbackPrimitiveTruthCheck,
+  executeAnimeCharacterPrimitiveRender,
+  type AnimeCharacterVisualRenderResult,
+} from "./animeCharacterPrimitiveRenderer";
 
 export type AnimeCharacterRunnerDependencies = {
   compileRequest: typeof compileGovernedPreviewRequest;
@@ -37,6 +43,7 @@ export type AnimeCharacterRunnerDependencies = {
   executeMicroSequence: typeof executeGovernedPreviewMicroSequenceRequest;
   executePreview: typeof executeGovernedPreviewRequest;
   rollbackPreviewSandbox: typeof rollbackGovernedPreviewSandbox;
+  executeCharacterRenderer: typeof executeAnimeCharacterPrimitiveRender;
 };
 
 export type RunAnimeCharacterRenderInput = {
@@ -86,7 +93,12 @@ function resolveDependencies(overrides?: Partial<AnimeCharacterRunnerDependencie
     executeMicroSequence: overrides?.executeMicroSequence ?? executeGovernedPreviewMicroSequenceRequest,
     executePreview: overrides?.executePreview ?? executeGovernedPreviewRequest,
     rollbackPreviewSandbox: overrides?.rollbackPreviewSandbox ?? rollbackGovernedPreviewSandbox,
+    executeCharacterRenderer: overrides?.executeCharacterRenderer ?? executeAnimeCharacterPrimitiveRender,
   };
+}
+
+function buildScaffoldActiveTruthCheck(): AnimeCharacterTruthCheck {
+  return buildFallbackPrimitiveTruthCheck({ recognizableObject: "anime character scaffold metadata only", focusSubject: "metadata" });
 }
 
 function average(values: number[]): number {
@@ -173,6 +185,7 @@ function buildRejectedReport(input: {
   const profile = input.profile;
   const pose = profile ? selectDefaultAnimeCharacterPose(profile.poseDefault) : listAnimeCharacterPoseTemplates()[0];
   const expression = profile ? selectDefaultAnimeCharacterExpression(profile.expressionDefault) : listAnimeCharacterExpressionTemplates()[0];
+  const truthCheck = buildScaffoldActiveTruthCheck();
 
   return {
     characterProfileId: (profile?.id ?? input.requestedProfileId) as AnimeCharacterProfileId,
@@ -206,6 +219,9 @@ function buildRejectedReport(input: {
     },
     recoveryRecommendation: null,
     recommendedRuntimeLayer: input.recommendedRuntimeLayer,
+    truthCheck,
+    scaffoldStatus: truthCheck.scaffold_status,
+    visualReviewPackage: null,
     rollbackSnapshot: null,
     rollbackVisible: false,
     rollbackRestoredCharacterRun: false,
@@ -352,8 +368,10 @@ export function evaluateAnimeCharacterCompatibility(input: {
   profile: AnimeCharacterProfile;
   metrics: AnimeCharacterMetricSnapshot | null;
   characterApproved: boolean;
+  truthCheck?: AnimeCharacterTruthCheck;
 }): AnimeCharacterCompatibilityResult {
   const thresholdEvaluation = evaluateAnimeCharacterThresholds(input.metrics);
+  const truthCheck = input.truthCheck ?? buildScaffoldActiveTruthCheck();
   const compatibilityScore = average(input.metrics ? [
     input.metrics.characterFaceReadability,
     input.metrics.characterSilhouette,
@@ -374,6 +392,18 @@ export function evaluateAnimeCharacterCompatibility(input: {
   if (!thresholdEvaluation.pass && thresholdEvaluation.failedThresholds.length > 0) {
     reasons.push(thresholdEvaluation.failedThresholds[0].reason);
   }
+  if (truthCheck.renderer_path !== "CHARACTER_FIRST") {
+    reasons.push("Anime character rendering used fallback primitive routing instead of the character-first renderer.");
+  }
+  if (!truthCheck.character_pixels_generated) {
+    reasons.push("Anime character visual pixels were not generated, so diagnostics cannot claim character success.");
+  }
+  if (!truthCheck.character_primary_subject || truthCheck.fallback_primitive_dominance) {
+    reasons.push("Fallback cube/beacon/drone dominance or non-character framing blocks anime character success.");
+  }
+  if (!truthCheck.diagnostics_match_rendered_output) {
+    reasons.push("Anime character diagnostics do not yet match real rendered output.");
+  }
 
   return {
     characterSafetyStatus: reasons.some((entry) => entry.includes("violates")) ? "REJECTED" : "APPROVED",
@@ -384,12 +414,22 @@ export function evaluateAnimeCharacterCompatibility(input: {
       && !input.profile.dialogueAllowed
       && !input.profile.combatChoreographyAllowed
       && !input.profile.explicitSexualizationAllowed
-      && thresholdEvaluation.pass,
+      && thresholdEvaluation.pass
+      && truthCheck.renderer_path === "CHARACTER_FIRST"
+      && truthCheck.character_pixels_generated
+      && truthCheck.character_primary_subject
+      && !truthCheck.fallback_primitive_dominance
+      && truthCheck.diagnostics_match_rendered_output,
     failedThresholds: thresholdEvaluation.failedThresholds,
     strongestMetric: thresholdEvaluation.strongestMetric,
     weakestMetric: thresholdEvaluation.weakestMetric,
-    recommendedRuntimeLayer: !input.characterApproved ? "operator anime character approval" : thresholdEvaluation.recommendedRuntimeLayer,
+    recommendedRuntimeLayer: !input.characterApproved
+      ? "operator anime character approval"
+      : truthCheck.diagnostics_match_rendered_output
+        ? thresholdEvaluation.recommendedRuntimeLayer
+        : "character-first renderer truth check",
     reasons,
+    truthCheck,
   };
 }
 
@@ -468,6 +508,7 @@ function buildRenderDiagnostics(input: {
   rollbackRestoredCharacterRun: boolean;
   failedCharacterRenderCount: number;
   failureType: AnimeCharacterRenderDiagnostics["last_character_failure_type"];
+  truthCheck: AnimeCharacterTruthCheck;
 }): AnimeCharacterRenderDiagnostics | null {
   if (!input.metrics) {
     return null;
@@ -485,6 +526,79 @@ function buildRenderDiagnostics(input: {
     rollback_restored_character_run: input.rollbackRestoredCharacterRun,
     failed_character_render_count: input.failedCharacterRenderCount,
     last_character_failure_type: input.failureType,
+    anime_character_truth_check: input.truthCheck,
+  };
+}
+
+function buildCharacterPrerequisiteState(input: {
+  renderResult: AnimeCharacterVisualRenderResult;
+}): Awaited<ReturnType<typeof readGovernedPreviewPrerequisiteState>> {
+  return {
+    micro_sequence_exists: true,
+    motion_preview_ready: true,
+    sandbox_path: input.renderResult.sandboxDirectory,
+    sandbox_output_root: ".aie/governed_anime_character_preview_sandbox",
+    generated_frame_references: input.renderResult.framePaths,
+    preview_diagnostics: input.renderResult.diagnostics,
+    continuity_validation: {
+      valid: true,
+      blockers: [],
+      summary: "Character-first anime render package generated inside the governed sandbox.",
+    },
+    next_step_action: null,
+    next_step_label: null,
+  };
+}
+
+function buildCharacterMicroSequenceResult(input: {
+  request: ReturnType<typeof compileGovernedPreviewRequest>;
+  renderResult: AnimeCharacterVisualRenderResult;
+  prerequisiteState: Awaited<ReturnType<typeof readGovernedPreviewPrerequisiteState>>;
+}) {
+  return {
+    status: "generated" as const,
+    request: input.request,
+    governance_status: "Manual approval granted. Character-first anime preview remained inside sandbox boundaries.",
+    sandbox_path: input.renderResult.sandboxDirectory,
+    sandbox_output_root: ".aie/governed_anime_character_preview_sandbox",
+    generated_frame_references: input.renderResult.framePaths.slice(0, 3),
+    rollback_status: "Rollback remains limited to governed anime character sandbox outputs.",
+    rollback_enabled: true as const,
+    preview_diagnostics: input.renderResult.diagnostics,
+    continuity_validation: input.prerequisiteState.continuity_validation,
+    preview_cleanup_targets: [],
+    live_workspace_blocked_output: false,
+    errors: [],
+    blockers: [],
+    prerequisite_state: input.prerequisiteState,
+  };
+}
+
+function buildCharacterPreviewExecutionResult(input: {
+  request: ReturnType<typeof compileGovernedPreviewRequest>;
+  renderResult: AnimeCharacterVisualRenderResult;
+  prerequisiteState: Awaited<ReturnType<typeof readGovernedPreviewPrerequisiteState>>;
+}) {
+  return {
+    status: "accepted" as const,
+    request: input.request,
+    governance_status: "Manual approval granted. Character-first anime preview remained inside sandbox boundaries.",
+    sandbox_path: input.renderResult.sandboxDirectory,
+    sandbox_output_root: ".aie/governed_anime_character_preview_sandbox",
+    generated_preview_references: input.renderResult.outputFilePaths,
+    manifest_file_path: input.renderResult.manifestPath,
+    rollback_status: "Rollback available for governed anime character sandbox outputs.",
+    rollback_enabled: true as const,
+    preview_diagnostics: input.renderResult.diagnostics,
+    continuity_validation: input.prerequisiteState.continuity_validation,
+    execution_ledger_state: {
+      ledger_id: `anime-character-ledger-${Date.now()}`,
+      attempt_count: 1,
+    },
+    live_workspace_blocked_output: false,
+    errors: [],
+    blockers: [],
+    prerequisite_state: input.prerequisiteState,
   };
 }
 
@@ -546,17 +660,22 @@ export async function runGovernedAnimeCharacterRenderById(
   }
 
   const compiledRequest = deps.compileRequest(formInput);
-  const microSequence = await deps.executeMicroSequence(compiledRequest, { root: input.root, deps: input.deps });
-  const previewExecution = microSequence.status === "generated"
-    ? await deps.executePreview(compiledRequest, { root: input.root, deps: input.deps })
-    : null;
-  const diagnostics = previewExecution?.preview_diagnostics ?? microSequence.preview_diagnostics ?? prerequisiteBefore.preview_diagnostics;
-  const metrics = buildAnimeCharacterMetricSnapshot({ diagnostics: diagnostics ?? null, profile });
-  const compatibility = evaluateAnimeCharacterCompatibility({ profile, metrics, characterApproved: approval.approved });
-  const executionBlocked = microSequence.status !== "generated" || previewExecution?.status === "blocked";
+  const renderResult = await deps.executeCharacterRenderer({
+    root: input.root,
+    profile,
+    poseTemplate: pose,
+    expressionTemplate: expression,
+    packageGifPreview: true,
+  });
+  const prerequisiteAfter = buildCharacterPrerequisiteState({ renderResult });
+  const microSequence = buildCharacterMicroSequenceResult({ request: compiledRequest, renderResult, prerequisiteState: prerequisiteAfter });
+  const previewExecution = buildCharacterPreviewExecutionResult({ request: compiledRequest, renderResult, prerequisiteState: prerequisiteAfter });
+  const diagnostics = renderResult.diagnostics;
+  const metrics = renderResult.metrics ?? buildAnimeCharacterMetricSnapshot({ diagnostics: diagnostics ?? null, profile });
+  const compatibility = evaluateAnimeCharacterCompatibility({ profile, metrics, characterApproved: approval.approved, truthCheck: renderResult.truthCheck });
+  const executionBlocked = false;
   const pass = !executionBlocked && compatibility.pass;
   const rollback = pass ? null : await deps.rollbackPreviewSandbox({ root: input.root, deps: input.deps });
-  const prerequisiteAfter = previewExecution?.prerequisite_state ?? microSequence.prerequisite_state ?? prerequisiteBefore;
   const failedThresholds = executionBlocked ? [] : compatibility.failedThresholds;
   const failureAnalysis = executionBlocked
     ? { failureType: "CHARACTER_SCENE_INTEGRATION_FAILURE" as const, reason: [...microSequence.blockers, ...(previewExecution?.blockers ?? [])].join(" ") || "Governed anime character execution was blocked before preview completion.", weakestSubsystem: "preview governance", tuningDirection: "resolve preview governance blockers before continuing anime character rendering", autoRetryBlocked: true as const }
@@ -587,7 +706,7 @@ export async function runGovernedAnimeCharacterRenderById(
     failureReason,
     compatibility,
     metrics,
-    animeCharacterRenderDiagnostics: buildRenderDiagnostics({ profile, characterApproved: approval.approved, metrics, rollbackRestoredCharacterRun, failedCharacterRenderCount: failedCount + (pass ? 0 : 1), failureType: failureAnalysis?.failureType ?? null }),
+    animeCharacterRenderDiagnostics: buildRenderDiagnostics({ profile, characterApproved: approval.approved, metrics, rollbackRestoredCharacterRun, failedCharacterRenderCount: failedCount + (pass ? 0 : 1), failureType: failureAnalysis?.failureType ?? null, truthCheck: renderResult.truthCheck }),
     strongestMetric: strongestMetricName,
     weakestMetric: weakestMetricName,
     strongestMetricScore,
@@ -596,6 +715,9 @@ export async function runGovernedAnimeCharacterRenderById(
     failureAnalysis,
     recoveryRecommendation,
     recommendedRuntimeLayer: failureAnalysis?.weakestSubsystem ?? compatibility.recommendedRuntimeLayer,
+    truthCheck: renderResult.truthCheck,
+    scaffoldStatus: renderResult.truthCheck.scaffold_status,
+    visualReviewPackage: renderResult.visualReviewPackage,
     rollbackSnapshot,
     rollbackVisible: Boolean(rollback || diagnostics?.rollback_integrity_status),
     rollbackRestoredCharacterRun,

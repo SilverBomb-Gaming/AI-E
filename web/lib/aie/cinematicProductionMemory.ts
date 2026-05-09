@@ -1819,9 +1819,9 @@ export type CinematicGovernedPreviewQualityIndicator = {
 
 export type CinematicGovernedPreviewFrameDiagnostic = {
   frame_index: number;
-  object_kind: "cube" | "sphere";
+  object_kind: "cube" | "sphere" | "anime_character";
   active_shot_type?: ShotType;
-  active_entity_type?: "SEGMENTED_DRONE";
+  active_entity_type?: "SEGMENTED_DRONE" | "ANIME_CHARACTER";
   active_formation_type?: FormationType;
   active_beat_type?: CinematicBeatType;
   active_focus_subject?: FocusSubject;
@@ -1978,6 +1978,14 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   environment_profile: string;
   continuity_anchor_visualization: string;
   scene_readability_overlay: string;
+  anime_character_truth_check?: {
+    renderer_path: "CHARACTER_FIRST" | "FALLBACK_PRIMITIVE";
+    character_pixels_generated: boolean;
+    character_primary_subject: boolean;
+    fallback_primitive_dominance: boolean;
+    diagnostics_match_rendered_output: boolean;
+    scaffold_status: "SCAFFOLD_ACTIVE" | "PARTIAL_REAL_OUTPUT" | "REAL_OUTPUT_ACTIVE";
+  };
 };
 
 export type CinematicGovernedPreviewDiagnostics = {
@@ -2004,7 +2012,7 @@ export type CinematicGovernedPreviewDiagnostics = {
   cinematic_momentum_flow_summary?: string;
   cinematic_transition_blend_summary?: string;
   cinematic_scene_cohesion_summary?: string;
-  active_entity_type?: "SEGMENTED_DRONE";
+  active_entity_type?: "SEGMENTED_DRONE" | "ANIME_CHARACTER";
   active_formation_type?: FormationType;
   active_beat_type?: CinematicBeatType;
   active_focus_subject?: FocusSubject;
@@ -2128,6 +2136,14 @@ export type CinematicGovernedPreviewDiagnostics = {
   continuity_quality_indicators: CinematicGovernedPreviewQualityIndicator[];
   artifact_diagnostics: string[];
   frame_diagnostics: CinematicGovernedPreviewFrameDiagnostic[];
+  anime_character_truth_check?: {
+    renderer_path: "CHARACTER_FIRST" | "FALLBACK_PRIMITIVE";
+    character_pixels_generated: boolean;
+    character_primary_subject: boolean;
+    fallback_primitive_dominance: boolean;
+    diagnostics_match_rendered_output: boolean;
+    scaffold_status: "SCAFFOLD_ACTIVE" | "PARTIAL_REAL_OUTPUT" | "REAL_OUTPUT_ACTIVE";
+  };
 };
 
 export type CinematicContinuityPreviewSequencingStage =
@@ -8112,7 +8128,7 @@ function summarizeGovernedPreviewDiagnostics(input: {
   ]);
   const articulatedDiagnostics = input.frameDiagnostics.filter((entry) => entry.active_entity_type === "SEGMENTED_DRONE");
   const articulatedSummary = summarizeArticulatedEntityDiagnostics(articulatedDiagnostics.map((entry) => ({
-    activeEntityType: entry.active_entity_type ?? "SEGMENTED_DRONE",
+    activeEntityType: "SEGMENTED_DRONE" as const,
     jointCount: entry.joint_count ?? 0,
     maxChainDepth: entry.max_chain_depth ?? 0,
     jointContinuityScore: entry.joint_continuity_score ?? 0,
