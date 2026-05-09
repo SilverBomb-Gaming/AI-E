@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 
 import {
   GOVERNED_PREVIEW_RESOLUTION,
@@ -73,6 +73,15 @@ import type {
   AnimeCharacterReport,
   GovernedAnimeCharacterState,
 } from "@/lib/aie/animeCharacters/governedAnimeCharacterState";
+import {
+  activityIconLabel,
+  buildAnimeReportActivity,
+  buildAnimeSummaryActivity,
+  buildDiagnosticsActivity,
+  buildRendererOutputActivity,
+  statusToneFromActivity,
+  type ActivityIndicator,
+} from "./activitySections";
 
 const DEFAULT_FORM: GovernedPreviewFormInput = {
   prompt: "",
@@ -458,6 +467,63 @@ function StatusPill({ label, tone }: { label: string; tone: "ok" | "warn" | "blo
         : "border-ink/10 bg-white text-ink/75";
 
   return <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${toneClassName}`}>{label}</span>;
+}
+
+function CollapsibleActivitySection({
+  sectionLabel,
+  title,
+  activity,
+  children,
+  defaultOpen,
+  className = "",
+}: {
+  sectionLabel: string;
+  title: string;
+  activity: ActivityIndicator;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(defaultOpen ?? activity.critical);
+  const iconClassName = activity.tone === "blocked"
+    ? "border-coral/30 bg-coral/10 text-ember"
+    : activity.tone === "warn" || activity.tone === "review"
+      ? "border-amber-300 bg-amber-50 text-amber-700"
+      : activity.tone === "ok"
+        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+        : "border-ink/10 bg-white text-ink/75";
+
+  return (
+    <article className={`glass-card rounded-[2rem] p-0 shadow-float ${className}`}>
+      <button
+        type="button"
+        onClick={() => setIsOpen((current) => !current)}
+        aria-expanded={isOpen}
+        className="flex w-full items-start justify-between gap-4 rounded-[2rem] px-6 py-5 text-left transition hover:bg-white/40"
+      >
+        <span className="flex min-w-0 items-start gap-3">
+          <span className={`mt-1 inline-flex h-8 min-w-8 items-center justify-center rounded-full border px-2 text-xs font-bold ${iconClassName}`} aria-hidden="true">
+            {activityIconLabel(activity.tone)}
+          </span>
+          <span className="min-w-0">
+            <span className="section-label block">{sectionLabel}</span>
+            <span className="mt-3 block text-2xl font-semibold text-ink">{title}</span>
+            <span className="mt-2 block text-sm leading-7 body-muted">{activity.summary}</span>
+          </span>
+        </span>
+        <span className="flex shrink-0 flex-col items-end gap-2">
+          <StatusPill label={activity.label} tone={statusToneFromActivity(activity.tone)} />
+          <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate">{isOpen ? "collapse" : "expand"}</span>
+        </span>
+      </button>
+      {!isOpen && activity.critical ? (
+        <div className="mx-6 mb-5 rounded-[1.25rem] border border-coral/20 bg-coral/10 p-4 text-sm leading-7 text-ember">
+          {activity.summary}
+        </div>
+      ) : null}
+      {isOpen ? <div className="px-6 pb-6">{children}</div> : null}
+    </article>
+  );
 }
 
 function promptVariationStatusTone(report: PromptVariationVariantReport): "ok" | "warn" | "blocked" {
@@ -1335,6 +1401,50 @@ export function PreviewGenerationClient() {
     ?? null;
   const selectedHighIntensityProbe = approvedHighIntensityProbes.find((entry) => entry.probeId === selectedHighIntensityProbeId) ?? null;
   const selectedAnimeCharacterProfile = approvedAnimeCharacterProfiles.find((entry) => entry.id === selectedAnimeCharacterProfileId) ?? null;
+  const animeSummaryActivity = buildAnimeSummaryActivity(animeCharacterSummary);
+  const rendererOutputActivity = buildRendererOutputActivity(previewGalleryCards.length, execution?.preview_diagnostics);
+  const microSequenceOutputActivity = buildRendererOutputActivity(microSequenceGalleryCards.length, microSequence?.preview_diagnostics ?? prerequisiteState?.preview_diagnostics);
+  const diagnosticsActivity = buildDiagnosticsActivity(activeDiagnostics);
+  const validationActivity = execution?.blockers.length || prerequisiteState?.continuity_validation.blockers.length
+    ? {
+      label: "blocked validation",
+      tone: "blocked" as const,
+      summary: "Validation blockers or preview blockers are active and remain visible while collapsed.",
+      critical: true,
+    }
+    : rollback?.deleted_output_targets.length
+      ? {
+        label: "rollback completed",
+        tone: "warn" as const,
+        summary: "Rollback completed sandbox cleanup; review deleted output targets if needed.",
+        critical: false,
+      }
+      : {
+        label: "no blockers",
+        tone: "ok" as const,
+        summary: "No active preview blockers are recorded and rollback remains sandbox-limited.",
+        critical: false,
+      };
+  const executionActivity = error
+    ? {
+      label: "failed validation",
+      tone: "blocked" as const,
+      summary: error,
+      critical: true,
+    }
+    : isPending
+      ? {
+        label: "work pending",
+        tone: "warn" as const,
+        summary: "A governed preview action is currently pending.",
+        critical: false,
+      }
+      : {
+        label: execution?.status ?? "ready",
+        tone: statusTone === "blocked" ? "blocked" as const : statusTone === "ok" ? "ok" as const : "info" as const,
+        summary: message,
+        critical: statusTone === "blocked",
+      };
   const styleIntensityDisplayCells = [
     ...starterStyleIntensityCells,
     ...highProbeStyleIntensityCells.filter((probe) => !starterStyleIntensityCells.some((starter) => starter.cellId === probe.cellId)),
@@ -2517,14 +2627,18 @@ export function PreviewGenerationClient() {
         </section>
 
         <section className="mb-6">
-          <article className="glass-card rounded-[2rem] p-6 shadow-float">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="section-label">Anime Character Report</p>
-                <h2 className="mt-3 text-2xl font-semibold text-ink">Character-Centered Diagnostic Summary</h2>
+          <CollapsibleActivitySection
+            sectionLabel="Anime Character Report"
+            title="Character-Centered Diagnostic Summary"
+            activity={animeSummaryActivity}
+            defaultOpen={animeSummaryActivity.critical || Boolean(animeCharacterSummary)}
+          >
+            {animeCharacterSummary ? (
+              <div className="mb-4 flex flex-wrap gap-2">
+                <StatusPill label={animeCharacterSummary.recommendedNextAction.toLowerCase().replaceAll("_", "-")} tone={animeCharacterSummary.recommendedNextAction === "CONTINUE_CHARACTER_RENDERS" ? "ok" : animeCharacterSummary.recommendedNextAction === "TUNE_CHARACTER_FRAMING" ? "warn" : "blocked"} />
+                <StatusPill label={animeCharacterSummary.scaffoldStatus.toLowerCase().replaceAll("_", "-")} tone={animeCharacterSummary.scaffoldStatus === "REAL_OUTPUT_ACTIVE" ? "ok" : animeCharacterSummary.scaffoldStatus === "PARTIAL_REAL_OUTPUT" ? "warn" : "blocked"} />
               </div>
-              {animeCharacterSummary ? <StatusPill label={animeCharacterSummary.recommendedNextAction.toLowerCase().replaceAll("_", "-")} tone={animeCharacterSummary.recommendedNextAction === "CONTINUE_CHARACTER_RENDERS" ? "ok" : animeCharacterSummary.recommendedNextAction === "TUNE_CHARACTER_FRAMING" ? "warn" : "blocked"} /> : null}
-            </div>
+            ) : null}
             {animeCharacterSummary ? (
               <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
                 <div className="rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
@@ -2546,48 +2660,73 @@ export function PreviewGenerationClient() {
                   {animeCharacterSummary.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect runtime layer:</strong> {animeCharacterSummary.recommendedRuntimeLayer}</p> : null}
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
-                  {animeCharacterReports.map((report) => (
+                  {animeCharacterReports.map((report) => {
+                    const reportActivity = buildAnimeReportActivity(report);
+                    return (
                     <article key={report.characterProfileId} className="rounded-[1.25rem] border border-ink/10 bg-white/90 p-4 shadow-sm">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm font-semibold text-ink">{report.characterLabel}</p>
-                        <StatusPill label={report.executionStatus.toLowerCase()} tone={animeCharacterStatusTone(report)} />
+                        <div className="flex flex-wrap gap-2">
+                          <StatusPill label={report.executionStatus.toLowerCase()} tone={animeCharacterStatusTone(report)} />
+                          <StatusPill label={reportActivity.label} tone={statusToneFromActivity(reportActivity.tone)} />
+                        </div>
                       </div>
                       <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate">{report.characterProfileId.toLowerCase().replaceAll("_", "-")}</p>
                       <div className="mt-3 space-y-1 text-sm leading-7 body-muted">
                         <p><strong className="text-ink">Character approval:</strong> {report.characterApproved ? "approved" : "blocked"}</p>
                         <p><strong className="text-ink">Pose:</strong> {report.poseLabel}</p>
                         <p><strong className="text-ink">Expression:</strong> {report.expressionLabel}</p>
-                        <p><strong className="text-ink">Scaffold status:</strong> {report.scaffoldStatus}</p>
-                        <p><strong className="text-ink">Renderer path:</strong> {report.truthCheck.renderer_path}</p>
-                        <p><strong className="text-ink">Character pixels generated:</strong> {report.truthCheck.character_pixels_generated ? "yes" : "no"}</p>
-                        <p><strong className="text-ink">Character primary subject:</strong> {report.truthCheck.character_primary_subject ? "yes" : "no"}</p>
-                        <p><strong className="text-ink">Fallback primitive dominance:</strong> {report.truthCheck.fallback_primitive_dominance ? "yes" : "no"}</p>
-                        <p><strong className="text-ink">Diagnostics match output:</strong> {report.truthCheck.diagnostics_match_rendered_output ? "yes" : "no"}</p>
+                        <details className="rounded-[1rem] border border-ink/10 bg-mist/50 p-3" open={reportActivity.critical}>
+                          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.18em] text-ink">Scaffold And Truth Check</summary>
+                          <div className="mt-3 space-y-1">
+                            <p><strong className="text-ink">Scaffold status:</strong> {report.scaffoldStatus}</p>
+                            <p><strong className="text-ink">Renderer path:</strong> {report.truthCheck.renderer_path}</p>
+                            <p><strong className="text-ink">Character pixels generated:</strong> {report.truthCheck.character_pixels_generated ? "yes" : "no"}</p>
+                            <p><strong className="text-ink">Character primary subject:</strong> {report.truthCheck.character_primary_subject ? "yes" : "no"}</p>
+                            <p><strong className="text-ink">Fallback primitive dominance:</strong> {report.truthCheck.fallback_primitive_dominance ? "yes" : "no"}</p>
+                            <p><strong className="text-ink">Diagnostics match output:</strong> {report.truthCheck.diagnostics_match_rendered_output ? "yes" : "no"}</p>
+                          </div>
+                        </details>
                         {report.compatibility ? <p><strong className="text-ink">Compatibility score:</strong> {report.compatibility.compatibilityScore}/100</p> : null}
-                        {report.metrics ? <p><strong className="text-ink">Face readability:</strong> {report.metrics.characterFaceReadability}/100</p> : null}
-                        {report.metrics ? <p><strong className="text-ink">Silhouette:</strong> {report.metrics.characterSilhouette}/100</p> : null}
-                        {report.metrics ? <p><strong className="text-ink">Pose readability:</strong> {report.metrics.characterPoseReadability}/100</p> : null}
-                        {report.metrics ? <p><strong className="text-ink">Anime identity:</strong> {report.metrics.animeStyleIdentity}/100</p> : null}
-                        {report.metrics ? <p><strong className="text-ink">Scene integration:</strong> {report.metrics.characterSceneIntegration}/100</p> : null}
-                        {report.metrics ? <p><strong className="text-ink">Focus priority:</strong> {report.metrics.characterFocusPriority}/100</p> : null}
+                        {report.metrics ? (
+                          <details className="rounded-[1rem] border border-ink/10 bg-white/70 p-3">
+                            <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.18em] text-ink">Validation Results</summary>
+                            <div className="mt-3 space-y-1">
+                              <p><strong className="text-ink">Face readability:</strong> {report.metrics.characterFaceReadability}/100</p>
+                              <p><strong className="text-ink">Silhouette:</strong> {report.metrics.characterSilhouette}/100</p>
+                              <p><strong className="text-ink">Pose readability:</strong> {report.metrics.characterPoseReadability}/100</p>
+                              <p><strong className="text-ink">Anime identity:</strong> {report.metrics.animeStyleIdentity}/100</p>
+                              <p><strong className="text-ink">Scene integration:</strong> {report.metrics.characterSceneIntegration}/100</p>
+                              <p><strong className="text-ink">Focus priority:</strong> {report.metrics.characterFocusPriority}/100</p>
+                            </div>
+                          </details>
+                        ) : null}
                         {report.failureAnalysis ? <p><strong className="text-ink">Failure class:</strong> {report.failureAnalysis.failureType}</p> : null}
                         {report.recoveryRecommendation ? <p><strong className="text-ink">Recovery:</strong> {report.recoveryRecommendation.recommendation}</p> : null}
                         <p><strong className="text-ink">Rollback visible:</strong> {report.rollbackVisible ? "yes" : "no"}</p>
                         <p><strong className="text-ink">Rollback restored character run:</strong> {report.rollbackRestoredCharacterRun ? "yes" : "no"}</p>
-                        {report.visualReviewPackage ? <p><strong className="text-ink">Visual review:</strong> {report.visualReviewPackage.reviewLabel}</p> : null}
-                        {report.visualReviewPackage?.firstPngToInspect ? <p><strong className="text-ink">First PNG:</strong> {report.visualReviewPackage.firstPngToInspect}</p> : null}
-                        {report.visualReviewPackage?.gifToInspect ? <p><strong className="text-ink">GIF:</strong> {report.visualReviewPackage.gifToInspect}</p> : null}
-                        {report.visualReviewPackage?.operatorSummaryPath ? <p><strong className="text-ink">Review summary:</strong> {report.visualReviewPackage.operatorSummaryPath}</p> : null}
+                        {report.visualReviewPackage ? (
+                          <details className="rounded-[1rem] border border-amber-200 bg-amber-50 p-3" open={report.visualReviewPackage.reviewLabel === "USER_VISUAL_CHECK_READY"}>
+                            <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">Visual Review Package</summary>
+                            <div className="mt-3 space-y-1 text-amber-800">
+                              <p><strong>Visual review:</strong> {report.visualReviewPackage.reviewLabel}</p>
+                              {report.visualReviewPackage.firstPngToInspect ? <p><strong>First PNG:</strong> {report.visualReviewPackage.firstPngToInspect}</p> : null}
+                              {report.visualReviewPackage.gifToInspect ? <p><strong>GIF:</strong> {report.visualReviewPackage.gifToInspect}</p> : null}
+                              {report.visualReviewPackage.operatorSummaryPath ? <p><strong>Review summary:</strong> {report.visualReviewPackage.operatorSummaryPath}</p> : null}
+                            </div>
+                          </details>
+                        ) : null}
                         {report.failureReason ? <p><strong className="text-ink">Failure reason:</strong> {report.failureReason}</p> : null}
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ) : (
               <p className="mt-5 text-sm leading-7 body-muted">Run governed anime character renders manually to build the character-centered report.</p>
             )}
-          </article>
+          </CollapsibleActivitySection>
         </section>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
@@ -2732,8 +2871,12 @@ export function PreviewGenerationClient() {
             ) : null}
           </section>
 
-          <section className="glass-card rounded-[2rem] p-6 shadow-float">
-            <p className="section-label">Execution Status</p>
+          <CollapsibleActivitySection
+            sectionLabel="Execution Status"
+            title="Governed Preview Runtime State"
+            activity={executionActivity}
+            defaultOpen={executionActivity.critical || Boolean(error)}
+          >
             <div className="mt-5 space-y-4">
               <div className="flex flex-wrap items-center gap-2">
                 <StatusPill label={execution?.status ?? "idle"} tone={statusTone} />
@@ -2881,12 +3024,16 @@ export function PreviewGenerationClient() {
                 </article>
               ) : null}
             </div>
-          </section>
+          </CollapsibleActivitySection>
         </div>
 
         <section className="mt-6 grid gap-6 lg:grid-cols-3">
-          <article className="glass-card rounded-[2rem] p-6 shadow-float">
-            <p className="section-label">Micro-Sequence Frames</p>
+          <CollapsibleActivitySection
+            sectionLabel="Micro-Sequence Frames"
+            title="Prerequisite Renderer Frames"
+            activity={microSequenceOutputActivity}
+            defaultOpen={microSequenceOutputActivity.critical || microSequenceGalleryCards.length > 0}
+          >
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
               {microSequenceGalleryCards.length ? (
                 <div className="grid gap-4 md:grid-cols-2">
@@ -2949,10 +3096,14 @@ export function PreviewGenerationClient() {
                 <p>{microSequence?.sandbox_path ? "No governed micro-sequence frame files were produced for the latest prerequisite run." : "No governed micro-sequence frames are available yet."}</p>
               )}
             </div>
-          </article>
+          </CollapsibleActivitySection>
 
-          <article className="glass-card rounded-[2rem] p-6 shadow-float">
-            <p className="section-label">Preview Outputs</p>
+          <CollapsibleActivitySection
+            sectionLabel="Preview Outputs"
+            title="Renderer Output Gallery"
+            activity={rendererOutputActivity}
+            defaultOpen={rendererOutputActivity.critical || previewGalleryCards.length > 0}
+          >
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
               {previewGalleryCards.length ? (
                 <div className="grid gap-4 md:grid-cols-2">
@@ -3020,7 +3171,7 @@ export function PreviewGenerationClient() {
                 <p>No governed preview files are available yet.</p>
               )}
             </div>
-          </article>
+          </CollapsibleActivitySection>
 
           <article className="glass-card rounded-[2rem] p-6 shadow-float">
             <p className="section-label">Frame Comparison</p>
@@ -3048,16 +3199,25 @@ export function PreviewGenerationClient() {
 
         <section className="mt-6 grid gap-6 lg:grid-cols-1">
           {activeDiagnostics ? (
-            <article className="glass-card rounded-[2rem] p-6 shadow-float lg:col-span-3">
-              <p className="section-label">Governed Diagnostics</p>
+            <CollapsibleActivitySection
+              sectionLabel="Governed Diagnostics"
+              title="Diagnostics Activity"
+              activity={diagnosticsActivity}
+              defaultOpen={diagnosticsActivity.critical || Boolean(activeDiagnostics)}
+              className="lg:col-span-3"
+            >
               <div className="mt-5">
                 <DiagnosticsOverview diagnostics={activeDiagnostics} />
               </div>
-            </article>
+            </CollapsibleActivitySection>
           ) : null}
 
-          <article className="glass-card rounded-[2rem] p-6 shadow-float">
-            <p className="section-label">Blockers And Rollback</p>
+          <CollapsibleActivitySection
+            sectionLabel="Blockers And Rollback"
+            title="Validation And Sandbox Recovery"
+            activity={validationActivity}
+            defaultOpen={validationActivity.critical}
+          >
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
               {prerequisiteState?.continuity_validation.blockers.length ? (
                 <ul className="space-y-2">
@@ -3085,7 +3245,7 @@ export function PreviewGenerationClient() {
                 <p>Rollback stays limited to preview sandbox outputs only.</p>
               )}
             </div>
-          </article>
+          </CollapsibleActivitySection>
         </section>
       </section>
     </main>

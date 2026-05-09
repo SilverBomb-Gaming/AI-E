@@ -501,6 +501,13 @@ Visual validation contract:
 - old files named `governed_preview_sequence_frame_*.png`, `governed_motion_preview_frame_*.png`, or diagnostics dominated by cube/beacon/drone primitive subjects must not pass anime character success
 - fallback primitive dominance sets scaffold status back to scaffold/fallback failure even if approval metadata or style-profile diagnostics look healthy
 
+Localhost operator UI behavior:
+
+- `/operator/preview` now groups noisy operator areas into collapsible activity sections with header indicators for generated output, completed work, warnings, failed validation, scaffold/fallback blocks, diagnostics, and user-review-needed visual packages
+- renderer output galleries, anime character reports, diagnostics, execution status, blocker/rollback status, truth checks, visual review packages, scaffold status, and validation metrics can be expanded or collapsed from their section headers
+- blocked scaffold/fallback activity, failed validation, and critical diagnostics stay strongly indicated in the collapsed header and keep a visible warning summary below the header, so collapsing the UI cannot silently hide dangerous state
+- user-review-ready character packages surface as activity in the header while the first PNG, GIF, manifest, diagnostics JSON, and operator summary remain available inside the expanded section
+
 Approved character profiles:
 
 - `CHARACTER_001` / `CELESTIAL_APPRENTICE`: young-adult heroine with long silver-blue hair, bright teal eyes, and a sci-fi fantasy jacket
