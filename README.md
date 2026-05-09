@@ -475,6 +475,52 @@ Remaining blocked cinematic escalations:
 - long-form cinematic rendering, autonomous cinematic storytelling, autonomous continuation, and background HIGH probe loops remain blocked
 - any HIGH probe that attempts to bypass visual caps, operator review, sandbox containment, or rollback visibility remains blocked
 
+## Governed Anime Character Rendering
+
+AI-E now adds a dedicated governed anime character rendering harness for explicitly approved single-character previews. This phase deliberately allows bounded young-adult anime characters only through approved profiles, separate character approval, character-specific diagnostics, rollback snapshots, and the same low-duration sandbox preview contract.
+
+Current Phase 1 progress:
+
+- the operator preview surface now exposes four approved character profiles only: `CELESTIAL_APPRENTICE`, `NEON_COURIER`, `RITUAL_TECH_ADEPT`, and `INDUSTRIAL_SENTINEL`
+- anime character execution requires both the existing manual preview governance approval and a separate explicit anime character approval before any micro-sequence or preview execution is attempted
+- each render snapshots character identity, pose template, expression template, style state, domain state, runtime configuration, diagnostics baseline, and approval state before execution
+- character diagnostics evaluate face readability, silhouette clarity, pose readability, anime style identity, expression stability, background suppression, character-scene integration, character focus priority, rollback integrity, and rollback pressure
+- the operator report shows selected profile, pose, expression, approval state, pass/fail, strongest and weakest character metrics, rollback state, failure classification, recovery recommendation, and recommended next action
+
+Approved character profiles:
+
+- `CHARACTER_001` / `CELESTIAL_APPRENTICE`: young-adult heroine with long silver-blue hair, bright teal eyes, and a sci-fi fantasy jacket
+- `CHARACTER_002` / `NEON_COURIER`: young-adult heroine with short magenta hair, alert focused eyes, and neon urban jacket details
+- `CHARACTER_003` / `RITUAL_TECH_ADEPT`: young-adult heroine with dark violet hair, glowing accessory motifs, and a composed ceremonial stance
+- `CHARACTER_004` / `INDUSTRIAL_SENTINEL`: young-adult hero with dark ash hair, reserved stoic expression, and practical techwear silhouette
+
+Character readability watchpoints:
+
+- face readability and large-eye clarity
+- hair and body silhouette separation
+- pose readability, hand readability, and body balance
+- unmistakable anime style identity
+- expression stability without dialogue or lip-sync
+- background competition from chamber lighting, beacon glow, and environmental detail
+- character-primary scene integration and focus priority
+- rollback restoration after failed character renders
+
+Recovery logic remains advisory only:
+
+- face readability drops recommend increasing face framing priority and simplifying competing chamber lighting
+- silhouette collapse recommends strengthening hair/body outline contrast and reducing background interference
+- pose failures recommend selecting a simpler pose template with stronger body balance and hand readability
+- weak anime identity recommends strengthening anime facial proportions, hair-shape stylization, and cel-shading clarity
+- background competition recommends reducing chamber emphasis and increasing character focus priority
+- recovery recommendations require operator review and never tune character prompts or runtime settings autonomously
+
+Governance preserved:
+
+- anime character renders remain operator-triggered only; no automatic repeat, auto-chain, cast expansion, cross-run persistence, or autonomous character behavior is allowed
+- approved profiles cap cast size at one and block dialogue, lip-sync, combat choreography, explicit sexualization, unrestricted costume generation, long-form rendering, and unrestricted emotional acting
+- failed character renders preserve diagnostics, expose rollback state, restore rollback snapshots when needed, increment failure visibility, and block auto-escalation
+- this dedicated character harness is the only approved path for anime character prompts; the broader style/intensity/HIGH harnesses remain non-character, silhouette/readability-focused paths
+
 ## Autonomous Session Loop
 
 The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.

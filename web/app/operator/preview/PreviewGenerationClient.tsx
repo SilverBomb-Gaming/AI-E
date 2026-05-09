@@ -64,6 +64,15 @@ import type {
   HighIntensityProbeCell,
   HighIntensityReport,
 } from "@/lib/aie/highIntensity/governedHighIntensityState";
+import type {
+  AnimeCharacterDiagnosticSummary,
+  AnimeCharacterExecutionPlan,
+  AnimeCharacterExpressionTemplate,
+  AnimeCharacterPoseTemplate,
+  AnimeCharacterProfile,
+  AnimeCharacterReport,
+  GovernedAnimeCharacterState,
+} from "@/lib/aie/animeCharacters/governedAnimeCharacterState";
 
 const DEFAULT_FORM: GovernedPreviewFormInput = {
   prompt: "",
@@ -124,6 +133,13 @@ type HighIntensityPayload = {
   executionPlan: HighIntensityExecutionPlan;
 };
 
+type AnimeCharacterPayload = {
+  profiles: AnimeCharacterProfile[];
+  poseTemplates: AnimeCharacterPoseTemplate[];
+  expressionTemplates: AnimeCharacterExpressionTemplate[];
+  executionPlan: AnimeCharacterExecutionPlan;
+};
+
 type PreviewGenerationBootstrapPayload = {
   error?: string;
   prerequisiteState?: GovernedPreviewPrerequisiteState;
@@ -133,6 +149,7 @@ type PreviewGenerationBootstrapPayload = {
   styleStress?: StyleStressPayload;
   styleIntensity?: StyleIntensityPayload;
   highIntensity?: HighIntensityPayload;
+  animeCharacters?: AnimeCharacterPayload;
 };
 
 type PromptVariationClassificationPayload = {
@@ -211,6 +228,17 @@ type HighIntensityRunPayload = {
   harnessState?: GovernedHighIntensityState | null;
   prerequisiteState?: GovernedPreviewPrerequisiteState | null;
   highIntensity?: HighIntensityPayload;
+};
+
+type AnimeCharacterRunPayload = {
+  error?: string;
+  compiledRequest?: GovernedPreviewRequest;
+  report?: AnimeCharacterReport;
+  reports?: AnimeCharacterReport[];
+  reportSummary?: AnimeCharacterDiagnosticSummary;
+  harnessState?: GovernedAnimeCharacterState | null;
+  prerequisiteState?: GovernedPreviewPrerequisiteState | null;
+  animeCharacters?: AnimeCharacterPayload;
 };
 
 function buildSandboxAssetUrl(assetPath: string): string {
@@ -492,6 +520,16 @@ function highIntensityStatusTone(report: HighIntensityReport): "ok" | "warn" | "
   return "warn";
 }
 
+function animeCharacterStatusTone(report: AnimeCharacterReport): "ok" | "warn" | "blocked" {
+  if (report.pass) {
+    return "ok";
+  }
+  if (report.safetyStatus === "REJECTED") {
+    return "blocked";
+  }
+  return "warn";
+}
+
 export function PreviewGenerationClient() {
   const [form, setForm] = useState<GovernedPreviewFormInput>(DEFAULT_FORM);
   const [compiledRequest, setCompiledRequest] = useState<GovernedPreviewRequest | null>(null);
@@ -547,6 +585,15 @@ export function PreviewGenerationClient() {
   const [highIntensitySummary, setHighIntensitySummary] = useState<HighIntensityDiagnosticSummary | null>(null);
   const [highIntensityHarnessState, setHighIntensityHarnessState] = useState<GovernedHighIntensityState | null>(null);
   const [highProbeApproval, setHighProbeApproval] = useState<boolean>(false);
+  const [approvedAnimeCharacterProfiles, setApprovedAnimeCharacterProfiles] = useState<AnimeCharacterProfile[]>([]);
+  const [animeCharacterPoseTemplates, setAnimeCharacterPoseTemplates] = useState<AnimeCharacterPoseTemplate[]>([]);
+  const [animeCharacterExpressionTemplates, setAnimeCharacterExpressionTemplates] = useState<AnimeCharacterExpressionTemplate[]>([]);
+  const [animeCharacterPlan, setAnimeCharacterPlan] = useState<AnimeCharacterExecutionPlan | null>(null);
+  const [selectedAnimeCharacterProfileId, setSelectedAnimeCharacterProfileId] = useState<string>("");
+  const [animeCharacterReports, setAnimeCharacterReports] = useState<AnimeCharacterReport[]>([]);
+  const [animeCharacterSummary, setAnimeCharacterSummary] = useState<AnimeCharacterDiagnosticSummary | null>(null);
+  const [animeCharacterHarnessState, setAnimeCharacterHarnessState] = useState<GovernedAnimeCharacterState | null>(null);
+  const [animeCharacterApproval, setAnimeCharacterApproval] = useState<boolean>(false);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -593,6 +640,11 @@ export function PreviewGenerationClient() {
         setApprovedHighIntensityProbes(payload.highIntensity?.probes ?? []);
         setHighIntensityPlan(payload.highIntensity?.executionPlan ?? null);
         setSelectedHighIntensityProbeId((current) => current || payload.highIntensity?.probes[0]?.probeId || "");
+        setApprovedAnimeCharacterProfiles(payload.animeCharacters?.profiles ?? []);
+        setAnimeCharacterPoseTemplates(payload.animeCharacters?.poseTemplates ?? []);
+        setAnimeCharacterExpressionTemplates(payload.animeCharacters?.expressionTemplates ?? []);
+        setAnimeCharacterPlan(payload.animeCharacters?.executionPlan ?? null);
+        setSelectedAnimeCharacterProfileId((current) => current || payload.animeCharacters?.profiles[0]?.id || "");
         setMessage(payload.prerequisiteState.motion_preview_ready
           ? "Governed micro-sequence prerequisite satisfied. Motion preview generation is available."
           : "Governed motion preview is blocked until the micro-sequence continuity prerequisite is satisfied.");
@@ -746,6 +798,25 @@ export function PreviewGenerationClient() {
       package_gif_preview: styleProfile.package_gif_preview || domain.package_gif_preview,
     }));
     setMessage(`Loaded HIGH probe ${probe.styleLabel} × ${probe.domainLabel} into the governed preview form.`);
+  }
+
+  function loadApprovedAnimeCharacter(profile: AnimeCharacterProfile) {
+    const pose = animeCharacterPoseTemplates.find((entry) => entry.id === profile.poseDefault);
+    const expression = animeCharacterExpressionTemplates.find((entry) => entry.id === profile.expressionDefault);
+
+    setSelectedAnimeCharacterProfileId(profile.id);
+    setForm((current) => ({
+      ...current,
+      prompt: `${profile.promptSubject} stands as the primary cinematic subject in a glowing sci-fi chamber beside a softly pulsing beacon. The face is clearly visible with ${profile.eyeDescription}, ${profile.hairDescription}, clean anime facial proportions, and ${profile.outfitDescription}.`,
+      subject: profile.promptSubject,
+      motion_intent: `${pose?.motionIntent ?? "Hold a readable character-centered pose"}; expression stays ${expression?.label.toLowerCase() ?? "calm"}; no dialogue or lip-sync`,
+      style: `Governed unmistakable anime character rendering; single young-adult character only; ${profile.visualIdentity.join(", ")}; no dialogue, no lip-sync, no combat choreography, no cast expansion`,
+      duration_seconds: 2,
+      resolution: GOVERNED_PREVIEW_RESOLUTION,
+      continuity_priority: "high",
+      package_gif_preview: true,
+    }));
+    setMessage(`Loaded anime character ${profile.label} into the governed preview form.`);
   }
 
   function handleClassifyPromptVariation() {
@@ -1078,6 +1149,52 @@ export function PreviewGenerationClient() {
     });
   }
 
+  function handleRunAnimeCharacter(profileId: string) {
+    setError(null);
+    setRollback(null);
+    startTransition(() => {
+      void fetch("/api/operator/preview-generation", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "run-anime-character-render",
+          characterProfileId: profileId,
+          governanceApproval: form.governance_approval,
+          characterApproval: animeCharacterApproval,
+          priorReports: animeCharacterReports,
+        }),
+      })
+        .then(async (response) => {
+          const payload = await response.json() as AnimeCharacterRunPayload;
+          if (!response.ok || !payload.report) {
+            throw new Error(payload.error ?? "Anime character render failed.");
+          }
+
+          setSelectedAnimeCharacterProfileId(profileId);
+          setCompiledRequest(payload.compiledRequest ?? null);
+          setMicroSequence(payload.report.microSequence);
+          setExecution(payload.report.previewExecution);
+          setRollback(payload.report.rollback);
+          setPrerequisiteState(payload.prerequisiteState ?? payload.report.prerequisiteAfter ?? payload.report.prerequisiteBefore);
+          setAnimeCharacterReports(payload.reports ?? [payload.report]);
+          setAnimeCharacterSummary(payload.reportSummary ?? null);
+          setAnimeCharacterHarnessState(payload.harnessState ?? null);
+          setApprovedAnimeCharacterProfiles(payload.animeCharacters?.profiles ?? approvedAnimeCharacterProfiles);
+          setAnimeCharacterPoseTemplates(payload.animeCharacters?.poseTemplates ?? animeCharacterPoseTemplates);
+          setAnimeCharacterExpressionTemplates(payload.animeCharacters?.expressionTemplates ?? animeCharacterExpressionTemplates);
+          setAnimeCharacterPlan(payload.animeCharacters?.executionPlan ?? animeCharacterPlan);
+          setMessage(payload.report.pass
+            ? `Anime character ${payload.report.characterLabel} passed governed face, silhouette, pose, and anime identity thresholds.`
+            : payload.report.failureReason ?? `Anime character ${payload.report.characterLabel} failed governed character rendering thresholds.`);
+        })
+        .catch((nextError) => {
+          setError(nextError instanceof Error ? nextError.message : "Anime character render failed.");
+        });
+    });
+  }
+
   function handleGenerate() {
     setError(null);
     setRollback(null);
@@ -1217,6 +1334,7 @@ export function PreviewGenerationClient() {
     ?? highProbeStyleIntensityCells.find((entry) => entry.cellId === selectedStyleIntensityCellId)
     ?? null;
   const selectedHighIntensityProbe = approvedHighIntensityProbes.find((entry) => entry.probeId === selectedHighIntensityProbeId) ?? null;
+  const selectedAnimeCharacterProfile = approvedAnimeCharacterProfiles.find((entry) => entry.id === selectedAnimeCharacterProfileId) ?? null;
   const styleIntensityDisplayCells = [
     ...starterStyleIntensityCells,
     ...highProbeStyleIntensityCells.filter((probe) => !starterStyleIntensityCells.some((starter) => starter.cellId === probe.cellId)),
@@ -2294,6 +2412,163 @@ export function PreviewGenerationClient() {
               </div>
             ) : (
               <p className="mt-5 text-sm leading-7 body-muted">Run guarded HIGH probes manually to build the high-stylization operator report.</p>
+            )}
+          </article>
+        </section>
+
+        <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Anime Character Rendering</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Approved Character Profiles</h2>
+              </div>
+              {animeCharacterPlan ? <StatusPill label={`max-${animeCharacterPlan.maxProfiles}-profiles`} tone="ok" /> : null}
+            </div>
+            <p className="mt-3 text-sm leading-7 body-muted">
+              Single young-adult anime character only. Character approval is separate from manual preview approval. No dialogue, lip-sync, combat choreography, cast expansion, or autonomous follow-up.
+            </p>
+            {animeCharacterPlan ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {animeCharacterPlan.stages.map((stage) => (
+                  <StatusPill key={stage} label={stage} tone="default" />
+                ))}
+              </div>
+            ) : null}
+            <label className="mt-5 flex items-start gap-3 rounded-[1.25rem] border border-coral/20 bg-white/80 p-4">
+              <input
+                type="checkbox"
+                checked={animeCharacterApproval}
+                onChange={(event) => setAnimeCharacterApproval(event.target.checked)}
+                className="mt-1 h-4 w-4 rounded border border-ink/10"
+              />
+              <span className="text-sm leading-7 body-muted">
+                <strong className="block text-ink">Anime Character Approval</strong>
+                I explicitly approve one governed anime character render with face readability, silhouette readability, pose readability, rollback preservation, and no autonomous continuation.
+              </span>
+            </label>
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              {approvedAnimeCharacterProfiles.map((profile) => (
+                <article key={profile.id} className={`rounded-[1.25rem] border p-4 ${selectedAnimeCharacterProfileId === profile.id ? "border-ocean/30 bg-ocean/5" : "border-ink/10 bg-white/85"}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-ink">{profile.label}</p>
+                    <StatusPill label={profile.genderPresentation.replaceAll(" ", "-")} tone="default" />
+                  </div>
+                  <p className="mt-3 text-sm leading-7 body-muted">{profile.promptSubject}. {profile.outfitDescription}.</p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-slate">
+                    {profile.visualIdentity.map((identity) => (
+                      <span key={`${profile.id}-${identity}`} className="rounded-full border border-ink/10 bg-mist/60 px-3 py-1">{identity}</span>
+                    ))}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => loadApprovedAnimeCharacter(profile)}
+                      className="rounded-full border border-ink/10 bg-white px-4 py-2 text-xs font-semibold text-ink transition hover:-translate-y-0.5"
+                    >
+                      Load Character
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunAnimeCharacter(profile.id)}
+                      disabled={isPending}
+                      className="rounded-full border border-ocean/20 bg-ocean px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Render Character
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </article>
+
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <p className="section-label">Character State</p>
+            <h2 className="mt-3 text-2xl font-semibold text-ink">Face And Silhouette Gate</h2>
+            {selectedAnimeCharacterProfile ? (
+              <div className="mt-5 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill label={selectedAnimeCharacterProfile.label.toLowerCase().replaceAll("_", "-")} tone="default" />
+                  <StatusPill label="single-character" tone="ok" />
+                </div>
+                <p className="mt-3"><strong className="text-ink">Eyes:</strong> {selectedAnimeCharacterProfile.eyeDescription}</p>
+                <p><strong className="text-ink">Hair:</strong> {selectedAnimeCharacterProfile.hairDescription}</p>
+                <p><strong className="text-ink">Default pose:</strong> {selectedAnimeCharacterProfile.poseDefault}</p>
+                <p><strong className="text-ink">Default expression:</strong> {selectedAnimeCharacterProfile.expressionDefault}</p>
+              </div>
+            ) : null}
+            {animeCharacterHarnessState ? (
+              <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <p><strong className="text-ink">Active profile:</strong> {animeCharacterHarnessState.activeCharacterProfileId}</p>
+                <p><strong className="text-ink">Approved character execution:</strong> {animeCharacterHarnessState.approvedCharacterExecution ? "yes" : "no"}</p>
+                <p><strong className="text-ink">Character renders executed:</strong> {animeCharacterHarnessState.characterRenderExecutionCount}</p>
+                <p><strong className="text-ink">Failed character renders:</strong> {animeCharacterHarnessState.failedCharacterRenderCount}</p>
+                <p><strong className="text-ink">Rollback restored latest character run:</strong> {animeCharacterHarnessState.rollbackRestoredCharacterRun ? "yes" : "no"}</p>
+                {animeCharacterHarnessState.lastCharacterFailureType ? <p><strong className="text-ink">Last failure:</strong> {animeCharacterHarnessState.lastCharacterFailureType}</p> : null}
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Render approved anime profiles manually to test how obvious character identity can become before face, silhouette, pose, or scene integration degrades.</p>
+            )}
+          </article>
+        </section>
+
+        <section className="mb-6">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Anime Character Report</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Character-Centered Diagnostic Summary</h2>
+              </div>
+              {animeCharacterSummary ? <StatusPill label={animeCharacterSummary.recommendedNextAction.toLowerCase().replaceAll("_", "-")} tone={animeCharacterSummary.recommendedNextAction === "CONTINUE_CHARACTER_RENDERS" ? "ok" : animeCharacterSummary.recommendedNextAction === "TUNE_CHARACTER_FRAMING" ? "warn" : "blocked"} /> : null}
+            </div>
+            {animeCharacterSummary ? (
+              <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                <div className="rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                  <p><strong className="text-ink">Characters tested:</strong> {animeCharacterSummary.testedCharacterCount}</p>
+                  <p><strong className="text-ink">Passed:</strong> {animeCharacterSummary.passedCharacterCount}</p>
+                  <p><strong className="text-ink">Failed:</strong> {animeCharacterSummary.failedCharacterCount}</p>
+                  {animeCharacterSummary.strongestCharacterProfileId ? <p><strong className="text-ink">Strongest profile:</strong> {animeCharacterSummary.strongestCharacterProfileId}</p> : null}
+                  {animeCharacterSummary.weakestCharacterProfileId ? <p><strong className="text-ink">Weakest profile:</strong> {animeCharacterSummary.weakestCharacterProfileId}</p> : null}
+                  <p><strong className="text-ink">Average face readability:</strong> {animeCharacterSummary.averageFaceReadability}/100</p>
+                  <p><strong className="text-ink">Average silhouette clarity:</strong> {animeCharacterSummary.averageSilhouetteClarity}/100</p>
+                  <p><strong className="text-ink">Average pose readability:</strong> {animeCharacterSummary.averagePoseReadability}/100</p>
+                  <p><strong className="text-ink">Average anime identity:</strong> {animeCharacterSummary.averageAnimeStyleIdentity}/100</p>
+                  <p><strong className="text-ink">Average scene integration:</strong> {animeCharacterSummary.averageCharacterSceneIntegration}/100</p>
+                  <p><strong className="text-ink">Average focus priority:</strong> {animeCharacterSummary.averageCharacterFocusPriority}/100</p>
+                  <p><strong className="text-ink">Rollback pass rate:</strong> {Math.round(animeCharacterSummary.rollbackPassRate * 100)}%</p>
+                  {animeCharacterSummary.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect runtime layer:</strong> {animeCharacterSummary.recommendedRuntimeLayer}</p> : null}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {animeCharacterReports.map((report) => (
+                    <article key={report.characterProfileId} className="rounded-[1.25rem] border border-ink/10 bg-white/90 p-4 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-ink">{report.characterLabel}</p>
+                        <StatusPill label={report.executionStatus.toLowerCase()} tone={animeCharacterStatusTone(report)} />
+                      </div>
+                      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate">{report.characterProfileId.toLowerCase().replaceAll("_", "-")}</p>
+                      <div className="mt-3 space-y-1 text-sm leading-7 body-muted">
+                        <p><strong className="text-ink">Character approval:</strong> {report.characterApproved ? "approved" : "blocked"}</p>
+                        <p><strong className="text-ink">Pose:</strong> {report.poseLabel}</p>
+                        <p><strong className="text-ink">Expression:</strong> {report.expressionLabel}</p>
+                        {report.compatibility ? <p><strong className="text-ink">Compatibility score:</strong> {report.compatibility.compatibilityScore}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Face readability:</strong> {report.metrics.characterFaceReadability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Silhouette:</strong> {report.metrics.characterSilhouette}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Pose readability:</strong> {report.metrics.characterPoseReadability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Anime identity:</strong> {report.metrics.animeStyleIdentity}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Scene integration:</strong> {report.metrics.characterSceneIntegration}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Focus priority:</strong> {report.metrics.characterFocusPriority}/100</p> : null}
+                        {report.failureAnalysis ? <p><strong className="text-ink">Failure class:</strong> {report.failureAnalysis.failureType}</p> : null}
+                        {report.recoveryRecommendation ? <p><strong className="text-ink">Recovery:</strong> {report.recoveryRecommendation.recommendation}</p> : null}
+                        <p><strong className="text-ink">Rollback visible:</strong> {report.rollbackVisible ? "yes" : "no"}</p>
+                        <p><strong className="text-ink">Rollback restored character run:</strong> {report.rollbackRestoredCharacterRun ? "yes" : "no"}</p>
+                        {report.failureReason ? <p><strong className="text-ink">Failure reason:</strong> {report.failureReason}</p> : null}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Run governed anime character renders manually to build the character-centered report.</p>
             )}
           </article>
         </section>

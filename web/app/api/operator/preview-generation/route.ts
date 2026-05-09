@@ -80,6 +80,17 @@ import {
   summarizeGovernedHighIntensityReports,
 } from "@/lib/aie/highIntensity/governedHighProbeHarness";
 import type { HighIntensityReport } from "@/lib/aie/highIntensity/governedHighIntensityState";
+import {
+  buildAnimeCharacterExecutionPlan,
+  buildGovernedAnimeCharacterHarnessState,
+  getAnimeCharacterRenderFormInput,
+  listGovernedAnimeCharacterExpressions,
+  listGovernedAnimeCharacterPoses,
+  listGovernedAnimeCharacterProfiles,
+  runGovernedAnimeCharacterRenderById,
+  summarizeGovernedAnimeCharacterReports,
+} from "@/lib/aie/animeCharacters/governedAnimeCharacterRendering";
+import type { AnimeCharacterReport } from "@/lib/aie/animeCharacters/governedAnimeCharacterState";
 
 export const runtime = "nodejs";
 
@@ -142,6 +153,10 @@ function normalizeStyleIntensityHistory(value: unknown): StyleIntensityReport[] 
 
 function normalizeHighIntensityHistory(value: unknown): HighIntensityReport[] {
   return Array.isArray(value) ? value as HighIntensityReport[] : [];
+}
+
+function normalizeAnimeCharacterHistory(value: unknown): AnimeCharacterReport[] {
+  return Array.isArray(value) ? value as AnimeCharacterReport[] : [];
 }
 
 function buildVariantFormInput(variant: ApprovedPromptVariant, governanceApproval: boolean): GovernedPreviewFormInput {
@@ -288,6 +303,16 @@ function buildHighIntensityPayload() {
   };
 }
 
+function buildAnimeCharacterPayload() {
+  const profiles = listGovernedAnimeCharacterProfiles();
+  return {
+    profiles,
+    poseTemplates: listGovernedAnimeCharacterPoses(),
+    expressionTemplates: listGovernedAnimeCharacterExpressions(),
+    executionPlan: buildAnimeCharacterExecutionPlan(profiles.map((entry) => entry.id)),
+  };
+}
+
 function serializeError(error: unknown) {
   if (error instanceof Error) {
     return {
@@ -311,6 +336,7 @@ export async function GET() {
       styleStress: buildStyleStressPayload(),
       styleIntensity: buildStyleIntensityPayload(),
       highIntensity: buildHighIntensityPayload(),
+      animeCharacters: buildAnimeCharacterPayload(),
     });
   } catch (error) {
     console.error("[api/operator/preview-generation] status failed", serializeError(error));
@@ -341,13 +367,15 @@ export async function POST(request: Request) {
                     ? "run-style-intensity-cell"
                     : body.action === "run-high-intensity-probe"
                       ? "run-high-intensity-probe"
+                      : body.action === "run-anime-character-render"
+                        ? "run-anime-character-render"
         : body.action === "status"
           ? "status"
           : "generate";
 
     if (action === "status") {
       const prerequisiteState = await readGovernedPreviewPrerequisiteState();
-      return NextResponse.json({ prerequisiteState, promptVariation: buildPromptVariationPayload(), promptDomain: buildPromptDomainPayload(), visualStyle: buildVisualStylePayload(), styleStress: buildStyleStressPayload(), styleIntensity: buildStyleIntensityPayload(), highIntensity: buildHighIntensityPayload() });
+      return NextResponse.json({ prerequisiteState, promptVariation: buildPromptVariationPayload(), promptDomain: buildPromptDomainPayload(), visualStyle: buildVisualStylePayload(), styleStress: buildStyleStressPayload(), styleIntensity: buildStyleIntensityPayload(), highIntensity: buildHighIntensityPayload(), animeCharacters: buildAnimeCharacterPayload() });
     }
 
     if (action === "rollback") {
@@ -575,6 +603,44 @@ export async function POST(request: Request) {
         harnessState: buildGovernedHighIntensityHarnessState(reports),
         prerequisiteState: report.prerequisiteAfter ?? report.prerequisiteBefore,
         highIntensity: buildHighIntensityPayload(),
+      });
+    }
+
+    if (action === "run-anime-character-render") {
+      const characterProfileId = normalizeTextInput(body.characterProfileId).trim().toUpperCase();
+      const governanceApproval = normalizeBoolean(body.governanceApproval);
+      const characterApproval = normalizeBoolean(body.characterApproval);
+      const approvedProfiles = listGovernedAnimeCharacterProfiles();
+      const profile = approvedProfiles.find((entry) => entry.id === characterProfileId);
+      const formInput = getAnimeCharacterRenderFormInput(characterProfileId, governanceApproval);
+
+      if (!profile || !formInput) {
+        return NextResponse.json({ error: "An approved anime character profile is required." }, { status: 400 });
+      }
+
+      const priorReports = normalizeAnimeCharacterHistory(body.priorReports);
+      const report = await runGovernedAnimeCharacterRenderById({
+        characterProfileId,
+        governanceApproval,
+        characterApproval,
+        characterIndex: Math.max(approvedProfiles.findIndex((entry) => entry.id === characterProfileId), 0) + 1,
+        totalCharacters: approvedProfiles.length,
+        failedCharacterRenderCount: priorReports.filter((entry) => !entry.pass).length,
+        priorReports,
+      });
+      const reports = [
+        ...priorReports.filter((entry) => entry.characterProfileId !== report.characterProfileId),
+        report,
+      ].sort((left, right) => left.characterIndex - right.characterIndex);
+
+      return NextResponse.json({
+        compiledRequest: compileGovernedPreviewRequest(formInput),
+        report,
+        reports,
+        reportSummary: summarizeGovernedAnimeCharacterReports(reports),
+        harnessState: buildGovernedAnimeCharacterHarnessState(reports),
+        prerequisiteState: report.prerequisiteAfter ?? report.prerequisiteBefore,
+        animeCharacters: buildAnimeCharacterPayload(),
       });
     }
 
