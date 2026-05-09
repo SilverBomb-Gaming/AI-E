@@ -227,6 +227,74 @@ Remaining blocked cinematic escalations:
 - any transition-blend persistence beyond the current preview run remains blocked
 - any scene-cohesion persistence beyond the current preview run remains blocked
 
+## Governed Prompt Variation Harness
+
+AI-E now evaluates a small deterministic set of approved cinematic prompt variants through the existing governed preview pipeline so operators can compare quality across bounded prompt variation without enabling autonomous prompt mutation or long-form generation.
+
+Current Phase 1 progress:
+
+- the operator preview surface now lists four fixed approved variants, each constrained to the same short duration, low resolution, high continuity priority, sandbox output path, and rollback-safe execution model
+- a deterministic prompt safety classifier now approves only beacon, chamber, drone, pulse, formation, reflection, and settle-domain prompts while rejecting humanoids, characters, dialogue, story continuation, long-scene phrasing, weapons, gore, romance, and autonomous prompts before preview execution
+- approved variant runs now execute the same governed micro-sequence and preview flow, then aggregate scene cohesion, phrase continuity, transition smoothness, visual continuity, focus continuity, tension continuity, momentum continuity, readability, final composition, and rollback integrity into an operator report
+- cross-variant reporting now flags the first runtime layer to inspect when any variant drops below the governed regression floor and keeps the report local to the operator session instead of persisting cinematic memory across prompt runs
+
+Governance preserved:
+
+- prompt variation remains operator-triggered only and bounded to at most four approved variants
+- sandbox containment, manual approval, rollback, and bounded preview duration remain unchanged
+- no random prompt mutation, story generation, autonomous continuation, or long-form rendering is allowed
+- prompt variation history remains session-local and does not persist cinematic memory across prompt runs
+
+Remaining blocked cinematic escalations:
+
+- humanoid character continuity, faces, and dialogue remain blocked
+- narrative autonomy and autonomous continuation remain blocked
+- long-form rendering remains blocked
+- custom prompt execution outside the approved Phase 1 domains remains blocked
+- any prompt-variation memory or scene-memory persistence beyond the current operator session remains blocked
+
+## Governed Cinematic Prompt Domain Expansion
+
+AI-E now broadens the same bounded governed preview pipeline from a few closely related prompt variants into a small operator-approved cinematic prompt ecosystem so operators can compare quality across multiple approved domains without unlocking autonomy or unrestricted prompt generation.
+
+Current Phase 1 progress:
+
+- the operator preview surface now lists five approved cinematic prompt domains covering `ENERGY_PULSE`, `SENTRY_FORMATION`, `ATMOSPHERIC_STAGING`, `ENVIRONMENTAL_REACTION`, and `MECHANICAL_REVEAL` while preserving the same two-second duration, low-resolution preview budget, manual approval gate, and rollback-safe sandbox path
+- prompt-domain classification now reuses the deterministic safety gate to block humans, humanoids, pilots, spoken/speech phrasing, armed/battle/combat language, long-scene or long-sequence phrasing, dialogue, story continuation, and autonomous prompts before preview execution
+- approved domain runs now execute the same governed micro-sequence and preview flow, then compare scene cohesion, phrase continuity, transition smoothness, visual continuity, focus continuity, tension continuity, momentum continuity, readability, final composition, environment identity, formation identity, reflection continuity, lighting stability, and rollback integrity inside a cross-domain operator report
+- cross-domain reporting now highlights the strongest and weakest approved domains, tracks rollback pass rate, and flags the first runtime layer to inspect when any approved domain drops below the governed regression floor
+
+Approved cinematic domains:
+
+- `ENERGY_PULSE_REACTOR`
+- `SENTRY_PLATFORM_REVEAL`
+- `ATMOSPHERIC_APERTURE_EVENT`
+- `REACTIVE_REFLECTION_SEQUENCE`
+- `MECHANICAL_RITUAL_ALIGNMENT`
+
+Blocked cinematic domains:
+
+- humanoid or human-character prompts remain blocked
+- dialogue, spoken orders, and conversation prompts remain blocked
+- battle, combat, weaponized, armed, chase, gore, and romance prompts remain blocked
+- long-form, extended-sequence, narrative-continuation, and autonomous prompts remain blocked
+- unrestricted prompt generation and any prompt that attempts to create new systems remain blocked
+
+Governance preserved:
+
+- prompt domains remain operator-approved only and bounded to at most five approved domains in Phase 1
+- sandbox containment, manual approval, rollback visibility, deterministic replay, and bounded preview duration remain unchanged
+- rollback preservation stays explicit and operator-visible for failed domains, and failed diagnostics stay isolated instead of mutating runtime systems or persisting cinematic memory across runs
+- no autonomous continuation, long-form rendering, emotional acting, or story generation is allowed
+
+Remaining blocked cinematic escalations:
+
+- humanoid continuity, faces, and dialogue remain blocked
+- unrestricted custom-domain expansion remains blocked
+- narrative autonomy and autonomous continuation remain blocked
+- long-form rendering remains blocked
+- any cross-run cinematic memory persistence beyond the current operator session remains blocked
+
 ## Autonomous Session Loop
 
 The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.

@@ -20,6 +20,21 @@ import type {
   GovernedPreviewPrerequisiteState,
   GovernedPreviewRollbackResult,
 } from "@/lib/aie/governedPreviewGeneration";
+import type { ApprovedPromptVariant } from "@/lib/aie/promptVariation/approvedPromptVariants";
+import type {
+  PromptVariationDiagnosticSummary,
+  PromptVariationExecutionPlan,
+  PromptVariationHarnessState,
+  PromptVariationVariantReport,
+} from "@/lib/aie/promptVariation/promptVariationHarnessState";
+import type { PromptSafetyResult } from "@/lib/aie/promptVariation/promptSafetyClassifier";
+import type { ApprovedPromptDomainTemplate } from "@/lib/aie/promptDomains/approvedPromptDomainTemplates";
+import type {
+  GovernedPromptDomainState,
+  PromptDomainDiagnosticSummary,
+  PromptDomainExecutionPlan,
+  PromptDomainReport,
+} from "@/lib/aie/promptDomains/governedPromptDomainRegistry";
 
 const DEFAULT_FORM: GovernedPreviewFormInput = {
   prompt: "",
@@ -42,6 +57,59 @@ type PreviewGalleryCard = {
   assetUrl: string;
   frameIndex: number | null;
   diagnostic: CinematicGovernedPreviewFrameDiagnostic | null;
+};
+
+type PromptVariationPayload = {
+  variants: ApprovedPromptVariant[];
+  executionPlan: PromptVariationExecutionPlan;
+  unsafePromptExample: string;
+};
+
+type PromptDomainPayload = {
+  domains: ApprovedPromptDomainTemplate[];
+  executionPlan: PromptDomainExecutionPlan;
+  unsafePromptExample: string;
+};
+
+type PreviewGenerationBootstrapPayload = {
+  error?: string;
+  prerequisiteState?: GovernedPreviewPrerequisiteState;
+  promptVariation?: PromptVariationPayload;
+  promptDomain?: PromptDomainPayload;
+};
+
+type PromptVariationClassificationPayload = {
+  error?: string;
+  safety?: PromptSafetyResult;
+  promptVariation?: PromptVariationPayload;
+};
+
+type PromptDomainClassificationPayload = {
+  error?: string;
+  safety?: PromptSafetyResult;
+  promptDomain?: PromptDomainPayload;
+};
+
+type PromptVariationRunPayload = {
+  error?: string;
+  compiledRequest?: GovernedPreviewRequest;
+  report?: PromptVariationVariantReport;
+  reports?: PromptVariationVariantReport[];
+  reportSummary?: PromptVariationDiagnosticSummary;
+  harnessState?: PromptVariationHarnessState | null;
+  prerequisiteState?: GovernedPreviewPrerequisiteState | null;
+  promptVariation?: PromptVariationPayload;
+};
+
+type PromptDomainRunPayload = {
+  error?: string;
+  compiledRequest?: GovernedPreviewRequest;
+  report?: PromptDomainReport;
+  reports?: PromptDomainReport[];
+  reportSummary?: PromptDomainDiagnosticSummary;
+  harnessState?: GovernedPromptDomainState | null;
+  prerequisiteState?: GovernedPreviewPrerequisiteState | null;
+  promptDomain?: PromptDomainPayload;
 };
 
 function buildSandboxAssetUrl(assetPath: string): string {
@@ -263,6 +331,26 @@ function StatusPill({ label, tone }: { label: string; tone: "ok" | "warn" | "blo
   return <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${toneClassName}`}>{label}</span>;
 }
 
+function promptVariationStatusTone(report: PromptVariationVariantReport): "ok" | "warn" | "blocked" {
+  if (report.pass) {
+    return "ok";
+  }
+  if (report.safetyStatus === "REJECTED") {
+    return "blocked";
+  }
+  return "warn";
+}
+
+function promptDomainStatusTone(report: PromptDomainReport): "ok" | "warn" | "blocked" {
+  if (report.pass) {
+    return "ok";
+  }
+  if (report.safetyStatus === "REJECTED") {
+    return "blocked";
+  }
+  return "warn";
+}
+
 export function PreviewGenerationClient() {
   const [form, setForm] = useState<GovernedPreviewFormInput>(DEFAULT_FORM);
   const [compiledRequest, setCompiledRequest] = useState<GovernedPreviewRequest | null>(null);
@@ -272,6 +360,22 @@ export function PreviewGenerationClient() {
   const [rollback, setRollback] = useState<GovernedPreviewRollbackResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string>("Governed preview interface ready. Manual approval remains required.");
+  const [approvedPromptVariants, setApprovedPromptVariants] = useState<ApprovedPromptVariant[]>([]);
+  const [promptVariationPlan, setPromptVariationPlan] = useState<PromptVariationExecutionPlan | null>(null);
+  const [selectedPromptVariationId, setSelectedPromptVariationId] = useState<string>("");
+  const [promptVariationPrompt, setPromptVariationPrompt] = useState<string>("A humanoid character speaks to the drones in a long dialogue scene.");
+  const [promptVariationSafety, setPromptVariationSafety] = useState<PromptSafetyResult | null>(null);
+  const [promptVariationReports, setPromptVariationReports] = useState<PromptVariationVariantReport[]>([]);
+  const [promptVariationSummary, setPromptVariationSummary] = useState<PromptVariationDiagnosticSummary | null>(null);
+  const [promptVariationHarnessState, setPromptVariationHarnessState] = useState<PromptVariationHarnessState | null>(null);
+  const [approvedPromptDomains, setApprovedPromptDomains] = useState<ApprovedPromptDomainTemplate[]>([]);
+  const [promptDomainPlan, setPromptDomainPlan] = useState<PromptDomainExecutionPlan | null>(null);
+  const [selectedPromptDomainId, setSelectedPromptDomainId] = useState<string>("");
+  const [promptDomainPrompt, setPromptDomainPrompt] = useState<string>("A human pilot gives spoken orders to armed drones during a long battle sequence.");
+  const [promptDomainSafety, setPromptDomainSafety] = useState<PromptSafetyResult | null>(null);
+  const [promptDomainReports, setPromptDomainReports] = useState<PromptDomainReport[]>([]);
+  const [promptDomainSummary, setPromptDomainSummary] = useState<PromptDomainDiagnosticSummary | null>(null);
+  const [promptDomainHarnessState, setPromptDomainHarnessState] = useState<GovernedPromptDomainState | null>(null);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -279,10 +383,7 @@ export function PreviewGenerationClient() {
 
     void fetch("/api/operator/preview-generation", { cache: "no-store" })
       .then(async (response) => {
-        const payload = await response.json() as {
-          error?: string;
-          prerequisiteState?: GovernedPreviewPrerequisiteState;
-        };
+        const payload = await response.json() as PreviewGenerationBootstrapPayload;
 
         if (!response.ok || !payload.prerequisiteState) {
           throw new Error(payload.error ?? "We couldn't load the governed preview prerequisite state.");
@@ -293,6 +394,18 @@ export function PreviewGenerationClient() {
         }
 
         setPrerequisiteState(payload.prerequisiteState);
+        setApprovedPromptVariants(payload.promptVariation?.variants ?? []);
+        setPromptVariationPlan(payload.promptVariation?.executionPlan ?? null);
+        setSelectedPromptVariationId((current) => current || payload.promptVariation?.variants[0]?.id || "");
+        if (payload.promptVariation?.unsafePromptExample) {
+          setPromptVariationPrompt(payload.promptVariation.unsafePromptExample);
+        }
+        setApprovedPromptDomains(payload.promptDomain?.domains ?? []);
+        setPromptDomainPlan(payload.promptDomain?.executionPlan ?? null);
+        setSelectedPromptDomainId((current) => current || payload.promptDomain?.domains[0]?.id || "");
+        if (payload.promptDomain?.unsafePromptExample) {
+          setPromptDomainPrompt(payload.promptDomain.unsafePromptExample);
+        }
         setMessage(payload.prerequisiteState.motion_preview_ready
           ? "Governed micro-sequence prerequisite satisfied. Motion preview generation is available."
           : "Governed motion preview is blocked until the micro-sequence continuity prerequisite is satisfied.");
@@ -310,6 +423,184 @@ export function PreviewGenerationClient() {
 
   function updateField<Key extends keyof GovernedPreviewFormInput>(key: Key, value: GovernedPreviewFormInput[Key]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function loadApprovedPromptVariant(variant: ApprovedPromptVariant) {
+    setSelectedPromptVariationId(variant.id);
+    setForm((current) => ({
+      ...current,
+      prompt: variant.prompt,
+      subject: variant.subject,
+      motion_intent: variant.motion_intent,
+      style: variant.style,
+      duration_seconds: variant.duration_seconds,
+      resolution: variant.resolution,
+      continuity_priority: variant.continuity_priority,
+      package_gif_preview: variant.package_gif_preview,
+    }));
+    setMessage(`Loaded approved prompt variation ${variant.label} into the governed preview form.`);
+  }
+
+  function loadApprovedPromptDomain(domain: ApprovedPromptDomainTemplate) {
+    setSelectedPromptDomainId(domain.id);
+    setForm((current) => ({
+      ...current,
+      prompt: domain.prompt,
+      subject: domain.subject,
+      motion_intent: domain.motion_intent,
+      style: domain.style,
+      duration_seconds: domain.duration_seconds,
+      resolution: domain.resolution,
+      continuity_priority: domain.continuity_priority,
+      package_gif_preview: domain.package_gif_preview,
+    }));
+    setMessage(`Loaded approved prompt domain ${domain.label} into the governed preview form.`);
+  }
+
+  function handleClassifyPromptVariation() {
+    setError(null);
+    startTransition(() => {
+      void fetch("/api/operator/preview-generation", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ action: "classify-prompt-variation", prompt: promptVariationPrompt }),
+      })
+        .then(async (response) => {
+          const payload = await response.json() as PromptVariationClassificationPayload;
+          if (!response.ok || !payload.safety) {
+            throw new Error(payload.error ?? "Prompt variation classification failed.");
+          }
+
+          setPromptVariationSafety(payload.safety);
+          setApprovedPromptVariants(payload.promptVariation?.variants ?? approvedPromptVariants);
+          setPromptVariationPlan(payload.promptVariation?.executionPlan ?? promptVariationPlan);
+          setMessage(payload.safety.status === "APPROVED"
+            ? `Prompt variation stays inside the approved ${payload.safety.approvedDomain?.toLowerCase().replaceAll("_", " ") ?? "governed"} domain.`
+            : "Prompt variation blocked before preview execution. Review blocked terms and approved domains.");
+        })
+        .catch((nextError) => {
+          setError(nextError instanceof Error ? nextError.message : "Prompt variation classification failed.");
+        });
+    });
+  }
+
+  function handleRunPromptVariationVariant(variantId: string) {
+    setError(null);
+    setRollback(null);
+    startTransition(() => {
+      void fetch("/api/operator/preview-generation", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "run-prompt-variation-variant",
+          variantId,
+          governanceApproval: form.governance_approval,
+          priorReports: promptVariationReports,
+        }),
+      })
+        .then(async (response) => {
+          const payload = await response.json() as PromptVariationRunPayload;
+          if (!response.ok || !payload.report) {
+            throw new Error(payload.error ?? "Prompt variation execution failed.");
+          }
+
+          setSelectedPromptVariationId(variantId);
+          setCompiledRequest(payload.compiledRequest ?? null);
+          setMicroSequence(payload.report.microSequence);
+          setExecution(payload.report.previewExecution);
+          setRollback(payload.report.rollback);
+          setPrerequisiteState(payload.prerequisiteState ?? payload.report.prerequisiteAfter ?? payload.report.prerequisiteBefore);
+          setPromptVariationSafety(payload.report.safety);
+          setPromptVariationReports(payload.reports ?? [payload.report]);
+          setPromptVariationSummary(payload.reportSummary ?? null);
+          setPromptVariationHarnessState(payload.harnessState ?? null);
+          setApprovedPromptVariants(payload.promptVariation?.variants ?? approvedPromptVariants);
+          setPromptVariationPlan(payload.promptVariation?.executionPlan ?? promptVariationPlan);
+          setMessage(payload.report.pass
+            ? `Approved prompt variation ${payload.report.variantLabel} passed governed regression thresholds.`
+            : payload.report.failureReason ?? `Approved prompt variation ${payload.report.variantLabel} failed governed regression thresholds.`);
+        })
+        .catch((nextError) => {
+          setError(nextError instanceof Error ? nextError.message : "Prompt variation execution failed.");
+        });
+    });
+  }
+
+  function handleClassifyPromptDomain() {
+    setError(null);
+    startTransition(() => {
+      void fetch("/api/operator/preview-generation", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ action: "classify-prompt-domain", prompt: promptDomainPrompt }),
+      })
+        .then(async (response) => {
+          const payload = await response.json() as PromptDomainClassificationPayload;
+          if (!response.ok || !payload.safety) {
+            throw new Error(payload.error ?? "Prompt domain classification failed.");
+          }
+
+          setPromptDomainSafety(payload.safety);
+          setApprovedPromptDomains(payload.promptDomain?.domains ?? approvedPromptDomains);
+          setPromptDomainPlan(payload.promptDomain?.executionPlan ?? promptDomainPlan);
+          setMessage(payload.safety.status === "APPROVED"
+            ? "Prompt domain stays inside the approved governed cinematic domain surface."
+            : "Prompt domain blocked before preview execution. Review blocked terms and approved domains.");
+        })
+        .catch((nextError) => {
+          setError(nextError instanceof Error ? nextError.message : "Prompt domain classification failed.");
+        });
+    });
+  }
+
+  function handleRunPromptDomain(domainId: string) {
+    setError(null);
+    setRollback(null);
+    startTransition(() => {
+      void fetch("/api/operator/preview-generation", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "run-prompt-domain",
+          domainId,
+          governanceApproval: form.governance_approval,
+          priorReports: promptDomainReports,
+        }),
+      })
+        .then(async (response) => {
+          const payload = await response.json() as PromptDomainRunPayload;
+          if (!response.ok || !payload.report) {
+            throw new Error(payload.error ?? "Prompt domain execution failed.");
+          }
+
+          setSelectedPromptDomainId(domainId);
+          setCompiledRequest(payload.compiledRequest ?? null);
+          setMicroSequence(payload.report.microSequence);
+          setExecution(payload.report.previewExecution);
+          setRollback(payload.report.rollback);
+          setPrerequisiteState(payload.prerequisiteState ?? payload.report.prerequisiteAfter ?? payload.report.prerequisiteBefore);
+          setPromptDomainSafety(payload.report.safety);
+          setPromptDomainReports(payload.reports ?? [payload.report]);
+          setPromptDomainSummary(payload.reportSummary ?? null);
+          setPromptDomainHarnessState(payload.harnessState ?? null);
+          setApprovedPromptDomains(payload.promptDomain?.domains ?? approvedPromptDomains);
+          setPromptDomainPlan(payload.promptDomain?.executionPlan ?? promptDomainPlan);
+          setMessage(payload.report.pass
+            ? `Approved prompt domain ${payload.report.domainLabel} passed governed domain thresholds.`
+            : payload.report.failureReason ?? `Approved prompt domain ${payload.report.domainLabel} failed governed domain thresholds.`);
+        })
+        .catch((nextError) => {
+          setError(nextError instanceof Error ? nextError.message : "Prompt domain execution failed.");
+        });
+    });
   }
 
   function handleGenerate() {
@@ -440,6 +731,8 @@ export function PreviewGenerationClient() {
   const showGenerateMicroSequenceCta = !motionPreviewReady
     || execution?.blockers.includes("micro-sequence-prerequisite")
     || microSequence?.status === "blocked";
+  const selectedPromptVariation = approvedPromptVariants.find((entry) => entry.id === selectedPromptVariationId) ?? null;
+  const selectedPromptDomain = approvedPromptDomains.find((entry) => entry.id === selectedPromptDomainId) ?? null;
 
   return (
     <main className="page-shell min-h-screen bg-mist/80">
@@ -461,6 +754,364 @@ export function PreviewGenerationClient() {
             </Link>
           </div>
         </div>
+
+        <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Prompt Variation Harness</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Approved Prompt Variant Set</h2>
+              </div>
+              {promptVariationPlan ? <StatusPill label={`max-${promptVariationPlan.maxVariants}-variants`} tone="ok" /> : null}
+            </div>
+            <p className="mt-3 text-sm leading-7 body-muted">
+              Operator-triggered only. Approved variants only. No humanoids, dialogue, long-form rendering, autonomous continuation, or random prompt mutation.
+            </p>
+            {promptVariationPlan ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {promptVariationPlan.stages.map((stage) => (
+                  <StatusPill key={stage} label={stage} tone="default" />
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              {approvedPromptVariants.map((variant) => (
+                <article key={variant.id} className={`rounded-[1.25rem] border p-4 ${selectedPromptVariationId === variant.id ? "border-ocean/30 bg-ocean/5" : "border-ink/10 bg-white/85"}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-ink">{variant.label}</p>
+                    <StatusPill label={variant.domain.toLowerCase().replaceAll("_", "-")} tone="default" />
+                  </div>
+                  <p className="mt-3 text-sm leading-7 body-muted">{variant.prompt}</p>
+                  <div className="mt-3 text-xs uppercase tracking-[0.18em] text-slate">
+                    {variant.duration_seconds}s • {variant.resolution} • {variant.continuity_priority} continuity
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => loadApprovedPromptVariant(variant)}
+                      className="rounded-full border border-ink/10 bg-white px-4 py-2 text-xs font-semibold text-ink transition hover:-translate-y-0.5"
+                    >
+                      Load Variant
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunPromptVariationVariant(variant.id)}
+                      disabled={isPending}
+                      className="rounded-full border border-ocean/20 bg-ocean px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Run Approved Variant
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </article>
+
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <p className="section-label">Safety Gate</p>
+            <h2 className="mt-3 text-2xl font-semibold text-ink">Prompt Safety Classifier</h2>
+            <label className="mt-5 flex flex-col gap-2 rounded-[1.25rem] border border-ink/10 bg-white/80 p-4">
+              <FieldLabel>Candidate Prompt</FieldLabel>
+              <textarea
+                value={promptVariationPrompt}
+                onChange={(event) => setPromptVariationPrompt(event.target.value)}
+                rows={5}
+                className="rounded-xl border border-ink/10 bg-white px-3 py-3 text-sm text-ink outline-none"
+                placeholder="Paste a candidate prompt to test the deterministic safety gate."
+              />
+            </label>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={handleClassifyPromptVariation}
+                disabled={isPending}
+                className="rounded-full border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Classify Prompt
+              </button>
+              {selectedPromptVariation ? (
+                <button
+                  type="button"
+                  onClick={() => loadApprovedPromptVariant(selectedPromptVariation)}
+                  className="rounded-full border border-ink/10 bg-white px-5 py-3 text-sm font-semibold text-ink transition hover:-translate-y-0.5"
+                >
+                  Load Selected Variant
+                </button>
+              ) : null}
+            </div>
+            {promptVariationSafety ? (
+              <div className="mt-4 space-y-3 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill label={promptVariationSafety.status} tone={promptVariationSafety.status === "APPROVED" ? "ok" : "blocked"} />
+                  {promptVariationSafety.approvedDomain ? <StatusPill label={promptVariationSafety.approvedDomain.toLowerCase().replaceAll("_", "-")} tone="default" /> : null}
+                </div>
+                {promptVariationSafety.blockedTerms.length ? <p><strong className="text-ink">Blocked terms:</strong> {promptVariationSafety.blockedTerms.join(", ")}</p> : null}
+                {promptVariationSafety.approvedTerms.length ? <p><strong className="text-ink">Approved terms:</strong> {promptVariationSafety.approvedTerms.join(", ")}</p> : null}
+                {promptVariationSafety.reasons.length ? (
+                  <ul className="space-y-2">
+                    {promptVariationSafety.reasons.map((reason) => (
+                      <li key={reason} className="rounded-[1rem] border border-ink/10 bg-mist/60 px-4 py-3">{reason}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+            {promptVariationHarnessState ? (
+              <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <p><strong className="text-ink">Active variant:</strong> {promptVariationHarnessState.activeVariantLabel}</p>
+                <p><strong className="text-ink">Execution status:</strong> {promptVariationHarnessState.variantExecutionStatus}</p>
+                <p><strong className="text-ink">Cross-variant cohesion:</strong> {promptVariationHarnessState.crossVariantCohesionScore}/100</p>
+                <p><strong className="text-ink">Cross-variant readability:</strong> {promptVariationHarnessState.crossVariantReadabilityScore}/100</p>
+                <p><strong className="text-ink">Rejected variants:</strong> {promptVariationHarnessState.rejectedVariantCount}</p>
+                <p><strong className="text-ink">Rollback restored latest variant:</strong> {promptVariationHarnessState.rollbackRestoredVariant ? "yes" : "no"}</p>
+              </div>
+            ) : null}
+          </article>
+        </section>
+
+        <section className="mb-6">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Operator Report</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Cross-Variant Diagnostic Summary</h2>
+              </div>
+              {promptVariationSummary ? <StatusPill label={promptVariationSummary.recommendedNextAction.toLowerCase().replaceAll("_", "-")} tone={promptVariationSummary.recommendedNextAction === "CONTINUE_VARIANTS" ? "ok" : promptVariationSummary.recommendedNextAction === "TUNE_RUNTIME" ? "warn" : "blocked"} /> : null}
+            </div>
+            {promptVariationSummary ? (
+              <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                <div className="rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                  <p><strong className="text-ink">Variants run:</strong> {promptVariationSummary.variantCount}</p>
+                  <p><strong className="text-ink">Passed:</strong> {promptVariationSummary.passedVariantCount}</p>
+                  <p><strong className="text-ink">Rejected:</strong> {promptVariationSummary.rejectedVariantCount}</p>
+                  <p><strong className="text-ink">Average scene cohesion:</strong> {promptVariationSummary.averageSceneCohesion}/100</p>
+                  <p><strong className="text-ink">Minimum scene cohesion:</strong> {promptVariationSummary.minimumSceneCohesion}/100</p>
+                  <p><strong className="text-ink">Average transition smoothness:</strong> {promptVariationSummary.averageTransitionSmoothness}/100</p>
+                  <p><strong className="text-ink">Average focus continuity:</strong> {promptVariationSummary.averageFocusContinuity}/100</p>
+                  <p><strong className="text-ink">Average preview readability:</strong> {promptVariationSummary.averagePreviewReadability}/100</p>
+                  <p><strong className="text-ink">Rollback pass rate:</strong> {Math.round(promptVariationSummary.rollbackPassRate * 100)}%</p>
+                  {promptVariationSummary.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect runtime layer:</strong> {promptVariationSummary.recommendedRuntimeLayer}</p> : null}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {promptVariationReports.map((report) => (
+                    <article key={report.variantId} className="rounded-[1.25rem] border border-ink/10 bg-white/90 p-4 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-ink">{report.variantLabel}</p>
+                        <StatusPill label={report.executionStatus.toLowerCase()} tone={promptVariationStatusTone(report)} />
+                      </div>
+                      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate">{report.domain.toLowerCase().replaceAll("_", "-")}</p>
+                      <p className="mt-3 text-sm leading-7 body-muted">{report.prompt}</p>
+                      <div className="mt-3 space-y-1 text-sm leading-7 body-muted">
+                        <p><strong className="text-ink">Safety:</strong> {report.safetyStatus}</p>
+                        {report.metrics ? <p><strong className="text-ink">Scene cohesion:</strong> {report.metrics.sceneCohesion}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Transition smoothness:</strong> {report.metrics.transitionSmoothness}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Focus continuity:</strong> {report.metrics.focusContinuity}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Preview readability:</strong> {report.metrics.previewReadability}/100</p> : null}
+                        <p><strong className="text-ink">Rollback visible:</strong> {report.rollbackVisible ? "yes" : "no"}</p>
+                        <p><strong className="text-ink">Rollback restored variant:</strong> {report.rollbackRestoredVariant ? "yes" : "no"}</p>
+                        {report.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect layer:</strong> {report.recommendedRuntimeLayer}</p> : null}
+                        {report.failureReason ? <p><strong className="text-ink">Failure reason:</strong> {report.failureReason}</p> : null}
+                      </div>
+                      {report.failedThresholds.length ? (
+                        <ul className="mt-3 space-y-2 text-sm leading-7 body-muted">
+                          {report.failedThresholds.map((failure) => (
+                            <li key={`${report.variantId}-${failure.metric}`} className="rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+                              {failure.metric}: {String(failure.actual)} required {failure.required} ({failure.recommendedRuntimeLayer})
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Run approved prompt variants manually to build the bounded operator report.</p>
+            )}
+          </article>
+        </section>
+
+        <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Prompt Domain Expansion</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Approved Cinematic Domains</h2>
+              </div>
+              {promptDomainPlan ? <StatusPill label={`max-${promptDomainPlan.maxDomains}-domains`} tone="ok" /> : null}
+            </div>
+            <p className="mt-3 text-sm leading-7 body-muted">
+              Domains remain operator-approved only. No humanoids, dialogue, emotional acting, story generation, long-form rendering, autonomous continuation, or unrestricted prompt generation.
+            </p>
+            {promptDomainPlan ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {promptDomainPlan.stages.map((stage) => (
+                  <StatusPill key={stage} label={stage} tone="default" />
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              {approvedPromptDomains.map((domain) => (
+                <article key={domain.id} className={`rounded-[1.25rem] border p-4 ${selectedPromptDomainId === domain.id ? "border-ocean/30 bg-ocean/5" : "border-ink/10 bg-white/85"}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-ink">{domain.label}</p>
+                    <StatusPill label={domain.category.toLowerCase().replaceAll("_", "-")} tone="default" />
+                  </div>
+                  <p className="mt-3 text-sm leading-7 body-muted">{domain.prompt}</p>
+                  <div className="mt-3 text-xs uppercase tracking-[0.18em] text-slate">
+                    {domain.duration_seconds}s • {domain.resolution} • {domain.continuity_priority} continuity
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => loadApprovedPromptDomain(domain)}
+                      className="rounded-full border border-ink/10 bg-white px-4 py-2 text-xs font-semibold text-ink transition hover:-translate-y-0.5"
+                    >
+                      Load Domain
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunPromptDomain(domain.id)}
+                      disabled={isPending}
+                      className="rounded-full border border-ocean/20 bg-ocean px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Run Approved Domain
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </article>
+
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <p className="section-label">Domain Safety Gate</p>
+            <h2 className="mt-3 text-2xl font-semibold text-ink">Prompt Domain Classifier</h2>
+            <label className="mt-5 flex flex-col gap-2 rounded-[1.25rem] border border-ink/10 bg-white/80 p-4">
+              <FieldLabel>Candidate Domain Prompt</FieldLabel>
+              <textarea
+                value={promptDomainPrompt}
+                onChange={(event) => setPromptDomainPrompt(event.target.value)}
+                rows={5}
+                className="rounded-xl border border-ink/10 bg-white px-3 py-3 text-sm text-ink outline-none"
+                placeholder="Paste a candidate domain prompt to test the deterministic safety gate."
+              />
+            </label>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={handleClassifyPromptDomain}
+                disabled={isPending}
+                className="rounded-full border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Classify Domain
+              </button>
+              {selectedPromptDomain ? (
+                <button
+                  type="button"
+                  onClick={() => loadApprovedPromptDomain(selectedPromptDomain)}
+                  className="rounded-full border border-ink/10 bg-white px-5 py-3 text-sm font-semibold text-ink transition hover:-translate-y-0.5"
+                >
+                  Load Selected Domain
+                </button>
+              ) : null}
+            </div>
+            {promptDomainSafety ? (
+              <div className="mt-4 space-y-3 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill label={promptDomainSafety.status} tone={promptDomainSafety.status === "APPROVED" ? "ok" : "blocked"} />
+                  {promptDomainSafety.approvedDomain ? <StatusPill label={promptDomainSafety.approvedDomain.toLowerCase().replaceAll("_", "-")} tone="default" /> : null}
+                </div>
+                {promptDomainSafety.blockedTerms.length ? <p><strong className="text-ink">Blocked terms:</strong> {promptDomainSafety.blockedTerms.join(", ")}</p> : null}
+                {promptDomainSafety.approvedTerms.length ? <p><strong className="text-ink">Approved terms:</strong> {promptDomainSafety.approvedTerms.join(", ")}</p> : null}
+                {promptDomainSafety.reasons.length ? (
+                  <ul className="space-y-2">
+                    {promptDomainSafety.reasons.map((reason) => (
+                      <li key={reason} className="rounded-[1rem] border border-ink/10 bg-mist/60 px-4 py-3">{reason}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+            {promptDomainHarnessState ? (
+              <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <p><strong className="text-ink">Active domain:</strong> {promptDomainHarnessState.activeDomainLabel}</p>
+                <p><strong className="text-ink">Domain category:</strong> {promptDomainHarnessState.domainCategory}</p>
+                <p><strong className="text-ink">Approved domains run:</strong> {promptDomainHarnessState.approvedVariantCount}</p>
+                <p><strong className="text-ink">Domain compatibility:</strong> {promptDomainHarnessState.domainCompatibilityScore}/100</p>
+                <p><strong className="text-ink">Domain readability:</strong> {promptDomainHarnessState.domainReadabilityScore}/100</p>
+                <p><strong className="text-ink">Rejected domains:</strong> {promptDomainHarnessState.rejectedDomainCount}</p>
+                <p><strong className="text-ink">Rollback restored latest domain:</strong> {promptDomainHarnessState.rollbackRestoredDomain ? "yes" : "no"}</p>
+              </div>
+            ) : null}
+          </article>
+        </section>
+
+        <section className="mb-6">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Domain Expansion Report</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Cross-Domain Diagnostic Summary</h2>
+              </div>
+              {promptDomainSummary ? <StatusPill label={promptDomainSummary.recommendedNextAction.toLowerCase().replaceAll("_", "-")} tone={promptDomainSummary.recommendedNextAction === "CONTINUE_DOMAIN_EXPANSION" ? "ok" : promptDomainSummary.recommendedNextAction === "TUNE_COHESION_LAYER" ? "warn" : "blocked"} /> : null}
+            </div>
+            {promptDomainSummary ? (
+              <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                <div className="rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                  <p><strong className="text-ink">Domains run:</strong> {promptDomainSummary.testedDomainCount}</p>
+                  <p><strong className="text-ink">Passed:</strong> {promptDomainSummary.passedDomainCount}</p>
+                  <p><strong className="text-ink">Rejected:</strong> {promptDomainSummary.rejectedDomainCount}</p>
+                  {promptDomainSummary.strongestDomain ? <p><strong className="text-ink">Strongest domain:</strong> {promptDomainSummary.strongestDomain}</p> : null}
+                  {promptDomainSummary.weakestDomain ? <p><strong className="text-ink">Weakest domain:</strong> {promptDomainSummary.weakestDomain}</p> : null}
+                  <p><strong className="text-ink">Average scene cohesion:</strong> {promptDomainSummary.averageSceneCohesion}/100</p>
+                  <p><strong className="text-ink">Average transition smoothness:</strong> {promptDomainSummary.averageTransitionSmoothness}/100</p>
+                  <p><strong className="text-ink">Average tension continuity:</strong> {promptDomainSummary.averageTensionContinuity}/100</p>
+                  <p><strong className="text-ink">Average momentum continuity:</strong> {promptDomainSummary.averageMomentumContinuity}/100</p>
+                  <p><strong className="text-ink">Average preview readability:</strong> {promptDomainSummary.averagePreviewReadability}/100</p>
+                  <p><strong className="text-ink">Rollback pass rate:</strong> {Math.round(promptDomainSummary.rollbackPassRate * 100)}%</p>
+                  {promptDomainSummary.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect runtime layer:</strong> {promptDomainSummary.recommendedRuntimeLayer}</p> : null}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {promptDomainReports.map((report) => (
+                    <article key={report.domainId} className="rounded-[1.25rem] border border-ink/10 bg-white/90 p-4 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-ink">{report.domainLabel}</p>
+                        <StatusPill label={report.executionStatus.toLowerCase()} tone={promptDomainStatusTone(report)} />
+                      </div>
+                      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate">{report.domainCategory.toLowerCase().replaceAll("_", "-")}</p>
+                      <p className="mt-3 text-sm leading-7 body-muted">{report.promptTemplate}</p>
+                      <div className="mt-3 space-y-1 text-sm leading-7 body-muted">
+                        <p><strong className="text-ink">Safety:</strong> {report.safetyStatus}</p>
+                        {report.metrics ? <p><strong className="text-ink">Scene cohesion:</strong> {report.metrics.sceneCohesion}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Environment identity:</strong> {report.metrics.environmentIdentity}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Formation identity:</strong> {report.metrics.formationIdentity}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Reflection continuity:</strong> {report.metrics.reflectionContinuity}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Lighting stability:</strong> {report.metrics.lightingStability}/100</p> : null}
+                        {report.strongestMetric ? <p><strong className="text-ink">Strongest metric:</strong> {report.strongestMetric}</p> : null}
+                        {report.weakestMetric ? <p><strong className="text-ink">Weakest metric:</strong> {report.weakestMetric}</p> : null}
+                        <p><strong className="text-ink">Rollback visible:</strong> {report.rollbackVisible ? "yes" : "no"}</p>
+                        <p><strong className="text-ink">Rollback restored domain:</strong> {report.rollbackRestoredDomain ? "yes" : "no"}</p>
+                        {report.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect layer:</strong> {report.recommendedRuntimeLayer}</p> : null}
+                        {report.failureReason ? <p><strong className="text-ink">Failure reason:</strong> {report.failureReason}</p> : null}
+                      </div>
+                      {report.failedThresholds.length ? (
+                        <ul className="mt-3 space-y-2 text-sm leading-7 body-muted">
+                          {report.failedThresholds.map((failure) => (
+                            <li key={`${report.domainId}-${failure.metric}`} className="rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+                              {failure.metric}: {String(failure.actual)} required {failure.required} ({failure.recommendedRuntimeLayer})
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Run approved prompt domains manually to build the bounded operator domain report.</p>
+            )}
+          </article>
+        </section>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
           <section className="glass-card rounded-[2rem] p-6 shadow-float">
