@@ -6,6 +6,8 @@ import {
   advanceGuidedWorkflow,
   buildGuidedWorkflowSteps,
   evaluateFinalOperatorVerdict,
+  getGuidedStepTarget,
+  resolveGuidedStepNavigationTarget,
   type GuidedWorkflowFacts,
   type GuidedWorkflowState,
 } from "./guidedWorkflow";
@@ -42,6 +44,49 @@ test("Step 1 starts active", () => {
   assert.equal(steps[0].status, "active");
   assert.equal(steps[0].isActive, true);
   assert.equal(steps.filter((step) => step.isActive).length, 1);
+});
+
+test("Start New Task maps to the stable Request Form target", () => {
+  const target = getGuidedStepTarget("start-new-task");
+
+  assert.equal(target.sectionId, "request-form-section");
+  assert.equal(target.workflowSectionId, "execution-controls");
+  assert.equal(target.focusSelector, "[data-guided-focus='prompt-input']");
+  assert.equal(target.highlightSelector, "[data-guided-highlight='request-form']");
+  assert.match(target.instruction, /Start here/i);
+});
+
+test("target registry returns stable section IDs and non-empty instructions", () => {
+  const expectedTargets = [
+    ["generate-preview", "execution-controls-section"],
+    ["review-preview-output", "preview-outputs-section"],
+    ["check-diagnostics-rollback", "diagnostics-section"],
+    ["final-operator-verdict", "final-verdict-section"],
+  ] as const;
+
+  for (const [stepId, sectionId] of expectedTargets) {
+    const target = getGuidedStepTarget(stepId);
+    assert.equal(target.sectionId, sectionId);
+    assert.ok(target.instruction.length > 20);
+    assert.ok(target.calloutLabel.length > 0);
+  }
+});
+
+test("missing focus targets fall back gracefully to the section", () => {
+  const target = resolveGuidedStepNavigationTarget("review-preview-output", (selector) => selector === "#preview-outputs-section");
+
+  assert.equal(target.missing, true);
+  assert.equal(target.focusSelector, "#preview-outputs-section");
+  assert.match(target.reason, /Primary control is not available yet/i);
+});
+
+test("workflow copy includes explicit destinations", () => {
+  const steps = buildGuidedWorkflowSteps(INITIAL_GUIDED_WORKFLOW_STATE, baseFacts);
+
+  assert.match(steps[0].title, /Go To Request Form/i);
+  assert.match(steps.find((step) => step.id === "review-preview-output")?.title ?? "", /Actual PNG\/GIF/i);
+  assert.match(steps.find((step) => step.id === "check-diagnostics-rollback")?.title ?? "", /After Visual Check/i);
+  assert.match(steps.find((step) => step.id === "final-operator-verdict")?.title ?? "", /Set Final/i);
 });
 
 test("Enter advances only when current step is complete", () => {

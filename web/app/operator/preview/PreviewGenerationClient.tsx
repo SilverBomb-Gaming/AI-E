@@ -87,10 +87,13 @@ import {
   advanceGuidedWorkflow,
   buildGuidedWorkflowSteps,
   evaluateFinalOperatorVerdict,
+  getGuidedStepTarget,
+  resolveGuidedStepNavigationTarget,
   type FinalOperatorVerdict,
   type GuidedWorkflowFacts,
   type GuidedWorkflowSectionId,
   type GuidedWorkflowState,
+  type GuidedWorkflowStepId,
   type GuidedWorkflowStepView,
 } from "./guidedWorkflow";
 
@@ -487,6 +490,7 @@ function CollapsibleActivitySection({
   children,
   defaultOpen,
   className = "",
+  sectionDomId,
   guidedStepLabel,
   containsActiveStep = false,
   hasWorkflowWarning = false,
@@ -497,6 +501,7 @@ function CollapsibleActivitySection({
   children: ReactNode;
   defaultOpen?: boolean;
   className?: string;
+  sectionDomId?: string;
   guidedStepLabel?: string;
   containsActiveStep?: boolean;
   hasWorkflowWarning?: boolean;
@@ -527,7 +532,7 @@ function CollapsibleActivitySection({
         : "border-ink/10 bg-white text-ink/75";
 
   return (
-    <article className={`self-start rounded-[1.25rem] border bg-white/90 shadow-float ${containsActiveStep ? "border-ocean/50 ring-2 ring-ocean/15" : hasWorkflowWarning ? "border-amber-300" : "border-ink/15"} ${className}`}>
+    <article id={sectionDomId} tabIndex={sectionDomId ? -1 : undefined} className={`self-start scroll-mt-6 rounded-[1.25rem] border bg-white/90 shadow-float ${containsActiveStep ? "border-ocean/50 ring-2 ring-ocean/15" : hasWorkflowWarning ? "border-amber-300" : "border-ink/15"} ${className}`}>
       <button
         type="button"
         onClick={() => setIsOpen((current) => !current)}
@@ -671,6 +676,22 @@ function verdictClass(verdict: FinalOperatorVerdict): string {
   return "border-amber-300 bg-amber-50 text-amber-700";
 }
 
+function guidedTargetHighlightClass(isActive: boolean): string {
+  return isActive ? "border-ocean/50 bg-ocean/5 ring-4 ring-ocean/15" : "border-ink/10 bg-white/80";
+}
+
+function GuidedTargetCallout({ active, label, instruction }: { active: boolean; label: string; instruction: string }) {
+  if (!active) {
+    return null;
+  }
+  return (
+    <div className="mb-4 rounded-[1rem] border-2 border-ocean/40 bg-ocean/10 p-4 text-sm leading-7 text-ink shadow-sm" role="status">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-ocean">{label}</p>
+      <p className="mt-2">{instruction}</p>
+    </div>
+  );
+}
+
 function OperatorGuidedWorkflow({
   steps,
   activeStepRef,
@@ -693,6 +714,7 @@ function OperatorGuidedWorkflow({
   finalDiagnosticsClear,
   onFinalDiagnosticsClearChange,
   onAdvance,
+  onNavigateStep,
 }: {
   steps: GuidedWorkflowStepView[];
   activeStepRef: RefObject<HTMLButtonElement>;
@@ -715,8 +737,11 @@ function OperatorGuidedWorkflow({
   finalDiagnosticsClear: boolean;
   onFinalDiagnosticsClearChange: (value: boolean) => void;
   onAdvance: () => void;
+  onNavigateStep: (stepId: GuidedWorkflowStepId) => void;
 }) {
   const activeStep = steps.find((step) => step.isActive) ?? steps[0];
+  const activeStepTarget = getGuidedStepTarget(activeStep.id);
+  const finalVerdictActive = activeStepTarget.highlightSelector === "[data-guided-highlight='final-verdict']";
 
   return (
     <section className="mb-6 rounded-[1.25rem] border border-ocean/20 bg-white/95 p-5 shadow-float" aria-label="Operator guided anime preview workflow">
@@ -735,7 +760,7 @@ function OperatorGuidedWorkflow({
             <button
               type="button"
               ref={step.isActive ? activeStepRef : undefined}
-              onClick={step.isActive ? onAdvance : undefined}
+              onClick={() => onNavigateStep(step.id)}
               onKeyDown={(event) => {
                 if (step.isActive && event.key === "Enter") {
                   event.preventDefault();
@@ -766,16 +791,22 @@ function OperatorGuidedWorkflow({
         <article className="rounded-[1rem] border border-ink/10 bg-mist/50 p-4">
           <p className="text-sm font-semibold text-ink">Active Step</p>
           <p className="mt-2 text-sm leading-7 body-muted">Step {activeStep.number}: {activeStep.title}</p>
+          <p className="mt-2 text-sm leading-7 text-ink">{getGuidedStepTarget(activeStep.id).instruction}</p>
           <button
             type="button"
-            onClick={onAdvance}
+            onClick={() => onNavigateStep(activeStep.id)}
             className="mt-3 rounded-full border border-ocean/20 bg-ocean px-4 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5"
           >
-            Continue With Enter
+            Go To Active Step
           </button>
         </article>
 
-        <article className="rounded-[1rem] border border-ink/10 bg-white p-4">
+        <article
+          id="final-verdict-section"
+          data-guided-highlight="final-verdict"
+          className={`scroll-mt-6 rounded-[1rem] border p-4 ${guidedTargetHighlightClass(finalVerdictActive)}`}
+        >
+          <GuidedTargetCallout active={finalVerdictActive} label={activeStepTarget.calloutLabel} instruction={activeStepTarget.instruction} />
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm font-semibold text-ink">Final Operator Verdict</p>
             <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${verdictClass(finalVerdict)}`}>{finalVerdict}</span>
@@ -798,7 +829,7 @@ function OperatorGuidedWorkflow({
               <span>Diagnostics and rollback warnings reviewed.</span>
             </label>
             <label className="flex items-start gap-2 rounded-[0.75rem] border border-ink/10 bg-mist/40 p-3">
-              <input type="checkbox" checked={finalVisualIntentMatched} onChange={(event) => onFinalVisualIntentMatchedChange(event.target.checked)} className="mt-1 h-4 w-4" />
+              <input type="checkbox" checked={finalVisualIntentMatched} onChange={(event) => onFinalVisualIntentMatchedChange(event.target.checked)} data-guided-focus="final-verdict-pass" className="mt-1 h-4 w-4" />
               <span>Did visible output match the operator intent?</span>
             </label>
             <label className="flex items-start gap-2 rounded-[0.75rem] border border-ink/10 bg-mist/40 p-3">
@@ -886,6 +917,7 @@ export function PreviewGenerationClient() {
   const [animeCharacterApproval, setAnimeCharacterApproval] = useState<boolean>(false);
   const [guidedWorkflowState, setGuidedWorkflowState] = useState<GuidedWorkflowState>(INITIAL_GUIDED_WORKFLOW_STATE);
   const [guidedWorkflowNotice, setGuidedWorkflowNotice] = useState<string | null>(null);
+  const [activeGuidedTargetStepId, setActiveGuidedTargetStepId] = useState<GuidedWorkflowStepId>(INITIAL_GUIDED_WORKFLOW_STATE.activeStepId);
   const [subjectStyleConfirmed, setSubjectStyleConfirmed] = useState<boolean>(false);
   const [microSequenceReviewed, setMicroSequenceReviewed] = useState<boolean>(false);
   const [previewOutputReviewed, setPreviewOutputReviewed] = useState<boolean>(false);
@@ -1760,13 +1792,15 @@ export function PreviewGenerationClient() {
     finalDiagnosticsClear,
   };
   const guidedWorkflowSteps = buildGuidedWorkflowSteps(guidedWorkflowState, workflowFacts);
-  const activeGuidedStep = guidedWorkflowSteps.find((step) => step.isActive) ?? guidedWorkflowSteps[0];
-  const activeGuidedSectionId = activeGuidedStep.sectionId;
+  const activeGuidedTarget = getGuidedStepTarget(activeGuidedTargetStepId);
+  const activeGuidedSectionId = activeGuidedTarget.workflowSectionId;
   const guidedWarningSectionIds = new Set(guidedWorkflowSteps.filter((step) => step.hasPersistentWarning || step.status === "warning" || step.status === "failed" || step.status === "blocked").map((step) => step.sectionId));
   const finalOperatorVerdict = evaluateFinalOperatorVerdict(workflowFacts);
 
   function guidedSectionProps(sectionId: GuidedWorkflowSectionId) {
-    const anchoredStep = guidedWorkflowSteps.find((step) => step.sectionId === sectionId && (step.isActive || step.hasPersistentWarning))
+    const anchoredStep = activeGuidedTarget.workflowSectionId === sectionId
+      ? guidedWorkflowSteps.find((step) => step.id === activeGuidedTarget.stepId)
+      : guidedWorkflowSteps.find((step) => step.sectionId === sectionId && (step.isActive || step.hasPersistentWarning))
       ?? guidedWorkflowSteps.find((step) => step.sectionId === sectionId);
     return {
       guidedStepLabel: anchoredStep ? `Step ${anchoredStep.number}: ${anchoredStep.title}` : undefined,
@@ -1779,11 +1813,38 @@ export function PreviewGenerationClient() {
     const result = advanceGuidedWorkflow(guidedWorkflowState, workflowFacts);
     setGuidedWorkflowState(result.state);
     setGuidedWorkflowNotice(result.reason);
+    setActiveGuidedTargetStepId(result.state.activeStepId);
   }
 
-  useEffect(() => {
-    activeGuidedStepRef.current?.focus();
-  }, [guidedWorkflowState.activeStepId]);
+  function handleNavigateGuidedStep(stepId: GuidedWorkflowStepId) {
+    const target = getGuidedStepTarget(stepId);
+    const selectedStep = guidedWorkflowSteps.find((step) => step.id === stepId);
+    if (selectedStep?.isActive || selectedStep?.isPast) {
+      setGuidedWorkflowState((current) => ({ ...current, activeStepId: stepId }));
+    }
+    setActiveGuidedTargetStepId(stepId);
+    setGuidedWorkflowNotice(target.instruction);
+
+    requestAnimationFrame(() => {
+      const section = document.getElementById(target.sectionId)
+        ?? document.querySelector(target.highlightSelector)
+        ?? document.querySelector(`[data-guided-section='${target.workflowSectionId}']`);
+      section?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+      window.setTimeout(() => {
+        const navigation = resolveGuidedStepNavigationTarget(stepId, (selector) => Boolean(document.querySelector(selector)));
+        setGuidedWorkflowNotice(navigation.reason);
+        const focusTarget = document.querySelector(navigation.focusSelector) as HTMLElement | null;
+        if (focusTarget) {
+          focusTarget.focus({ preventScroll: true });
+        }
+      }, 275);
+    });
+  }
+
+  function isGuidedHighlightActive(highlightName: string): boolean {
+    return activeGuidedTarget.highlightSelector === `[data-guided-highlight='${highlightName}']`;
+  }
 
   const styleIntensityDisplayCells = [
     ...starterStyleIntensityCells,
@@ -1833,6 +1894,7 @@ export function PreviewGenerationClient() {
           finalDiagnosticsClear={finalDiagnosticsClear}
           onFinalDiagnosticsClearChange={setFinalDiagnosticsClear}
           onAdvance={handleAdvanceGuidedWorkflow}
+          onNavigateStep={handleNavigateGuidedStep}
         />
 
         <CollapsibleActivitySection
@@ -1844,7 +1906,12 @@ export function PreviewGenerationClient() {
           {...guidedSectionProps("dashboard-controls")}
         >
         <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+          <article
+            id="anime-character-rendering-section"
+            data-guided-highlight="anime-character-rendering"
+            className={`scroll-mt-6 rounded-[2rem] border p-6 shadow-float ${isGuidedHighlightActive("anime-character-rendering") ? "border-ocean/50 bg-ocean/5 ring-4 ring-ocean/15" : "border-ink/10 bg-white/80"}`}
+          >
+            <GuidedTargetCallout active={isGuidedHighlightActive("anime-character-rendering")} label={activeGuidedTarget.calloutLabel} instruction={activeGuidedTarget.instruction} />
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="section-label">Prompt Variation Harness</p>
@@ -2922,6 +2989,7 @@ export function PreviewGenerationClient() {
                 type="checkbox"
                 checked={animeCharacterApproval}
                 onChange={(event) => setAnimeCharacterApproval(event.target.checked)}
+                  data-guided-focus="anime-character-approval"
                 className="mt-1 h-4 w-4 rounded border border-ink/10"
               />
               <span className="text-sm leading-7 body-muted">
@@ -3006,8 +3074,11 @@ export function PreviewGenerationClient() {
             title="Character-Centered Diagnostic Summary"
             activity={animeSummaryActivity}
             defaultOpen={animeSummaryActivity.critical}
+            sectionDomId="anime-character-report-section"
             {...guidedSectionProps("anime-character-report")}
           >
+            <div data-guided-highlight="anime-character-report" data-guided-focus="anime-character-truth-check" tabIndex={-1} className={`mt-5 scroll-mt-6 rounded-[1.25rem] border p-4 ${guidedTargetHighlightClass(isGuidedHighlightActive("anime-character-report"))}`}>
+              <GuidedTargetCallout active={isGuidedHighlightActive("anime-character-report")} label={activeGuidedTarget.calloutLabel} instruction={activeGuidedTarget.instruction} />
             {animeCharacterSummary ? (
               <div className="mb-4 flex flex-wrap gap-2">
                 <StatusPill label={animeCharacterSummary.recommendedNextAction.toLowerCase().replaceAll("_", "-")} tone={animeCharacterSummary.recommendedNextAction === "CONTINUE_CHARACTER_RENDERS" ? "ok" : animeCharacterSummary.recommendedNextAction === "TUNE_CHARACTER_FRAMING" ? "warn" : "blocked"} />
@@ -3101,6 +3172,7 @@ export function PreviewGenerationClient() {
             ) : (
               <p className="mt-5 text-sm leading-7 body-muted">Run governed anime character renders manually to build the character-centered report.</p>
             )}
+            </div>
           </CollapsibleActivitySection>
         </section>
 
@@ -3110,14 +3182,23 @@ export function PreviewGenerationClient() {
             title="Request Form And Preview Actions"
             activity={requestControlsActivity}
             defaultOpen={false}
+            sectionDomId="execution-controls-section"
             {...guidedSectionProps("execution-controls")}
           >
-            <div className="mt-5 grid gap-4 md:grid-cols-2">
+            <div
+              id="request-form-section"
+              data-guided-highlight="request-form"
+              className={`mt-5 grid scroll-mt-6 gap-4 rounded-[1.25rem] border p-4 md:grid-cols-2 ${guidedTargetHighlightClass(isGuidedHighlightActive("request-form"))}`}
+            >
+              <div className="md:col-span-2">
+                <GuidedTargetCallout active={isGuidedHighlightActive("request-form")} label={activeGuidedTarget.calloutLabel} instruction={activeGuidedTarget.instruction} />
+              </div>
               <label className="flex flex-col gap-2 rounded-[1.25rem] border border-ink/10 bg-white/80 p-4 md:col-span-2">
                 <FieldLabel>Prompt</FieldLabel>
                 <textarea
                   value={form.prompt}
                   onChange={(event) => updateField("prompt", event.target.value)}
+                  data-guided-focus="prompt-input"
                   rows={6}
                   className="rounded-xl border border-ink/10 bg-white px-3 py-3 text-sm text-ink outline-none"
                   placeholder="Describe the governed preview clip you want to sandbox."
@@ -3129,6 +3210,7 @@ export function PreviewGenerationClient() {
                 <input
                   value={form.subject}
                   onChange={(event) => updateField("subject", event.target.value)}
+                  data-guided-focus="subject-input"
                   className="rounded-xl border border-ink/10 bg-white px-3 py-2 text-sm text-ink outline-none"
                   placeholder="Primary subject"
                 />
@@ -3204,25 +3286,37 @@ export function PreviewGenerationClient() {
                 </div>
               </label>
 
-              <label className="flex items-start gap-3 rounded-[1.25rem] border border-coral/20 bg-white/80 p-4 md:col-span-2">
+              <label
+                data-guided-highlight="manual-approval"
+                className={`flex items-start gap-3 rounded-[1.25rem] border p-4 md:col-span-2 ${isGuidedHighlightActive("manual-approval") ? "border-ocean/50 bg-ocean/5 ring-4 ring-ocean/15" : "border-coral/20 bg-white/80"}`}
+              >
                 <input
                   type="checkbox"
                   checked={form.governance_approval}
                   onChange={(event) => updateField("governance_approval", event.target.checked)}
+                  data-guided-focus="manual-approval"
                   className="mt-1 h-4 w-4 rounded border border-ink/10"
                 />
                 <div>
+                  <GuidedTargetCallout active={isGuidedHighlightActive("manual-approval")} label={activeGuidedTarget.calloutLabel} instruction={activeGuidedTarget.instruction} />
                   <FieldLabel>Manual Approval</FieldLabel>
                   <p className="mt-2 text-sm leading-7 body-muted">I confirm this request should trigger only the governed low-duration preview sandbox with rollback available and no autonomous continuation.</p>
                 </div>
               </label>
             </div>
 
-            <div className="mt-6 flex flex-wrap gap-3">
+            <div
+              data-guided-highlight="execution-controls"
+              className={`mt-6 flex flex-wrap gap-3 rounded-[1.25rem] border p-4 ${guidedTargetHighlightClass(isGuidedHighlightActive("execution-controls"))}`}
+            >
+              <div className="w-full">
+                <GuidedTargetCallout active={isGuidedHighlightActive("execution-controls")} label={activeGuidedTarget.calloutLabel} instruction={activeGuidedTarget.instruction} />
+              </div>
               <button
                 type="button"
                 onClick={handleGenerate}
                 disabled={isPending || !motionPreviewReady}
+                data-guided-focus="generate-preview"
                 className="rounded-full border border-ocean/20 bg-ocean px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Generate Preview
@@ -3231,6 +3325,7 @@ export function PreviewGenerationClient() {
                 type="button"
                 onClick={handleGenerateMicroSequence}
                 disabled={isPending}
+                data-guided-focus="generate-micro-sequence"
                 className="rounded-full border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Generate Micro-Sequence First
@@ -3414,12 +3509,14 @@ export function PreviewGenerationClient() {
             title="Prerequisite Renderer Frames"
             activity={microSequenceOutputActivity}
             defaultOpen={microSequenceOutputActivity.critical}
+            sectionDomId="micro-sequence-frames-section"
             {...guidedSectionProps("micro-sequence-frames")}
           >
-            <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
+            <div data-guided-highlight="micro-sequence-outputs" className={`mt-5 scroll-mt-6 space-y-3 rounded-[1.25rem] border p-4 text-sm leading-7 body-muted ${guidedTargetHighlightClass(isGuidedHighlightActive("micro-sequence-outputs"))}`}>
+              <GuidedTargetCallout active={isGuidedHighlightActive("micro-sequence-outputs")} label={activeGuidedTarget.calloutLabel} instruction={activeGuidedTarget.instruction} />
               {microSequenceGalleryCards.length ? (
                 <div className="grid gap-4 md:grid-cols-2">
-                  {microSequenceGalleryCards.map((card) => (
+                  {microSequenceGalleryCards.map((card, cardIndex) => (
                     <article key={card.id} className="overflow-hidden rounded-[1.25rem] border border-ink/10 bg-white/90 shadow-sm">
                       <div className="aspect-square bg-mist/50">
                         <div className="relative h-full w-full">
@@ -3467,7 +3564,7 @@ export function PreviewGenerationClient() {
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Anchor {card.diagnostic.continuity_anchor_visualization}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
                         <div className="flex flex-wrap gap-2">
-                          <a href={card.assetUrl} target="_blank" rel="noreferrer" className="rounded-full border border-ocean/20 bg-ocean px-3 py-1.5 text-xs font-semibold text-white">Open</a>
+                          <a href={card.assetUrl} target="_blank" rel="noreferrer" data-guided-focus={cardIndex === 0 ? "micro-sequence-output-first-image" : undefined} className="rounded-full border border-ocean/20 bg-ocean px-3 py-1.5 text-xs font-semibold text-white">Open</a>
                           <a href={`${card.assetUrl}&download=1`} className="rounded-full border border-ink/10 bg-white px-3 py-1.5 text-xs font-semibold text-ink">Download</a>
                         </div>
                       </div>
@@ -3485,12 +3582,14 @@ export function PreviewGenerationClient() {
             title="Renderer Output Gallery"
             activity={rendererOutputActivity}
             defaultOpen={rendererOutputActivity.critical}
+            sectionDomId="preview-outputs-section"
             {...guidedSectionProps("preview-outputs")}
           >
-            <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
+            <div data-guided-highlight="preview-outputs" className={`mt-5 scroll-mt-6 space-y-3 rounded-[1.25rem] border p-4 text-sm leading-7 body-muted ${guidedTargetHighlightClass(isGuidedHighlightActive("preview-outputs"))}`}>
+              <GuidedTargetCallout active={isGuidedHighlightActive("preview-outputs")} label={activeGuidedTarget.calloutLabel} instruction={activeGuidedTarget.instruction} />
               {previewGalleryCards.length ? (
                 <div className="grid gap-4 md:grid-cols-2">
-                  {previewGalleryCards.map((card) => (
+                  {previewGalleryCards.map((card, cardIndex) => (
                     <article key={card.id} className="overflow-hidden rounded-[1.25rem] border border-ink/10 bg-white/90 shadow-sm">
                       <div className="aspect-square bg-mist/50">
                         <div className="relative h-full w-full">
@@ -3543,7 +3642,7 @@ export function PreviewGenerationClient() {
                         {card.diagnostic ? <p className="text-xs leading-6 text-slate">Relationship overlay {card.diagnostic.object_relationship_overlay}</p> : null}
                         <p className="text-xs leading-6 text-slate">{card.assetPath}</p>
                         <div className="flex flex-wrap gap-2">
-                          <a href={card.assetUrl} target="_blank" rel="noreferrer" className="rounded-full border border-ocean/20 bg-ocean px-3 py-1.5 text-xs font-semibold text-white">Open</a>
+                          <a href={card.assetUrl} target="_blank" rel="noreferrer" data-guided-focus={cardIndex === 0 ? "preview-output-first-image" : undefined} className="rounded-full border border-ocean/20 bg-ocean px-3 py-1.5 text-xs font-semibold text-white">Open</a>
                           <a href={`${card.assetUrl}&download=1`} className="rounded-full border border-ink/10 bg-white px-3 py-1.5 text-xs font-semibold text-ink">Download</a>
                         </div>
                       </div>
@@ -3591,10 +3690,12 @@ export function PreviewGenerationClient() {
             title="Diagnostics Activity"
             activity={diagnosticsActivity}
             defaultOpen={false}
+            sectionDomId="diagnostics-section"
             className="lg:col-span-3"
             {...guidedSectionProps("governed-diagnostics")}
           >
-            <div className="mt-5">
+            <div data-guided-highlight="diagnostics" data-guided-focus="diagnostics-panel" tabIndex={-1} className={`mt-5 scroll-mt-6 rounded-[1.25rem] border p-4 ${guidedTargetHighlightClass(isGuidedHighlightActive("diagnostics"))}`}>
+              <GuidedTargetCallout active={isGuidedHighlightActive("diagnostics")} label={activeGuidedTarget.calloutLabel} instruction={activeGuidedTarget.instruction} />
               {activeDiagnostics ? <DiagnosticsOverview diagnostics={activeDiagnostics} /> : <p className="text-sm leading-7 body-muted">No diagnostics are available yet. Generate and review outputs before completing this step.</p>}
             </div>
           </CollapsibleActivitySection>

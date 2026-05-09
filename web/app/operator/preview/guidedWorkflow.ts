@@ -31,6 +31,16 @@ export type GuidedWorkflowStepDefinition = {
   sectionId: GuidedWorkflowSectionId;
 };
 
+export type GuidedStepTarget = {
+  stepId: GuidedWorkflowStepId;
+  workflowSectionId: GuidedWorkflowSectionId;
+  sectionId: string;
+  focusSelector: string;
+  highlightSelector: string;
+  instruction: string;
+  calloutLabel: string;
+};
+
 export type GuidedWorkflowFacts = {
   promptReady: boolean;
   subjectStyleAligned: boolean;
@@ -78,8 +88,8 @@ export const ANIME_GUIDED_WORKFLOW_STEPS: GuidedWorkflowStepDefinition[] = [
   {
     id: "start-new-task",
     number: 1,
-    title: "Start New Task",
-    instruction: "Review or enter the operator prompt, then press Enter to continue.",
+    title: "Start New Task -> Go To Request Form",
+    instruction: "Start in the Request Form: describe the preview, subject, motion, and style before continuing.",
     sectionId: "execution-controls",
   },
   {
@@ -120,7 +130,7 @@ export const ANIME_GUIDED_WORKFLOW_STEPS: GuidedWorkflowStepDefinition[] = [
   {
     id: "review-preview-output",
     number: 7,
-    title: "Review Preview Outputs",
+    title: "Review Actual PNG/GIF Output",
     instruction: "Inspect preview frames or GIF output; request accepted is not success.",
     sectionId: "preview-outputs",
   },
@@ -134,18 +144,126 @@ export const ANIME_GUIDED_WORKFLOW_STEPS: GuidedWorkflowStepDefinition[] = [
   {
     id: "check-diagnostics-rollback",
     number: 9,
-    title: "Check Diagnostics And Rollback Warnings",
-    instruction: "Review diagnostics and rollback warnings before making a verdict.",
+    title: "Review Diagnostics After Visual Check",
+    instruction: "Review diagnostics and rollback warnings after inspecting the visual output.",
     sectionId: "governed-diagnostics",
   },
   {
     id: "final-operator-verdict",
     number: 10,
-    title: "Final Operator Verdict",
+    title: "Set Final Operator Verdict",
     instruction: "Answer the final validation questions and choose PASS, FAIL, or NEEDS REVIEW.",
     sectionId: "blockers-rollback",
   },
 ];
+
+export const GUIDED_STEP_TARGETS: Record<GuidedWorkflowStepId, GuidedStepTarget> = {
+  "start-new-task": {
+    stepId: "start-new-task",
+    workflowSectionId: "execution-controls",
+    sectionId: "request-form-section",
+    focusSelector: "[data-guided-focus='prompt-input']",
+    highlightSelector: "[data-guided-highlight='request-form']",
+    instruction: "Start here: describe what you want AI-E to generate, then fill subject, motion, style, and manual approval.",
+    calloutLabel: "START HERE",
+  },
+  "confirm-subject-style": {
+    stepId: "confirm-subject-style",
+    workflowSectionId: "execution-controls",
+    sectionId: "request-form-section",
+    focusSelector: "[data-guided-focus='subject-input']",
+    highlightSelector: "[data-guided-highlight='request-form']",
+    instruction: "Confirm the subject and anime style fields match the intended visual task before continuing.",
+    calloutLabel: "NEXT ACTION",
+  },
+  "enable-manual-approval": {
+    stepId: "enable-manual-approval",
+    workflowSectionId: "execution-controls",
+    sectionId: "execution-controls-section",
+    focusSelector: "[data-guided-focus='manual-approval']",
+    highlightSelector: "[data-guided-highlight='manual-approval']",
+    instruction: "Enable manual approval before any governed sandbox generation can count as ready to run.",
+    calloutLabel: "APPROVE HERE",
+  },
+  "generate-micro-sequence": {
+    stepId: "generate-micro-sequence",
+    workflowSectionId: "execution-controls",
+    sectionId: "execution-controls-section",
+    focusSelector: "[data-guided-focus='generate-micro-sequence']",
+    highlightSelector: "[data-guided-highlight='execution-controls']",
+    instruction: "Click Generate Micro-Sequence First, then inspect its outputs before generating the full preview.",
+    calloutLabel: "RUN THIS FIRST",
+  },
+  "review-micro-sequence": {
+    stepId: "review-micro-sequence",
+    workflowSectionId: "micro-sequence-frames",
+    sectionId: "micro-sequence-frames-section",
+    focusSelector: "[data-guided-focus='micro-sequence-output-first-image']",
+    highlightSelector: "[data-guided-highlight='micro-sequence-outputs']",
+    instruction: "Inspect the actual micro-sequence PNG/GIF output before continuing.",
+    calloutLabel: "REVIEW THIS NEXT",
+  },
+  "generate-preview": {
+    stepId: "generate-preview",
+    workflowSectionId: "execution-controls",
+    sectionId: "execution-controls-section",
+    focusSelector: "[data-guided-focus='generate-preview']",
+    highlightSelector: "[data-guided-highlight='execution-controls']",
+    instruction: "Run the bounded preview only after approval and micro-sequence review are complete.",
+    calloutLabel: "GENERATE HERE",
+  },
+  "review-preview-output": {
+    stepId: "review-preview-output",
+    workflowSectionId: "preview-outputs",
+    sectionId: "preview-outputs-section",
+    focusSelector: "[data-guided-focus='preview-output-first-image']",
+    highlightSelector: "[data-guided-highlight='preview-outputs']",
+    instruction: "Inspect the actual PNG/GIF output before trusting diagnostics or accepting the task.",
+    calloutLabel: "REVIEW ACTUAL OUTPUT",
+  },
+  "check-truth-state": {
+    stepId: "check-truth-state",
+    workflowSectionId: "anime-character-report",
+    sectionId: "anime-character-report-section",
+    focusSelector: "[data-guided-focus='anime-character-truth-check']",
+    highlightSelector: "[data-guided-highlight='anime-character-report']",
+    instruction: "Check truth status, scaffold status, and fallback dominance before trusting the output.",
+    calloutLabel: "CHECK TRUTH STATE",
+  },
+  "check-diagnostics-rollback": {
+    stepId: "check-diagnostics-rollback",
+    workflowSectionId: "governed-diagnostics",
+    sectionId: "diagnostics-section",
+    focusSelector: "[data-guided-focus='diagnostics-panel']",
+    highlightSelector: "[data-guided-highlight='diagnostics']",
+    instruction: "Review diagnostics after visual inspection and keep rollback warnings visible until resolved.",
+    calloutLabel: "REVIEW DIAGNOSTICS",
+  },
+  "final-operator-verdict": {
+    stepId: "final-operator-verdict",
+    workflowSectionId: "blockers-rollback",
+    sectionId: "final-verdict-section",
+    focusSelector: "[data-guided-focus='final-verdict-pass']",
+    highlightSelector: "[data-guided-highlight='final-verdict']",
+    instruction: "Set the final verdict only after visual output, truth checks, scaffold/fallback state, and diagnostics agree.",
+    calloutLabel: "FINAL VERDICT",
+  },
+};
+
+export function getGuidedStepTarget(stepId: GuidedWorkflowStepId): GuidedStepTarget {
+  return GUIDED_STEP_TARGETS[stepId];
+}
+
+export function resolveGuidedStepNavigationTarget(stepId: GuidedWorkflowStepId, targetExists: (selector: string) => boolean): { target: GuidedStepTarget; focusSelector: string; missing: boolean; reason: string } {
+  const target = getGuidedStepTarget(stepId);
+  if (targetExists(target.focusSelector)) {
+    return { target, focusSelector: target.focusSelector, missing: false, reason: target.instruction };
+  }
+  if (targetExists(`#${target.sectionId}`)) {
+    return { target, focusSelector: `#${target.sectionId}`, missing: true, reason: `Primary control is not available yet. ${target.instruction}` };
+  }
+  return { target, focusSelector: target.highlightSelector, missing: true, reason: `Navigation target is not available yet. ${target.instruction}` };
+}
 
 export const INITIAL_GUIDED_WORKFLOW_STATE: GuidedWorkflowState = {
   activeStepId: "start-new-task",
