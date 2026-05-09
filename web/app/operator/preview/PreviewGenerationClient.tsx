@@ -42,6 +42,21 @@ import type {
   VisualStyleExecutionPlan,
   VisualStyleReport,
 } from "@/lib/aie/styleProfiles/governedVisualStyleRegistry";
+import type {
+  GovernedStyleStressState,
+  StyleStressDiagnosticSummary,
+  StyleStressExecutionPlan,
+  StyleStressMatrixCell,
+  StyleStressReport,
+} from "@/lib/aie/styleStress/governedStyleStressState";
+import type {
+  GovernedStyleIntensityState,
+  StyleDomainIntensityMatrixCell,
+  StyleIntensityDiagnosticSummary,
+  StyleIntensityExecutionPlan,
+  StyleIntensityPreset,
+  StyleIntensityReport,
+} from "@/lib/aie/styleIntensity/governedStyleIntensityState";
 
 const DEFAULT_FORM: GovernedPreviewFormInput = {
   prompt: "",
@@ -83,12 +98,28 @@ type VisualStylePayload = {
   executionPlan: VisualStyleExecutionPlan;
 };
 
+type StyleStressPayload = {
+  cells: StyleStressMatrixCell[];
+  starterCells: StyleStressMatrixCell[];
+  executionPlan: StyleStressExecutionPlan;
+};
+
+type StyleIntensityPayload = {
+  presets: StyleIntensityPreset[];
+  cells: StyleDomainIntensityMatrixCell[];
+  starterCells: StyleDomainIntensityMatrixCell[];
+  highProbeCells: StyleDomainIntensityMatrixCell[];
+  executionPlan: StyleIntensityExecutionPlan;
+};
+
 type PreviewGenerationBootstrapPayload = {
   error?: string;
   prerequisiteState?: GovernedPreviewPrerequisiteState;
   promptVariation?: PromptVariationPayload;
   promptDomain?: PromptDomainPayload;
   visualStyle?: VisualStylePayload;
+  styleStress?: StyleStressPayload;
+  styleIntensity?: StyleIntensityPayload;
 };
 
 type PromptVariationClassificationPayload = {
@@ -134,6 +165,28 @@ type VisualStyleRunPayload = {
   harnessState?: GovernedVisualStyleState | null;
   prerequisiteState?: GovernedPreviewPrerequisiteState | null;
   visualStyle?: VisualStylePayload;
+};
+
+type StyleStressRunPayload = {
+  error?: string;
+  compiledRequest?: GovernedPreviewRequest;
+  report?: StyleStressReport;
+  reports?: StyleStressReport[];
+  reportSummary?: StyleStressDiagnosticSummary;
+  harnessState?: GovernedStyleStressState | null;
+  prerequisiteState?: GovernedPreviewPrerequisiteState | null;
+  styleStress?: StyleStressPayload;
+};
+
+type StyleIntensityRunPayload = {
+  error?: string;
+  compiledRequest?: GovernedPreviewRequest;
+  report?: StyleIntensityReport;
+  reports?: StyleIntensityReport[];
+  reportSummary?: StyleIntensityDiagnosticSummary;
+  harnessState?: GovernedStyleIntensityState | null;
+  prerequisiteState?: GovernedPreviewPrerequisiteState | null;
+  styleIntensity?: StyleIntensityPayload;
 };
 
 function buildSandboxAssetUrl(assetPath: string): string {
@@ -385,6 +438,26 @@ function visualStyleStatusTone(report: VisualStyleReport): "ok" | "warn" | "bloc
   return "warn";
 }
 
+function styleStressStatusTone(report: StyleStressReport): "ok" | "warn" | "blocked" {
+  if (report.pass) {
+    return "ok";
+  }
+  if (report.safetyStatus === "REJECTED") {
+    return "blocked";
+  }
+  return "warn";
+}
+
+function styleIntensityStatusTone(report: StyleIntensityReport): "ok" | "warn" | "blocked" {
+  if (report.pass) {
+    return "ok";
+  }
+  if (report.safetyStatus === "REJECTED") {
+    return "blocked";
+  }
+  return "warn";
+}
+
 export function PreviewGenerationClient() {
   const [form, setForm] = useState<GovernedPreviewFormInput>(DEFAULT_FORM);
   const [compiledRequest, setCompiledRequest] = useState<GovernedPreviewRequest | null>(null);
@@ -416,6 +489,23 @@ export function PreviewGenerationClient() {
   const [visualStyleReports, setVisualStyleReports] = useState<VisualStyleReport[]>([]);
   const [visualStyleSummary, setVisualStyleSummary] = useState<VisualStyleDiagnosticSummary | null>(null);
   const [visualStyleHarnessState, setVisualStyleHarnessState] = useState<GovernedVisualStyleState | null>(null);
+  const [approvedStyleStressCells, setApprovedStyleStressCells] = useState<StyleStressMatrixCell[]>([]);
+  const [starterStyleStressCells, setStarterStyleStressCells] = useState<StyleStressMatrixCell[]>([]);
+  const [styleStressPlan, setStyleStressPlan] = useState<StyleStressExecutionPlan | null>(null);
+  const [selectedStyleStressCellId, setSelectedStyleStressCellId] = useState<string>("");
+  const [styleStressReports, setStyleStressReports] = useState<StyleStressReport[]>([]);
+  const [styleStressSummary, setStyleStressSummary] = useState<StyleStressDiagnosticSummary | null>(null);
+  const [styleStressHarnessState, setStyleStressHarnessState] = useState<GovernedStyleStressState | null>(null);
+  const [styleIntensityPresets, setStyleIntensityPresets] = useState<StyleIntensityPreset[]>([]);
+  const [approvedStyleIntensityCells, setApprovedStyleIntensityCells] = useState<StyleDomainIntensityMatrixCell[]>([]);
+  const [starterStyleIntensityCells, setStarterStyleIntensityCells] = useState<StyleDomainIntensityMatrixCell[]>([]);
+  const [highProbeStyleIntensityCells, setHighProbeStyleIntensityCells] = useState<StyleDomainIntensityMatrixCell[]>([]);
+  const [styleIntensityPlan, setStyleIntensityPlan] = useState<StyleIntensityExecutionPlan | null>(null);
+  const [selectedStyleIntensityCellId, setSelectedStyleIntensityCellId] = useState<string>("");
+  const [styleIntensityReports, setStyleIntensityReports] = useState<StyleIntensityReport[]>([]);
+  const [styleIntensitySummary, setStyleIntensitySummary] = useState<StyleIntensityDiagnosticSummary | null>(null);
+  const [styleIntensityHarnessState, setStyleIntensityHarnessState] = useState<GovernedStyleIntensityState | null>(null);
+  const [highIntensityApproval, setHighIntensityApproval] = useState<boolean>(false);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -449,6 +539,16 @@ export function PreviewGenerationClient() {
         setApprovedVisualStyles(payload.visualStyle?.styles ?? []);
         setVisualStylePlan(payload.visualStyle?.executionPlan ?? null);
         setSelectedVisualStyleId((current) => current || payload.visualStyle?.styles[0]?.id || "");
+        setApprovedStyleStressCells(payload.styleStress?.cells ?? []);
+        setStarterStyleStressCells(payload.styleStress?.starterCells ?? []);
+        setStyleStressPlan(payload.styleStress?.executionPlan ?? null);
+        setSelectedStyleStressCellId((current) => current || payload.styleStress?.starterCells[0]?.cellId || payload.styleStress?.cells[0]?.cellId || "");
+        setStyleIntensityPresets(payload.styleIntensity?.presets ?? []);
+        setApprovedStyleIntensityCells(payload.styleIntensity?.cells ?? []);
+        setStarterStyleIntensityCells(payload.styleIntensity?.starterCells ?? []);
+        setHighProbeStyleIntensityCells(payload.styleIntensity?.highProbeCells ?? []);
+        setStyleIntensityPlan(payload.styleIntensity?.executionPlan ?? null);
+        setSelectedStyleIntensityCellId((current) => current || payload.styleIntensity?.starterCells[0]?.cellId || payload.styleIntensity?.cells[0]?.cellId || "");
         setMessage(payload.prerequisiteState.motion_preview_ready
           ? "Governed micro-sequence prerequisite satisfied. Motion preview generation is available."
           : "Governed motion preview is blocked until the micro-sequence continuity prerequisite is satisfied.");
@@ -514,6 +614,65 @@ export function PreviewGenerationClient() {
       package_gif_preview: styleProfile.package_gif_preview,
     }));
     setMessage(`Loaded approved visual style ${styleProfile.label} into the governed preview form.`);
+  }
+
+  function loadApprovedStyleStressCell(cell: StyleStressMatrixCell) {
+    const styleProfile = approvedVisualStyles.find((entry) => entry.id === cell.styleId);
+    const domain = approvedPromptDomains.find((entry) => entry.id === cell.domainId);
+    if (!styleProfile || !domain) {
+      setError("We couldn't resolve the selected style stress cell resources.");
+      return;
+    }
+
+    setSelectedStyleStressCellId(cell.cellId);
+    setSelectedVisualStyleId(styleProfile.id);
+    setSelectedPromptDomainId(domain.id);
+    setForm((current) => ({
+      ...current,
+      prompt: domain.prompt,
+      subject: domain.subject,
+      motion_intent: domain.motion_intent,
+      style: `${styleProfile.style}; ${styleProfile.characteristics.join(", ")}`,
+      duration_seconds: Math.min(styleProfile.duration_seconds, domain.duration_seconds),
+      resolution: styleProfile.resolution,
+      continuity_priority: styleProfile.continuity_priority === "high" || domain.continuity_priority === "high"
+        ? "high"
+        : styleProfile.continuity_priority === "medium" || domain.continuity_priority === "medium"
+          ? "medium"
+          : "low",
+      package_gif_preview: styleProfile.package_gif_preview || domain.package_gif_preview,
+    }));
+    setMessage(`Loaded style stress cell ${cell.styleLabel} × ${cell.domainLabel} into the governed preview form.`);
+  }
+
+  function loadApprovedStyleIntensityCell(cell: StyleDomainIntensityMatrixCell) {
+    const styleProfile = approvedVisualStyles.find((entry) => entry.id === cell.styleId);
+    const domain = approvedPromptDomains.find((entry) => entry.id === cell.domainId);
+    const preset = styleIntensityPresets.find((entry) => entry.level === cell.intensityLevel);
+    if (!styleProfile || !domain || !preset) {
+      setError("We couldn't resolve the selected style intensity cell resources.");
+      return;
+    }
+
+    setSelectedStyleIntensityCellId(cell.cellId);
+    setSelectedVisualStyleId(styleProfile.id);
+    setSelectedPromptDomainId(domain.id);
+    setForm((current) => ({
+      ...current,
+      prompt: domain.prompt,
+      subject: domain.subject,
+      motion_intent: domain.motion_intent,
+      style: `${styleProfile.style}; ${styleProfile.characteristics.join(", ")}; governed ${cell.intensityLevel.toLowerCase()} intensity (${cell.intensityValue})`,
+      duration_seconds: Math.min(styleProfile.duration_seconds, domain.duration_seconds),
+      resolution: styleProfile.resolution,
+      continuity_priority: styleProfile.continuity_priority === "high" || domain.continuity_priority === "high"
+        ? "high"
+        : styleProfile.continuity_priority === "medium" || domain.continuity_priority === "medium"
+          ? "medium"
+          : "low",
+      package_gif_preview: styleProfile.package_gif_preview || domain.package_gif_preview,
+    }));
+    setMessage(`Loaded style intensity cell ${cell.styleLabel} × ${cell.domainLabel} × ${cell.intensityLevel} into the governed preview form.`);
   }
 
   function handleClassifyPromptVariation() {
@@ -705,6 +864,101 @@ export function PreviewGenerationClient() {
     });
   }
 
+  function handleRunStyleStressCell(cellId: string) {
+    setError(null);
+    setRollback(null);
+    startTransition(() => {
+      void fetch("/api/operator/preview-generation", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "run-style-stress-cell",
+          cellId,
+          governanceApproval: form.governance_approval,
+          priorReports: styleStressReports,
+        }),
+      })
+        .then(async (response) => {
+          const payload = await response.json() as StyleStressRunPayload;
+          if (!response.ok || !payload.report) {
+            throw new Error(payload.error ?? "Style stress execution failed.");
+          }
+
+          setSelectedStyleStressCellId(cellId);
+          setSelectedVisualStyleId(payload.report.styleId);
+          setSelectedPromptDomainId(payload.report.domainId);
+          setCompiledRequest(payload.compiledRequest ?? null);
+          setMicroSequence(payload.report.microSequence);
+          setExecution(payload.report.previewExecution);
+          setRollback(payload.report.rollback);
+          setPrerequisiteState(payload.prerequisiteState ?? payload.report.prerequisiteAfter ?? payload.report.prerequisiteBefore);
+          setStyleStressReports(payload.reports ?? [payload.report]);
+          setStyleStressSummary(payload.reportSummary ?? null);
+          setStyleStressHarnessState(payload.harnessState ?? null);
+          setApprovedStyleStressCells(payload.styleStress?.cells ?? approvedStyleStressCells);
+          setStarterStyleStressCells(payload.styleStress?.starterCells ?? starterStyleStressCells);
+          setStyleStressPlan(payload.styleStress?.executionPlan ?? styleStressPlan);
+          setMessage(payload.report.pass
+            ? `Style stress cell ${payload.report.styleLabel} × ${payload.report.domainLabel} passed governed cross-domain thresholds.`
+            : payload.report.failureReason ?? `Style stress cell ${payload.report.styleLabel} × ${payload.report.domainLabel} failed governed cross-domain thresholds.`);
+        })
+        .catch((nextError) => {
+          setError(nextError instanceof Error ? nextError.message : "Style stress execution failed.");
+        });
+    });
+  }
+
+  function handleRunStyleIntensityCell(cellId: string) {
+    setError(null);
+    setRollback(null);
+    startTransition(() => {
+      void fetch("/api/operator/preview-generation", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "run-style-intensity-cell",
+          cellId,
+          governanceApproval: form.governance_approval,
+          highIntensityApproval,
+          priorReports: styleIntensityReports,
+        }),
+      })
+        .then(async (response) => {
+          const payload = await response.json() as StyleIntensityRunPayload;
+          if (!response.ok || !payload.report) {
+            throw new Error(payload.error ?? "Style intensity execution failed.");
+          }
+
+          setSelectedStyleIntensityCellId(cellId);
+          setSelectedVisualStyleId(payload.report.styleId);
+          setSelectedPromptDomainId(payload.report.domainId);
+          setCompiledRequest(payload.compiledRequest ?? null);
+          setMicroSequence(payload.report.microSequence);
+          setExecution(payload.report.previewExecution);
+          setRollback(payload.report.rollback);
+          setPrerequisiteState(payload.prerequisiteState ?? payload.report.prerequisiteAfter ?? payload.report.prerequisiteBefore);
+          setStyleIntensityReports(payload.reports ?? [payload.report]);
+          setStyleIntensitySummary(payload.reportSummary ?? null);
+          setStyleIntensityHarnessState(payload.harnessState ?? null);
+          setStyleIntensityPresets(payload.styleIntensity?.presets ?? styleIntensityPresets);
+          setApprovedStyleIntensityCells(payload.styleIntensity?.cells ?? approvedStyleIntensityCells);
+          setStarterStyleIntensityCells(payload.styleIntensity?.starterCells ?? starterStyleIntensityCells);
+          setHighProbeStyleIntensityCells(payload.styleIntensity?.highProbeCells ?? highProbeStyleIntensityCells);
+          setStyleIntensityPlan(payload.styleIntensity?.executionPlan ?? styleIntensityPlan);
+          setMessage(payload.report.pass
+            ? `Style intensity cell ${payload.report.styleLabel} × ${payload.report.domainLabel} × ${payload.report.intensityLevel} passed governed intensity thresholds.`
+            : payload.report.failureReason ?? `Style intensity cell ${payload.report.styleLabel} × ${payload.report.domainLabel} × ${payload.report.intensityLevel} failed governed intensity thresholds.`);
+        })
+        .catch((nextError) => {
+          setError(nextError instanceof Error ? nextError.message : "Style intensity execution failed.");
+        });
+    });
+  }
+
   function handleGenerate() {
     setError(null);
     setRollback(null);
@@ -836,6 +1090,17 @@ export function PreviewGenerationClient() {
   const selectedPromptVariation = approvedPromptVariants.find((entry) => entry.id === selectedPromptVariationId) ?? null;
   const selectedPromptDomain = approvedPromptDomains.find((entry) => entry.id === selectedPromptDomainId) ?? null;
   const selectedVisualStyle = approvedVisualStyles.find((entry) => entry.id === selectedVisualStyleId) ?? null;
+  const selectedStyleStressCell = approvedStyleStressCells.find((entry) => entry.cellId === selectedStyleStressCellId)
+    ?? starterStyleStressCells.find((entry) => entry.cellId === selectedStyleStressCellId)
+    ?? null;
+  const selectedStyleIntensityCell = approvedStyleIntensityCells.find((entry) => entry.cellId === selectedStyleIntensityCellId)
+    ?? starterStyleIntensityCells.find((entry) => entry.cellId === selectedStyleIntensityCellId)
+    ?? highProbeStyleIntensityCells.find((entry) => entry.cellId === selectedStyleIntensityCellId)
+    ?? null;
+  const styleIntensityDisplayCells = [
+    ...starterStyleIntensityCells,
+    ...highProbeStyleIntensityCells.filter((probe) => !starterStyleIntensityCells.some((starter) => starter.cellId === probe.cellId)),
+  ];
 
   return (
     <main className="page-shell min-h-screen bg-mist/80">
@@ -1372,6 +1637,349 @@ export function PreviewGenerationClient() {
               </div>
             ) : (
               <p className="mt-5 text-sm leading-7 body-muted">Run approved visual styles manually to build the bounded cross-style operator report.</p>
+            )}
+          </article>
+        </section>
+
+        <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Style Stress Harness</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Starter Style × Domain Cells</h2>
+              </div>
+              {styleStressPlan ? <StatusPill label={`max-${styleStressPlan.maxCells}-cells`} tone="ok" /> : null}
+            </div>
+            <p className="mt-3 text-sm leading-7 body-muted">
+              Operator-triggered only. Manual cell selection only. No autonomous full-matrix execution, automatic retries, humanoids, dialogue, or long-form rendering.
+            </p>
+            {styleStressPlan ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {styleStressPlan.stages.map((stage) => (
+                  <StatusPill key={stage} label={stage} tone="default" />
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+              <p><strong className="text-ink">Approved matrix cells:</strong> {approvedStyleStressCells.length}</p>
+              <p><strong className="text-ink">Starter cells:</strong> {starterStyleStressCells.length}</p>
+              <p><strong className="text-ink">Autoplay:</strong> disabled</p>
+              <p><strong className="text-ink">Automatic retries:</strong> disabled</p>
+            </div>
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              {starterStyleStressCells.map((cell) => (
+                <article key={cell.cellId} className={`rounded-[1.25rem] border p-4 ${selectedStyleStressCellId === cell.cellId ? "border-ocean/30 bg-ocean/5" : "border-ink/10 bg-white/85"}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-ink">{cell.styleLabel} × {cell.domainLabel}</p>
+                    <StatusPill label="starter" tone="default" />
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-slate">
+                    <span className="rounded-full border border-ink/10 bg-mist/60 px-3 py-1">{cell.styleLabel.toLowerCase().replaceAll("_", "-")}</span>
+                    <span className="rounded-full border border-ink/10 bg-mist/60 px-3 py-1">{cell.domainLabel.toLowerCase().replaceAll("_", "-")}</span>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => loadApprovedStyleStressCell(cell)}
+                      className="rounded-full border border-ink/10 bg-white px-4 py-2 text-xs font-semibold text-ink transition hover:-translate-y-0.5"
+                    >
+                      Load Cell
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunStyleStressCell(cell.cellId)}
+                      disabled={isPending}
+                      className="rounded-full border border-ocean/20 bg-ocean px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Run Stress Cell
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </article>
+
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <p className="section-label">Stress Harness State</p>
+            <h2 className="mt-3 text-2xl font-semibold text-ink">Cross-Domain Style Stability</h2>
+            {selectedStyleStressCell ? (
+              <div className="mt-5 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill label={selectedStyleStressCell.styleLabel.toLowerCase().replaceAll("_", "-")} tone="default" />
+                  <StatusPill label={selectedStyleStressCell.domainLabel.toLowerCase().replaceAll("_", "-")} tone="default" />
+                  {selectedStyleStressCell.starter ? <StatusPill label="starter-cell" tone="ok" /> : null}
+                </div>
+                <p className="mt-3"><strong className="text-ink">Cell id:</strong> {selectedStyleStressCell.cellId}</p>
+                <p><strong className="text-ink">Style:</strong> {selectedStyleStressCell.styleLabel}</p>
+                <p><strong className="text-ink">Domain:</strong> {selectedStyleStressCell.domainLabel}</p>
+                <p><strong className="text-ink">Manual selection:</strong> {selectedStyleStressCell.manualSelectionAllowed ? "required" : "blocked"}</p>
+              </div>
+            ) : null}
+            {styleStressHarnessState ? (
+              <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <p><strong className="text-ink">Active style:</strong> {styleStressHarnessState.activeStyleId}</p>
+                <p><strong className="text-ink">Active domain:</strong> {styleStressHarnessState.activeDomainId}</p>
+                <p><strong className="text-ink">Active cell:</strong> {styleStressHarnessState.matrixCellId}</p>
+                <p><strong className="text-ink">Cells tested:</strong> {styleStressHarnessState.testedCellCount}</p>
+                <p><strong className="text-ink">Passed cells:</strong> {styleStressHarnessState.passedCellCount}</p>
+                <p><strong className="text-ink">Failed cells:</strong> {styleStressHarnessState.failedCellCount}</p>
+                {styleStressHarnessState.weakestStyleId ? <p><strong className="text-ink">Weakest style:</strong> {styleStressHarnessState.weakestStyleId}</p> : null}
+                {styleStressHarnessState.weakestDomainId ? <p><strong className="text-ink">Weakest domain:</strong> {styleStressHarnessState.weakestDomainId}</p> : null}
+                <p><strong className="text-ink">Rollback restored latest cell:</strong> {styleStressHarnessState.rollbackRestoredStressRun ? "yes" : "no"}</p>
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Run starter stress cells manually to compare which styles stay stable across approved cinematic domains.</p>
+            )}
+          </article>
+        </section>
+
+        <section className="mb-6">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Stress Test Report</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Cross-Style Stress Diagnostic Summary</h2>
+              </div>
+              {styleStressSummary ? <StatusPill label={styleStressSummary.recommendedNextAction.toLowerCase().replaceAll("_", "-")} tone={styleStressSummary.recommendedNextAction === "CONTINUE_STYLE_TESTING" ? "ok" : styleStressSummary.recommendedNextAction === "TUNE_STYLE_PROFILE" ? "warn" : "blocked"} /> : null}
+            </div>
+            {styleStressSummary ? (
+              <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                <div className="rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                  <p><strong className="text-ink">Cells run:</strong> {styleStressSummary.testedCellCount}</p>
+                  <p><strong className="text-ink">Passed:</strong> {styleStressSummary.passedCellCount}</p>
+                  <p><strong className="text-ink">Failed:</strong> {styleStressSummary.failedCellCount}</p>
+                  {styleStressSummary.strongestStyleId ? <p><strong className="text-ink">Strongest style:</strong> {styleStressSummary.strongestStyleId}</p> : null}
+                  {styleStressSummary.weakestStyleId ? <p><strong className="text-ink">Weakest style:</strong> {styleStressSummary.weakestStyleId}</p> : null}
+                  {styleStressSummary.strongestDomainId ? <p><strong className="text-ink">Strongest domain:</strong> {styleStressSummary.strongestDomainId}</p> : null}
+                  {styleStressSummary.weakestDomainId ? <p><strong className="text-ink">Weakest domain:</strong> {styleStressSummary.weakestDomainId}</p> : null}
+                  {styleStressSummary.strongestCellId ? <p><strong className="text-ink">Strongest cell:</strong> {styleStressSummary.strongestCellId}</p> : null}
+                  {styleStressSummary.weakestCellId ? <p><strong className="text-ink">Weakest cell:</strong> {styleStressSummary.weakestCellId}</p> : null}
+                  <p><strong className="text-ink">Average scene cohesion:</strong> {styleStressSummary.averageSceneCohesion}/100</p>
+                  <p><strong className="text-ink">Average style readability:</strong> {styleStressSummary.averageStyleReadability}/100</p>
+                  <p><strong className="text-ink">Average lighting stability:</strong> {styleStressSummary.averageLightingStability}/100</p>
+                  <p><strong className="text-ink">Average reflection continuity:</strong> {styleStressSummary.averageReflectionContinuity}/100</p>
+                  <p><strong className="text-ink">Pass rate:</strong> {Math.round(styleStressSummary.styleDomainPassRate * 100)}%</p>
+                  <p><strong className="text-ink">Rollback pass rate:</strong> {Math.round(styleStressSummary.rollbackPassRate * 100)}%</p>
+                  {styleStressSummary.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect runtime layer:</strong> {styleStressSummary.recommendedRuntimeLayer}</p> : null}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {styleStressReports.map((report) => (
+                    <article key={report.cellId} className="rounded-[1.25rem] border border-ink/10 bg-white/90 p-4 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-ink">{report.styleLabel} × {report.domainLabel}</p>
+                        <StatusPill label={report.executionStatus.toLowerCase()} tone={styleStressStatusTone(report)} />
+                      </div>
+                      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate">{report.styleCategory.toLowerCase().replaceAll("_", "-")} • {report.domainCategory.toLowerCase().replaceAll("_", "-")}</p>
+                      <div className="mt-3 space-y-1 text-sm leading-7 body-muted">
+                        <p><strong className="text-ink">Safety:</strong> {report.safetyStatus}</p>
+                        {report.compatibility ? <p><strong className="text-ink">Compatibility score:</strong> {report.compatibility.compatibilityScore}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Scene cohesion:</strong> {report.metrics.sceneCohesion}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Style cohesion:</strong> {report.metrics.styleCohesion}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Domain compatibility:</strong> {report.metrics.domainCompatibility}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Lighting stability:</strong> {report.metrics.lightingStability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Reflection continuity:</strong> {report.metrics.reflectionContinuity}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Silhouette readability:</strong> {report.metrics.silhouetteReadability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Preview readability:</strong> {report.metrics.previewReadability}/100</p> : null}
+                        {report.strongestMetric ? <p><strong className="text-ink">Strongest metric:</strong> {report.strongestMetricScore !== null ? `${report.strongestMetric} (${report.strongestMetricScore})` : report.strongestMetric}</p> : null}
+                        {report.weakestMetric ? <p><strong className="text-ink">Weakest metric:</strong> {report.weakestMetricScore !== null ? `${report.weakestMetric} (${report.weakestMetricScore})` : report.weakestMetric}</p> : null}
+                        {report.failureClassification ? <p><strong className="text-ink">Failure class:</strong> {report.failureClassification.code}</p> : null}
+                        {report.failureClassification ? <p><strong className="text-ink">Inspect layer:</strong> {report.failureClassification.inspectLayer}</p> : null}
+                        <p><strong className="text-ink">Rollback visible:</strong> {report.rollbackVisible ? "yes" : "no"}</p>
+                        <p><strong className="text-ink">Rollback restored cell:</strong> {report.rollbackRestoredStressRun ? "yes" : "no"}</p>
+                        {report.failureReason ? <p><strong className="text-ink">Failure reason:</strong> {report.failureReason}</p> : null}
+                      </div>
+                      {report.failedThresholds.length ? (
+                        <ul className="mt-3 space-y-2 text-sm leading-7 body-muted">
+                          {report.failedThresholds.map((failure) => (
+                            <li key={`${report.cellId}-${failure.metric}`} className="rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+                              {failure.metric}: {String(failure.actual)} required {failure.required} ({failure.recommendedRuntimeLayer})
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Run starter style stress cells manually to build the bounded cross-style operator report.</p>
+            )}
+          </article>
+        </section>
+
+        <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Style Intensity Controls</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Bounded Style × Domain × Intensity Cells</h2>
+              </div>
+              {styleIntensityPlan ? <StatusPill label={`max-${styleIntensityPlan.maxCells}-cells`} tone="ok" /> : null}
+            </div>
+            <p className="mt-3 text-sm leading-7 body-muted">
+              Operator-triggered only. LOW, MEDIUM, and HIGH presets only. HIGH probes require explicit approval and never enable autonomous ramping, extreme mode, or long-form rendering.
+            </p>
+            {styleIntensityPlan ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {styleIntensityPlan.stages.map((stage) => (
+                  <StatusPill key={stage} label={stage} tone="default" />
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div className="rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <p><strong className="text-ink">Approved intensity cells:</strong> {approvedStyleIntensityCells.length}</p>
+                <p><strong className="text-ink">Starter intensity cells:</strong> {starterStyleIntensityCells.length}</p>
+                <p><strong className="text-ink">Guarded HIGH probes:</strong> {highProbeStyleIntensityCells.length}</p>
+                <p><strong className="text-ink">Autonomous ramping:</strong> disabled</p>
+                <p><strong className="text-ink">Extreme mode:</strong> blocked</p>
+              </div>
+              <label className="flex gap-3 rounded-[1.25rem] border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-900">
+                <input
+                  type="checkbox"
+                  checked={highIntensityApproval}
+                  onChange={(event) => setHighIntensityApproval(event.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-amber-300"
+                />
+                <span>
+                  <strong className="block text-ink">HIGH Probe Approval</strong>
+                  I explicitly approve a guarded HIGH-intensity probe. This does not allow autonomous ramping, unrestricted intensity values, or style profile mutation.
+                </span>
+              </label>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              {styleIntensityPresets.map((preset) => (
+                <StatusPill key={preset.level} label={`${preset.level.toLowerCase()}-${preset.value}`} tone={preset.level === "HIGH" ? "warn" : "ok"} />
+              ))}
+            </div>
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              {styleIntensityDisplayCells.map((cell) => (
+                <article key={cell.cellId} className={`rounded-[1.25rem] border p-4 ${selectedStyleIntensityCellId === cell.cellId ? "border-ocean/30 bg-ocean/5" : cell.intensityLevel === "HIGH" ? "border-amber-200 bg-amber-50/80" : "border-ink/10 bg-white/85"}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-ink">{cell.styleLabel} × {cell.domainLabel}</p>
+                    <StatusPill label={cell.intensityLevel.toLowerCase()} tone={cell.intensityLevel === "HIGH" ? "warn" : "default"} />
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-slate">
+                    {cell.starter ? <span className="rounded-full border border-ink/10 bg-mist/60 px-3 py-1">starter</span> : null}
+                    {cell.guardedHighProbe ? <span className="rounded-full border border-amber-200 bg-amber-100 px-3 py-1 text-amber-800">guarded-high-probe</span> : null}
+                    <span className="rounded-full border border-ink/10 bg-mist/60 px-3 py-1">value-{cell.intensityValue}</span>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => loadApprovedStyleIntensityCell(cell)}
+                      className="rounded-full border border-ink/10 bg-white px-4 py-2 text-xs font-semibold text-ink transition hover:-translate-y-0.5"
+                    >
+                      Load Intensity
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunStyleIntensityCell(cell.cellId)}
+                      disabled={isPending || (cell.intensityLevel === "HIGH" && !highIntensityApproval)}
+                      className="rounded-full border border-ocean/20 bg-ocean px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {cell.intensityLevel === "HIGH" ? "Run HIGH Probe" : "Run Intensity Cell"}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </article>
+
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <p className="section-label">Intensity Harness State</p>
+            <h2 className="mt-3 text-2xl font-semibold text-ink">Style Intensity Boundary</h2>
+            {selectedStyleIntensityCell ? (
+              <div className="mt-5 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill label={selectedStyleIntensityCell.styleLabel.toLowerCase().replaceAll("_", "-")} tone="default" />
+                  <StatusPill label={selectedStyleIntensityCell.domainLabel.toLowerCase().replaceAll("_", "-")} tone="default" />
+                  <StatusPill label={selectedStyleIntensityCell.intensityLevel.toLowerCase()} tone={selectedStyleIntensityCell.intensityLevel === "HIGH" ? "warn" : "ok"} />
+                </div>
+                <p className="mt-3"><strong className="text-ink">Cell id:</strong> {selectedStyleIntensityCell.cellId}</p>
+                <p><strong className="text-ink">Intensity value:</strong> {selectedStyleIntensityCell.intensityValue}</p>
+                <p><strong className="text-ink">HIGH approval required:</strong> {selectedStyleIntensityCell.highProbeApprovalRequired ? "yes" : "no"}</p>
+                <p><strong className="text-ink">Manual selection:</strong> {selectedStyleIntensityCell.manualSelectionAllowed ? "required" : "blocked"}</p>
+              </div>
+            ) : null}
+            {styleIntensityHarnessState ? (
+              <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <p><strong className="text-ink">Active style:</strong> {styleIntensityHarnessState.activeStyleId}</p>
+                <p><strong className="text-ink">Active domain:</strong> {styleIntensityHarnessState.activeDomainId}</p>
+                <p><strong className="text-ink">Active intensity:</strong> {styleIntensityHarnessState.activeIntensityLevel} ({styleIntensityHarnessState.intensityValue})</p>
+                <p><strong className="text-ink">Intensity runs tested:</strong> {styleIntensityHarnessState.testedIntensityCount}</p>
+                <p><strong className="text-ink">Passed:</strong> {styleIntensityHarnessState.passedIntensityCount}</p>
+                <p><strong className="text-ink">Failed:</strong> {styleIntensityHarnessState.failedIntensityCount}</p>
+                {styleIntensityHarnessState.weakestIntensityLevel ? <p><strong className="text-ink">Weakest intensity:</strong> {styleIntensityHarnessState.weakestIntensityLevel}</p> : null}
+                <p><strong className="text-ink">Rollback restored latest intensity run:</strong> {styleIntensityHarnessState.rollbackRestoredIntensityRun ? "yes" : "no"}</p>
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Run starter intensity cells manually to compare how far each approved style can be pushed inside governed preview limits.</p>
+            )}
+          </article>
+        </section>
+
+        <section className="mb-6">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Intensity Report</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Cross-Intensity Diagnostic Summary</h2>
+              </div>
+              {styleIntensitySummary ? <StatusPill label={styleIntensitySummary.recommendedNextAction.toLowerCase().replaceAll("_", "-")} tone={styleIntensitySummary.recommendedNextAction === "CONTINUE_INTENSITY_TESTING" ? "ok" : styleIntensitySummary.recommendedNextAction === "TUNE_STYLE_INTENSITY" ? "warn" : "blocked"} /> : null}
+            </div>
+            {styleIntensitySummary ? (
+              <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                <div className="rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                  <p><strong className="text-ink">Intensity runs:</strong> {styleIntensitySummary.testedIntensityCount}</p>
+                  <p><strong className="text-ink">Passed:</strong> {styleIntensitySummary.passedIntensityCount}</p>
+                  <p><strong className="text-ink">Failed:</strong> {styleIntensitySummary.failedIntensityCount}</p>
+                  {styleIntensitySummary.safestHighIntensityStyleId ? <p><strong className="text-ink">Safest HIGH style:</strong> {styleIntensitySummary.safestHighIntensityStyleId}</p> : null}
+                  {styleIntensitySummary.riskiestHighIntensityStyleId ? <p><strong className="text-ink">Riskiest HIGH style:</strong> {styleIntensitySummary.riskiestHighIntensityStyleId}</p> : null}
+                  {styleIntensitySummary.strongestCellId ? <p><strong className="text-ink">Strongest cell:</strong> {styleIntensitySummary.strongestCellId}</p> : null}
+                  {styleIntensitySummary.weakestCellId ? <p><strong className="text-ink">Weakest cell:</strong> {styleIntensitySummary.weakestCellId}</p> : null}
+                  <p><strong className="text-ink">Average scene cohesion:</strong> {styleIntensitySummary.averageSceneCohesion}/100</p>
+                  <p><strong className="text-ink">Average style readability:</strong> {styleIntensitySummary.averageStyleReadability}/100</p>
+                  <p><strong className="text-ink">Average lighting stability:</strong> {styleIntensitySummary.averageLightingStability}/100</p>
+                  <p><strong className="text-ink">Average reflection continuity:</strong> {styleIntensitySummary.averageReflectionContinuity}/100</p>
+                  <p><strong className="text-ink">Rollback pass rate:</strong> {Math.round(styleIntensitySummary.rollbackPassRate * 100)}%</p>
+                  <p><strong className="text-ink">LOW lighting avg:</strong> {styleIntensitySummary.averageLightingStabilityByIntensity.LOW}/100</p>
+                  <p><strong className="text-ink">MEDIUM lighting avg:</strong> {styleIntensitySummary.averageLightingStabilityByIntensity.MEDIUM}/100</p>
+                  <p><strong className="text-ink">HIGH lighting avg:</strong> {styleIntensitySummary.averageLightingStabilityByIntensity.HIGH}/100</p>
+                  {styleIntensitySummary.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect runtime layer:</strong> {styleIntensitySummary.recommendedRuntimeLayer}</p> : null}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {styleIntensityReports.map((report) => (
+                    <article key={report.cellId} className="rounded-[1.25rem] border border-ink/10 bg-white/90 p-4 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-ink">{report.styleLabel} × {report.domainLabel}</p>
+                        <StatusPill label={`${report.executionStatus.toLowerCase()}-${report.intensityLevel.toLowerCase()}`} tone={styleIntensityStatusTone(report)} />
+                      </div>
+                      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate">{report.styleCategory.toLowerCase().replaceAll("_", "-")} • {report.domainCategory.toLowerCase().replaceAll("_", "-")}</p>
+                      <div className="mt-3 space-y-1 text-sm leading-7 body-muted">
+                        <p><strong className="text-ink">Safety:</strong> {report.safetyStatus}</p>
+                        <p><strong className="text-ink">Intensity:</strong> {report.intensityLevel} ({report.intensityValue})</p>
+                        {report.compatibility ? <p><strong className="text-ink">Compatibility score:</strong> {report.compatibility.compatibilityScore}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Scene cohesion:</strong> {report.metrics.sceneCohesion}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Style readability:</strong> {report.metrics.styleReadability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Lighting stability:</strong> {report.metrics.lightingStability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Reflection continuity:</strong> {report.metrics.reflectionContinuity}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Silhouette readability:</strong> {report.metrics.silhouetteReadability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Atmosphere clarity:</strong> {report.metrics.atmosphereClarity}/100</p> : null}
+                        {report.strongestMetric ? <p><strong className="text-ink">Strongest metric:</strong> {report.strongestMetricScore !== null ? `${report.strongestMetric} (${report.strongestMetricScore})` : report.strongestMetric}</p> : null}
+                        {report.weakestMetric ? <p><strong className="text-ink">Weakest metric:</strong> {report.weakestMetricScore !== null ? `${report.weakestMetric} (${report.weakestMetricScore})` : report.weakestMetric}</p> : null}
+                        {report.failureClassification ? <p><strong className="text-ink">Failure class:</strong> {report.failureClassification.code}</p> : null}
+                        {report.failureClassification ? <p><strong className="text-ink">Inspect layer:</strong> {report.failureClassification.inspectLayer}</p> : null}
+                        <p><strong className="text-ink">Rollback visible:</strong> {report.rollbackVisible ? "yes" : "no"}</p>
+                        <p><strong className="text-ink">Rollback restored intensity:</strong> {report.rollbackRestoredIntensityRun ? "yes" : "no"}</p>
+                        {report.failureReason ? <p><strong className="text-ink">Failure reason:</strong> {report.failureReason}</p> : null}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Run starter style intensity cells manually to build the bounded cross-intensity operator report.</p>
             )}
           </article>
         </section>

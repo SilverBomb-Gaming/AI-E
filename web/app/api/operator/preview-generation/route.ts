@@ -48,6 +48,29 @@ import {
   type ApprovedVisualStyleProfile,
 } from "@/lib/aie/styleProfiles/approvedVisualStyleProfiles";
 import type { VisualStyleReport } from "@/lib/aie/styleProfiles/governedVisualStyleRegistry";
+import {
+  buildGovernedStyleStressHarnessState,
+  buildStyleStressExecutionPlan,
+  listGovernedStyleStressCells,
+  listGovernedStyleStressStarterCells,
+  runGovernedStyleStressCellById,
+  summarizeGovernedStyleStressReports,
+} from "@/lib/aie/styleStress/governedStyleStressHarness";
+import { getStyleStressCellResources } from "@/lib/aie/styleStress/styleDomainMatrix";
+import type { StyleStressReport } from "@/lib/aie/styleStress/governedStyleStressState";
+import {
+  buildGovernedStyleIntensityControlsState,
+  buildStyleIntensityExecutionPlan,
+  listGovernedStyleIntensityCells,
+  listGovernedStyleIntensityHighProbeCells,
+  listGovernedStyleIntensityPresets,
+  listGovernedStyleIntensityStarterCells,
+  runGovernedStyleIntensityCellById,
+  summarizeGovernedStyleIntensityReports,
+} from "@/lib/aie/styleIntensity/governedStyleIntensityControls";
+import { getStyleDomainIntensityCellResources } from "@/lib/aie/styleIntensity/styleDomainIntensityMatrix";
+import { describeStyleIntensityPreset } from "@/lib/aie/styleIntensity/styleIntensityPresets";
+import type { StyleIntensityReport } from "@/lib/aie/styleIntensity/governedStyleIntensityState";
 
 export const runtime = "nodejs";
 
@@ -100,6 +123,14 @@ function normalizeVisualStyleHistory(value: unknown): VisualStyleReport[] {
   return Array.isArray(value) ? value as VisualStyleReport[] : [];
 }
 
+function normalizeStyleStressHistory(value: unknown): StyleStressReport[] {
+  return Array.isArray(value) ? value as StyleStressReport[] : [];
+}
+
+function normalizeStyleIntensityHistory(value: unknown): StyleIntensityReport[] {
+  return Array.isArray(value) ? value as StyleIntensityReport[] : [];
+}
+
 function buildVariantFormInput(variant: ApprovedPromptVariant, governanceApproval: boolean): GovernedPreviewFormInput {
   return {
     prompt: variant.prompt,
@@ -142,6 +173,54 @@ function buildStyleFormInput(styleProfile: ApprovedVisualStyleProfile, governanc
   };
 }
 
+function buildStyleStressFormInput(cellId: string, governanceApproval: boolean): GovernedPreviewFormInput | null {
+  const resources = getStyleStressCellResources(cellId);
+  if (!resources) {
+    return null;
+  }
+
+  const { styleProfile, domain } = resources;
+  return {
+    prompt: domain.prompt,
+    subject: domain.subject,
+    motion_intent: domain.motion_intent,
+    style: `${styleProfile.style}; ${styleProfile.characteristics.join(", ")}`,
+    duration_seconds: Math.min(styleProfile.duration_seconds, domain.duration_seconds),
+    resolution: styleProfile.resolution,
+    continuity_priority: styleProfile.continuity_priority === "high" || domain.continuity_priority === "high"
+      ? "high"
+      : styleProfile.continuity_priority === "medium" || domain.continuity_priority === "medium"
+        ? "medium"
+        : "low",
+    governance_approval: governanceApproval,
+    package_gif_preview: styleProfile.package_gif_preview || domain.package_gif_preview,
+  };
+}
+
+function buildStyleIntensityFormInput(cellId: string, governanceApproval: boolean): GovernedPreviewFormInput | null {
+  const resources = getStyleDomainIntensityCellResources(cellId);
+  if (!resources) {
+    return null;
+  }
+
+  const { styleProfile, domain, preset } = resources;
+  return {
+    prompt: domain.prompt,
+    subject: domain.subject,
+    motion_intent: domain.motion_intent,
+    style: `${styleProfile.style}; ${styleProfile.characteristics.join(", ")}; governed ${preset.level.toLowerCase()} intensity; ${describeStyleIntensityPreset(preset)}`,
+    duration_seconds: Math.min(styleProfile.duration_seconds, domain.duration_seconds),
+    resolution: styleProfile.resolution,
+    continuity_priority: styleProfile.continuity_priority === "high" || domain.continuity_priority === "high"
+      ? "high"
+      : styleProfile.continuity_priority === "medium" || domain.continuity_priority === "medium"
+        ? "medium"
+        : "low",
+    governance_approval: governanceApproval,
+    package_gif_preview: styleProfile.package_gif_preview || domain.package_gif_preview,
+  };
+}
+
 function buildPromptVariationPayload() {
   const variants = listGovernedPromptVariationVariants();
   return {
@@ -168,6 +247,26 @@ function buildVisualStylePayload() {
   };
 }
 
+function buildStyleStressPayload() {
+  const cells = listGovernedStyleStressCells();
+  return {
+    cells,
+    starterCells: listGovernedStyleStressStarterCells(),
+    executionPlan: buildStyleStressExecutionPlan(cells.map((entry) => entry.cellId)),
+  };
+}
+
+function buildStyleIntensityPayload() {
+  const cells = listGovernedStyleIntensityCells();
+  return {
+    presets: listGovernedStyleIntensityPresets(),
+    cells,
+    starterCells: listGovernedStyleIntensityStarterCells(),
+    highProbeCells: listGovernedStyleIntensityHighProbeCells(),
+    executionPlan: buildStyleIntensityExecutionPlan(cells.map((entry) => entry.cellId)),
+  };
+}
+
 function serializeError(error: unknown) {
   if (error instanceof Error) {
     return {
@@ -188,6 +287,8 @@ export async function GET() {
       promptVariation: buildPromptVariationPayload(),
       promptDomain: buildPromptDomainPayload(),
       visualStyle: buildVisualStylePayload(),
+      styleStress: buildStyleStressPayload(),
+      styleIntensity: buildStyleIntensityPayload(),
     });
   } catch (error) {
     console.error("[api/operator/preview-generation] status failed", serializeError(error));
@@ -212,13 +313,17 @@ export async function POST(request: Request) {
               ? "run-prompt-domain"
               : body.action === "run-visual-style-profile"
                 ? "run-visual-style-profile"
+                : body.action === "run-style-stress-cell"
+                  ? "run-style-stress-cell"
+                  : body.action === "run-style-intensity-cell"
+                    ? "run-style-intensity-cell"
         : body.action === "status"
           ? "status"
           : "generate";
 
     if (action === "status") {
       const prerequisiteState = await readGovernedPreviewPrerequisiteState();
-      return NextResponse.json({ prerequisiteState, promptVariation: buildPromptVariationPayload(), promptDomain: buildPromptDomainPayload(), visualStyle: buildVisualStylePayload() });
+      return NextResponse.json({ prerequisiteState, promptVariation: buildPromptVariationPayload(), promptDomain: buildPromptDomainPayload(), visualStyle: buildVisualStylePayload(), styleStress: buildStyleStressPayload(), styleIntensity: buildStyleIntensityPayload() });
     }
 
     if (action === "rollback") {
@@ -338,6 +443,76 @@ export async function POST(request: Request) {
         harnessState: buildGovernedVisualStyleHarnessState(reports),
         prerequisiteState: report.prerequisiteAfter ?? report.prerequisiteBefore,
         visualStyle: buildVisualStylePayload(),
+      });
+    }
+
+    if (action === "run-style-stress-cell") {
+      const cellId = normalizeTextInput(body.cellId).trim().toUpperCase();
+      const governanceApproval = normalizeBoolean(body.governanceApproval);
+      const approvedCells = listGovernedStyleStressCells();
+      const cell = approvedCells.find((entry) => entry.cellId === cellId);
+      const formInput = buildStyleStressFormInput(cellId, governanceApproval);
+
+      if (!cell || !formInput) {
+        return NextResponse.json({ error: "An approved style stress matrix cell is required." }, { status: 400 });
+      }
+
+      const report = await runGovernedStyleStressCellById({
+        cellId,
+        governanceApproval,
+        cellIndex: Math.max(approvedCells.findIndex((entry) => entry.cellId === cellId), 0) + 1,
+        totalCells: approvedCells.length,
+        rejectedCellCount: normalizeStyleStressHistory(body.priorReports).filter((entry) => entry.safetyStatus === "REJECTED").length,
+      });
+      const reports = [
+        ...normalizeStyleStressHistory(body.priorReports).filter((entry) => entry.cellId !== report.cellId),
+        report,
+      ].sort((left, right) => left.cellIndex - right.cellIndex);
+
+      return NextResponse.json({
+        compiledRequest: compileGovernedPreviewRequest(formInput),
+        report,
+        reports,
+        reportSummary: summarizeGovernedStyleStressReports(reports),
+        harnessState: buildGovernedStyleStressHarnessState(reports),
+        prerequisiteState: report.prerequisiteAfter ?? report.prerequisiteBefore,
+        styleStress: buildStyleStressPayload(),
+      });
+    }
+
+    if (action === "run-style-intensity-cell") {
+      const cellId = normalizeTextInput(body.cellId).trim().toUpperCase();
+      const governanceApproval = normalizeBoolean(body.governanceApproval);
+      const highIntensityApproval = normalizeBoolean(body.highIntensityApproval);
+      const approvedCells = listGovernedStyleIntensityCells();
+      const cell = approvedCells.find((entry) => entry.cellId === cellId);
+      const formInput = buildStyleIntensityFormInput(cellId, governanceApproval);
+
+      if (!cell || !formInput) {
+        return NextResponse.json({ error: "An approved style intensity matrix cell is required." }, { status: 400 });
+      }
+
+      const report = await runGovernedStyleIntensityCellById({
+        cellId,
+        governanceApproval,
+        highIntensityApproval,
+        cellIndex: Math.max(approvedCells.findIndex((entry) => entry.cellId === cellId), 0) + 1,
+        totalCells: approvedCells.length,
+        rejectedIntensityCount: normalizeStyleIntensityHistory(body.priorReports).filter((entry) => entry.safetyStatus === "REJECTED").length,
+      });
+      const reports = [
+        ...normalizeStyleIntensityHistory(body.priorReports).filter((entry) => entry.cellId !== report.cellId),
+        report,
+      ].sort((left, right) => left.cellIndex - right.cellIndex);
+
+      return NextResponse.json({
+        compiledRequest: compileGovernedPreviewRequest(formInput),
+        report,
+        reports,
+        reportSummary: summarizeGovernedStyleIntensityReports(reports),
+        harnessState: buildGovernedStyleIntensityControlsState(reports),
+        prerequisiteState: report.prerequisiteAfter ?? report.prerequisiteBefore,
+        styleIntensity: buildStyleIntensityPayload(),
       });
     }
 

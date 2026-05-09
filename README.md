@@ -336,6 +336,86 @@ Remaining blocked cinematic escalations:
 - long-form rendering remains blocked
 - any cross-run cinematic memory persistence beyond the current operator session remains blocked
 
+## Governed Style Stress Test Harness
+
+AI-E now composes the approved prompt-domain and visual-style registries into a bounded style stress harness so operators can compare which governed styles remain stable across different approved cinematic domains without unlocking autonomous matrix execution.
+
+Current Phase 1 progress:
+
+- the operator preview surface now exposes a 25-cell approved style-domain matrix with five starter cells for manual execution only, preserving the same two-second duration, low-resolution preview budget, manual approval gate, and rollback-safe sandbox path
+- each stress cell now combines one approved visual style with one approved cinematic prompt domain, snapshots prerequisite state before execution, then evaluates scene cohesion, style cohesion, domain compatibility, lighting stability, reflection continuity, silhouette readability, transition smoothness, focus continuity, tension continuity, momentum continuity, preview readability, final composition, rollback integrity, and rollback pressure inside one cross-style stress report
+- the cross-style stress summary now highlights strongest and weakest styles/domains, style-domain pass rate, rollback pass rate, and the first runtime layer to inspect when a cell fails
+- failure classification now distinguishes silhouette collapse, lighting overload, reflection instability, style cohesion loss, domain compatibility failure, camera compatibility drop, rollback pressure spike, and preview readability drop so operators can inspect the right bounded layer without auto-tuning runtime systems
+
+Starter style stress cells:
+
+- `CINEMATIC_SCI_FI × ENERGY_PULSE_REACTOR`
+- `INDUSTRIAL_REALISM × SENTRY_PLATFORM_REVEAL`
+- `ANIME_INSPIRED × MECHANICAL_RITUAL_ALIGNMENT`
+- `NEON_DYSTOPIAN × REACTIVE_REFLECTION_SEQUENCE`
+- `ATMOSPHERIC_PAINTERLY × ATMOSPHERIC_APERTURE_EVENT`
+
+Governance preserved:
+
+- style stress testing remains operator-triggered only; no autonomous full-matrix execution, background stress loop, or automatic retries are allowed
+- sandbox containment, manual approval, rollback visibility, deterministic replay, scene cohesion, and bounded preview duration remain unchanged
+- failed style-domain runs preserve diagnostics and restore the prior sandbox state instead of mutating style profiles, prompt domains, or runtime systems
+- anime-inspired rendering remains bounded to non-humanoid silhouette-safe output, industrial realism remains bounded away from unrestricted realism escalation, neon glow remains constrained by lighting/reflection thresholds, and painterly softness remains constrained by readability thresholds
+
+Remaining blocked cinematic escalations:
+
+- humanoid anime characters, faces, dialogue, and emotional acting remain blocked
+- unrestricted realism escalation and unrestricted anime generation remain blocked
+- autonomous continuation, automatic stress retuning, and long-form rendering remain blocked
+- any failed style-domain run that attempts to mutate style/domain registries or bypass operator review remains blocked
+
+## Governed Style Intensity Controls
+
+AI-E now layers bounded style intensity controls on top of the approved visual style and prompt-domain registries so operators can compare how far each approved style can be intensified before quality or governance begins to degrade.
+
+Current Phase 1 progress:
+
+- the operator preview surface now exposes a 75-cell approved style-domain-intensity matrix using the existing five approved styles, five approved domains, and the governed `LOW`, `MEDIUM`, and `HIGH` intensity presets
+- seven starter intensity cells are available for manual execution, while HIGH anime and HIGH neon probes remain guarded and require a separate explicit HIGH probe approval before any preview execution is attempted
+- each intensity run snapshots prerequisite state, applies a deterministic non-mutating intensity modifier to the compiled governed preview request, then evaluates scene cohesion, style readability, scene phrase continuity, transition smoothness, visual continuity, lighting stability, reflection continuity, silhouette readability, preview readability, atmosphere clarity, focus continuity, momentum continuity, final composition, material clarity, rollback integrity, and rollback pressure
+- the cross-intensity summary highlights strongest and weakest intensity levels per style, safest and riskiest HIGH style when HIGH probes are manually run, average quality metrics by intensity level, rollback pass rate by intensity, and the first bounded runtime layer to inspect
+- failure classification now distinguishes style overpower, silhouette collapse, lighting overload, reflection instability, atmosphere overdensity, material noise, focus readability drop, transition visual noise, and rollback pressure spikes without auto-tuning runtime systems
+
+Intensity presets:
+
+- `LOW`: value `0.35`, mild lighting/reflection/atmosphere amplification, strong silhouette protection
+- `MEDIUM`: value `0.65`, moderate lighting/reflection/atmosphere amplification, strong silhouette protection
+- `HIGH`: value `0.85`, strong-but-bounded lighting/reflection/atmosphere amplification, mandatory silhouette protection, explicit operator HIGH approval required
+
+Starter style intensity cells:
+
+- `CINEMATIC_SCI_FI × ENERGY_PULSE_REACTOR × MEDIUM`
+- `INDUSTRIAL_REALISM × SENTRY_PLATFORM_REVEAL × MEDIUM`
+- `ANIME_INSPIRED × MECHANICAL_RITUAL_ALIGNMENT × LOW`
+- `ANIME_INSPIRED × MECHANICAL_RITUAL_ALIGNMENT × MEDIUM`
+- `NEON_DYSTOPIAN × REACTIVE_REFLECTION_SEQUENCE × LOW`
+- `NEON_DYSTOPIAN × REACTIVE_REFLECTION_SEQUENCE × MEDIUM`
+- `ATMOSPHERIC_PAINTERLY × ATMOSPHERIC_APERTURE_EVENT × MEDIUM`
+
+Guarded HIGH probes:
+
+- `ANIME_INSPIRED × MECHANICAL_RITUAL_ALIGNMENT × HIGH`
+- `NEON_DYSTOPIAN × REACTIVE_REFLECTION_SEQUENCE × HIGH`
+
+Governance preserved:
+
+- style intensity testing remains operator-triggered only; no autonomous HIGH execution, autonomous intensity ramping, background intensity loop, unrestricted intensity value, or automatic retry path is allowed
+- base style profiles, prompt-domain templates, and runtime settings remain non-mutating during intensity runs
+- failed intensity runs preserve diagnostics and restore the prior sandbox state instead of tuning style profiles, prompt domains, or runtime systems
+- anime intensity remains bounded by silhouette readability, neon intensity remains bounded by glow/reflection stability, painterly intensity remains bounded by object clarity, and industrial realism remains bounded by material noise and lighting stability
+
+Remaining blocked cinematic escalations:
+
+- humanoid anime characters, faces, dialogue, and emotional acting remain blocked
+- unrestricted realism escalation and unrestricted anime generation remain blocked
+- extreme intensity, arbitrary numeric intensity values, autonomous cinematic storytelling, and long-form rendering remain blocked
+- any failed intensity run that attempts to mutate style/domain registries, persist cross-run intensity settings, or bypass operator review remains blocked
+
 ## Autonomous Session Loop
 
 The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.
