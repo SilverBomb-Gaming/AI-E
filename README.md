@@ -504,6 +504,11 @@ Visual validation contract:
 Localhost operator UI behavior:
 
 - `/operator/preview` now opens as a compact dashboard of obvious dropdown-style headers instead of one always-open report: Dashboard Controls, Anime Character Report, Execution Controls, Execution Status, Micro-Sequence Frames, Preview Outputs, Frame Comparison, Governed Diagnostics, and Blockers And Rollback
+- `/operator/preview` also starts with a guided anime preview workflow checklist; Step 1 `Start New Task` is the initial active step, and Enter advances only when the active step is complete
+- the guided workflow sequence is: prompt ready, subject/style alignment, manual approval, generate micro-sequence, review micro-sequence, generate preview, review preview output, check truth/scaffold/fallback state, check diagnostics/rollback warnings, and final operator verdict
+- each collapsible section shows the guided step it belongs to; the section containing the active step is highlighted and auto-expands, while warning/failed/blocked step badges stay visible after moving forward
+- `request-accepted` only means the request entered the governed sandbox; it is distinct from generation completed, output reviewed, visual intent passed, truth checks passed, and final operator accepted
+- the dashboard is not considered successful until the final operator verdict is `PASS`; the final verdict asks whether visible output matched intent, truth checks passed, scaffold/fallback stayed inactive, and diagnostics were free of unresolved warnings, otherwise it remains `FAIL` or `NEEDS REVIEW`
 - most non-critical sections default collapsed, with visible chevrons, `Expand` / `Collapse` controls, and activity labels such as `Ready`, `New activity`, `Needs review`, `Warning`, or `Failure or block`
 - renderer output galleries, anime character reports, diagnostics, execution status, blocker/rollback status, truth checks, visual review packages, scaffold status, and validation metrics can be expanded or collapsed from their section headers
 - blocked scaffold/fallback activity, failed validation, and critical diagnostics stay strongly indicated in the collapsed header and keep a visible warning summary below the header when needed, so collapsing the UI cannot silently hide dangerous state

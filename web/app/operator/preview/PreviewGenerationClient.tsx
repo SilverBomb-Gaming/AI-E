@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState, useTransition, type ReactNode } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode, type RefObject } from "react";
 
 import {
   GOVERNED_PREVIEW_RESOLUTION,
@@ -82,6 +82,17 @@ import {
   statusToneFromActivity,
   type ActivityIndicator,
 } from "./activitySections";
+import {
+  INITIAL_GUIDED_WORKFLOW_STATE,
+  advanceGuidedWorkflow,
+  buildGuidedWorkflowSteps,
+  evaluateFinalOperatorVerdict,
+  type FinalOperatorVerdict,
+  type GuidedWorkflowFacts,
+  type GuidedWorkflowSectionId,
+  type GuidedWorkflowState,
+  type GuidedWorkflowStepView,
+} from "./guidedWorkflow";
 
 const DEFAULT_FORM: GovernedPreviewFormInput = {
   prompt: "",
@@ -476,6 +487,9 @@ function CollapsibleActivitySection({
   children,
   defaultOpen,
   className = "",
+  guidedStepLabel,
+  containsActiveStep = false,
+  hasWorkflowWarning = false,
 }: {
   sectionLabel: string;
   title: string;
@@ -483,8 +497,17 @@ function CollapsibleActivitySection({
   children: ReactNode;
   defaultOpen?: boolean;
   className?: string;
+  guidedStepLabel?: string;
+  containsActiveStep?: boolean;
+  hasWorkflowWarning?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(defaultOpen ?? activity.critical);
+  useEffect(() => {
+    if (containsActiveStep) {
+      setIsOpen(true);
+    }
+  }, [containsActiveStep]);
+
   const actionLabel = isOpen ? "Collapse" : "Expand";
   const activityLabel = activity.tone === "blocked"
     ? "Failure or block"
@@ -504,12 +527,19 @@ function CollapsibleActivitySection({
         : "border-ink/10 bg-white text-ink/75";
 
   return (
-    <article className={`self-start rounded-[1.25rem] border border-ink/15 bg-white/90 shadow-float ${className}`}>
+    <article className={`self-start rounded-[1.25rem] border bg-white/90 shadow-float ${containsActiveStep ? "border-ocean/50 ring-2 ring-ocean/15" : hasWorkflowWarning ? "border-amber-300" : "border-ink/15"} ${className}`}>
       <button
         type="button"
         onClick={() => setIsOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            setIsOpen(false);
+          }
+        }}
         aria-expanded={isOpen}
-        className="flex w-full flex-col items-start justify-between gap-4 rounded-[1.25rem] border-b border-ink/10 bg-white px-5 py-4 text-left transition hover:bg-mist/60 xl:flex-row"
+        aria-label={`${isOpen ? "Collapse" : "Expand"} ${sectionLabel}${guidedStepLabel ? ` for ${guidedStepLabel}` : ""}`}
+        className={`flex w-full flex-col items-start justify-between gap-4 rounded-[1.25rem] border-b border-ink/10 px-5 py-4 text-left transition hover:bg-mist/60 xl:flex-row ${containsActiveStep ? "bg-ocean/5" : "bg-white"}`}
       >
         <span className="flex min-w-0 items-start gap-3">
           <span className={`mt-1 inline-flex h-9 min-w-9 items-center justify-center rounded-full border px-2 text-sm font-bold ${iconClassName}`} aria-hidden="true">
@@ -522,6 +552,11 @@ function CollapsibleActivitySection({
               <span>{title}</span>
             </span>
             <span className="mt-2 block text-sm leading-7 body-muted">{activity.summary}</span>
+            {guidedStepLabel ? (
+              <span className={`mt-3 inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${containsActiveStep ? "border-ocean/30 bg-ocean/10 text-ocean" : hasWorkflowWarning ? "border-amber-300 bg-amber-50 text-amber-700" : "border-ink/10 bg-mist/70 text-ink"}`}>
+                {guidedStepLabel}
+              </span>
+            ) : null}
           </span>
         </span>
         <span className="flex shrink-0 flex-col items-start gap-2 xl:items-end">
@@ -610,6 +645,181 @@ function animeCharacterStatusTone(report: AnimeCharacterReport): "ok" | "warn" |
   return "warn";
 }
 
+function guidedStatusClass(status: string): string {
+  if (status === "completed") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (status === "warning" || status === "needs review") {
+    return "border-amber-300 bg-amber-50 text-amber-700";
+  }
+  if (status === "failed" || status === "blocked") {
+    return "border-coral/20 bg-coral/10 text-ember";
+  }
+  if (status === "active") {
+    return "border-ocean/30 bg-ocean/10 text-ocean";
+  }
+  return "border-ink/10 bg-white text-ink/75";
+}
+
+function verdictClass(verdict: FinalOperatorVerdict): string {
+  if (verdict === "PASS") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (verdict === "FAIL") {
+    return "border-coral/20 bg-coral/10 text-ember";
+  }
+  return "border-amber-300 bg-amber-50 text-amber-700";
+}
+
+function OperatorGuidedWorkflow({
+  steps,
+  activeStepRef,
+  notice,
+  finalVerdict,
+  subjectStyleConfirmed,
+  onSubjectStyleConfirmedChange,
+  microSequenceReviewed,
+  onMicroSequenceReviewedChange,
+  previewOutputReviewed,
+  onPreviewOutputReviewedChange,
+  diagnosticsReviewed,
+  onDiagnosticsReviewedChange,
+  finalVisualIntentMatched,
+  onFinalVisualIntentMatchedChange,
+  finalTruthChecksPassed,
+  onFinalTruthChecksPassedChange,
+  finalScaffoldFallbackInactive,
+  onFinalScaffoldFallbackInactiveChange,
+  finalDiagnosticsClear,
+  onFinalDiagnosticsClearChange,
+  onAdvance,
+}: {
+  steps: GuidedWorkflowStepView[];
+  activeStepRef: RefObject<HTMLButtonElement>;
+  notice: string | null;
+  finalVerdict: FinalOperatorVerdict;
+  subjectStyleConfirmed: boolean;
+  onSubjectStyleConfirmedChange: (value: boolean) => void;
+  microSequenceReviewed: boolean;
+  onMicroSequenceReviewedChange: (value: boolean) => void;
+  previewOutputReviewed: boolean;
+  onPreviewOutputReviewedChange: (value: boolean) => void;
+  diagnosticsReviewed: boolean;
+  onDiagnosticsReviewedChange: (value: boolean) => void;
+  finalVisualIntentMatched: boolean;
+  onFinalVisualIntentMatchedChange: (value: boolean) => void;
+  finalTruthChecksPassed: boolean;
+  onFinalTruthChecksPassedChange: (value: boolean) => void;
+  finalScaffoldFallbackInactive: boolean;
+  onFinalScaffoldFallbackInactiveChange: (value: boolean) => void;
+  finalDiagnosticsClear: boolean;
+  onFinalDiagnosticsClearChange: (value: boolean) => void;
+  onAdvance: () => void;
+}) {
+  const activeStep = steps.find((step) => step.isActive) ?? steps[0];
+
+  return (
+    <section className="mb-6 rounded-[1.25rem] border border-ocean/20 bg-white/95 p-5 shadow-float" aria-label="Operator guided anime preview workflow">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="section-label">Guided Operator Workflow</p>
+          <h2 className="mt-3 text-2xl font-semibold text-ink">Anime Preview Task Walkthrough</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-7 body-muted">Follow the active step. Press Enter on the highlighted step only after the instruction is satisfied; request accepted is not render success.</p>
+        </div>
+        <StatusPill label={`Final ${finalVerdict}`} tone={finalVerdict === "PASS" ? "ok" : finalVerdict === "FAIL" ? "blocked" : "warn"} />
+      </div>
+
+      <ol className="mt-5 grid gap-3 lg:grid-cols-2">
+        {steps.map((step) => (
+          <li key={step.id}>
+            <button
+              type="button"
+              ref={step.isActive ? activeStepRef : undefined}
+              onClick={step.isActive ? onAdvance : undefined}
+              onKeyDown={(event) => {
+                if (step.isActive && event.key === "Enter") {
+                  event.preventDefault();
+                  onAdvance();
+                }
+              }}
+              aria-current={step.isActive ? "step" : undefined}
+              aria-label={`Step ${step.number}: ${step.title}. ${step.status}. ${step.reason}`}
+              className={`flex h-full w-full gap-3 rounded-[1rem] border p-4 text-left transition ${step.isActive ? "border-ocean/40 bg-ocean/10 ring-2 ring-ocean/15" : step.hasPersistentWarning ? "border-amber-300 bg-amber-50" : "border-ink/10 bg-mist/50"}`}
+            >
+              <span className={`flex h-9 min-w-9 items-center justify-center rounded-full border text-sm font-bold ${guidedStatusClass(step.status)}`}>{step.status === "completed" ? "OK" : step.number}</span>
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-ink">{step.title}</span>
+                  <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${guidedStatusClass(step.status)}`}>{step.status}</span>
+                </span>
+                <span className="mt-2 block text-sm leading-6 body-muted">{step.instruction}</span>
+                {step.isActive || step.hasPersistentWarning ? <span className="mt-2 block text-sm leading-6 text-ink">{step.reason}</span> : null}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ol>
+
+      {notice ? <p className="mt-4 rounded-[1rem] border border-amber-300 bg-amber-50 p-4 text-sm leading-7 text-amber-700">{notice}</p> : null}
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+        <article className="rounded-[1rem] border border-ink/10 bg-mist/50 p-4">
+          <p className="text-sm font-semibold text-ink">Active Step</p>
+          <p className="mt-2 text-sm leading-7 body-muted">Step {activeStep.number}: {activeStep.title}</p>
+          <button
+            type="button"
+            onClick={onAdvance}
+            className="mt-3 rounded-full border border-ocean/20 bg-ocean px-4 py-2 text-sm font-semibold text-white transition hover:-translate-y-0.5"
+          >
+            Continue With Enter
+          </button>
+        </article>
+
+        <article className="rounded-[1rem] border border-ink/10 bg-white p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-ink">Final Operator Verdict</p>
+            <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${verdictClass(finalVerdict)}`}>{finalVerdict}</span>
+          </div>
+          <div className="mt-3 grid gap-3 text-sm leading-6 body-muted md:grid-cols-2">
+            <label className="flex items-start gap-2 rounded-[0.75rem] border border-ink/10 bg-mist/40 p-3">
+              <input type="checkbox" checked={subjectStyleConfirmed} onChange={(event) => onSubjectStyleConfirmedChange(event.target.checked)} className="mt-1 h-4 w-4" />
+              <span>Subject and style alignment confirmed.</span>
+            </label>
+            <label className="flex items-start gap-2 rounded-[0.75rem] border border-ink/10 bg-mist/40 p-3">
+              <input type="checkbox" checked={microSequenceReviewed} onChange={(event) => onMicroSequenceReviewedChange(event.target.checked)} className="mt-1 h-4 w-4" />
+              <span>Micro-sequence outputs reviewed.</span>
+            </label>
+            <label className="flex items-start gap-2 rounded-[0.75rem] border border-ink/10 bg-mist/40 p-3">
+              <input type="checkbox" checked={previewOutputReviewed} onChange={(event) => onPreviewOutputReviewedChange(event.target.checked)} className="mt-1 h-4 w-4" />
+              <span>Preview outputs reviewed.</span>
+            </label>
+            <label className="flex items-start gap-2 rounded-[0.75rem] border border-ink/10 bg-mist/40 p-3">
+              <input type="checkbox" checked={diagnosticsReviewed} onChange={(event) => onDiagnosticsReviewedChange(event.target.checked)} className="mt-1 h-4 w-4" />
+              <span>Diagnostics and rollback warnings reviewed.</span>
+            </label>
+            <label className="flex items-start gap-2 rounded-[0.75rem] border border-ink/10 bg-mist/40 p-3">
+              <input type="checkbox" checked={finalVisualIntentMatched} onChange={(event) => onFinalVisualIntentMatchedChange(event.target.checked)} className="mt-1 h-4 w-4" />
+              <span>Did visible output match the operator intent?</span>
+            </label>
+            <label className="flex items-start gap-2 rounded-[0.75rem] border border-ink/10 bg-mist/40 p-3">
+              <input type="checkbox" checked={finalTruthChecksPassed} onChange={(event) => onFinalTruthChecksPassedChange(event.target.checked)} className="mt-1 h-4 w-4" />
+              <span>Did the truth checks pass?</span>
+            </label>
+            <label className="flex items-start gap-2 rounded-[0.75rem] border border-ink/10 bg-mist/40 p-3">
+              <input type="checkbox" checked={finalScaffoldFallbackInactive} onChange={(event) => onFinalScaffoldFallbackInactiveChange(event.target.checked)} className="mt-1 h-4 w-4" />
+              <span>Did scaffold/fallback stay inactive?</span>
+            </label>
+            <label className="flex items-start gap-2 rounded-[0.75rem] border border-ink/10 bg-mist/40 p-3">
+              <input type="checkbox" checked={finalDiagnosticsClear} onChange={(event) => onFinalDiagnosticsClearChange(event.target.checked)} className="mt-1 h-4 w-4" />
+              <span>Were diagnostics free of unresolved warnings?</span>
+            </label>
+          </div>
+        </article>
+      </div>
+    </section>
+  );
+}
+
 export function PreviewGenerationClient() {
   const [form, setForm] = useState<GovernedPreviewFormInput>(DEFAULT_FORM);
   const [compiledRequest, setCompiledRequest] = useState<GovernedPreviewRequest | null>(null);
@@ -674,6 +884,17 @@ export function PreviewGenerationClient() {
   const [animeCharacterSummary, setAnimeCharacterSummary] = useState<AnimeCharacterDiagnosticSummary | null>(null);
   const [animeCharacterHarnessState, setAnimeCharacterHarnessState] = useState<GovernedAnimeCharacterState | null>(null);
   const [animeCharacterApproval, setAnimeCharacterApproval] = useState<boolean>(false);
+  const [guidedWorkflowState, setGuidedWorkflowState] = useState<GuidedWorkflowState>(INITIAL_GUIDED_WORKFLOW_STATE);
+  const [guidedWorkflowNotice, setGuidedWorkflowNotice] = useState<string | null>(null);
+  const [subjectStyleConfirmed, setSubjectStyleConfirmed] = useState<boolean>(false);
+  const [microSequenceReviewed, setMicroSequenceReviewed] = useState<boolean>(false);
+  const [previewOutputReviewed, setPreviewOutputReviewed] = useState<boolean>(false);
+  const [diagnosticsReviewed, setDiagnosticsReviewed] = useState<boolean>(false);
+  const [finalVisualIntentMatched, setFinalVisualIntentMatched] = useState<boolean>(false);
+  const [finalTruthChecksPassed, setFinalTruthChecksPassed] = useState<boolean>(false);
+  const [finalScaffoldFallbackInactive, setFinalScaffoldFallbackInactive] = useState<boolean>(false);
+  const [finalDiagnosticsClear, setFinalDiagnosticsClear] = useState<boolean>(false);
+  const activeGuidedStepRef = useRef<HTMLButtonElement>(null);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -742,6 +963,11 @@ export function PreviewGenerationClient() {
 
   function updateField<Key extends keyof GovernedPreviewFormInput>(key: Key, value: GovernedPreviewFormInput[Key]) {
     setForm((current) => ({ ...current, [key]: value }));
+    if (key === "prompt" || key === "subject" || key === "style") {
+      setSubjectStyleConfirmed(false);
+      setPreviewOutputReviewed(false);
+      setFinalVisualIntentMatched(false);
+    }
   }
 
   function loadApprovedPromptVariant(variant: ApprovedPromptVariant) {
@@ -1278,6 +1504,12 @@ export function PreviewGenerationClient() {
   function handleGenerate() {
     setError(null);
     setRollback(null);
+    setPreviewOutputReviewed(false);
+    setDiagnosticsReviewed(false);
+    setFinalVisualIntentMatched(false);
+    setFinalTruthChecksPassed(false);
+    setFinalScaffoldFallbackInactive(false);
+    setFinalDiagnosticsClear(false);
     startTransition(() => {
       void fetch("/api/operator/preview-generation", {
         method: "POST",
@@ -1317,6 +1549,9 @@ export function PreviewGenerationClient() {
   function handleGenerateMicroSequence() {
     setError(null);
     setRollback(null);
+    setMicroSequenceReviewed(false);
+    setPreviewOutputReviewed(false);
+    setDiagnosticsReviewed(false);
     startTransition(() => {
       void fetch("/api/operator/preview-generation", {
         method: "POST",
@@ -1382,8 +1617,8 @@ export function PreviewGenerationClient() {
     });
   }
 
-  const statusTone = execution?.status === "accepted"
-    ? "ok"
+  const statusTone: "ok" | "warn" | "blocked" | "default" = execution?.status === "accepted"
+    ? "warn"
     : execution?.status === "blocked"
       ? "blocked"
       : "default";
@@ -1454,8 +1689,8 @@ export function PreviewGenerationClient() {
         critical: false,
       }
       : {
-        label: execution?.status ?? "ready",
-        tone: statusTone === "blocked" ? "blocked" as const : statusTone === "ok" ? "ok" as const : "info" as const,
+        label: execution?.status === "accepted" ? "request-accepted" : execution?.status ?? "ready",
+        tone: statusTone === "blocked" ? "blocked" as const : statusTone === "warn" ? "warn" as const : "info" as const,
         summary: message,
         critical: statusTone === "blocked",
       };
@@ -1491,6 +1726,65 @@ export function PreviewGenerationClient() {
       summary: "Generate at least two governed PNG frames to compare continuity.",
       critical: false,
     };
+  const latestAnimeCharacterReport = animeCharacterReports.at(-1) ?? null;
+  const activeTruthCheck = latestAnimeCharacterReport?.truthCheck
+    ?? execution?.preview_diagnostics?.anime_character_truth_check
+    ?? microSequence?.preview_diagnostics?.anime_character_truth_check
+    ?? prerequisiteState?.preview_diagnostics?.anime_character_truth_check
+    ?? null;
+  const truthChecksPassed = Boolean(activeTruthCheck?.character_pixels_generated
+    && activeTruthCheck.character_primary_subject
+    && activeTruthCheck.diagnostics_match_rendered_output
+    && activeTruthCheck.scaffold_status === "REAL_OUTPUT_ACTIVE");
+  const scaffoldFallbackInactive = Boolean(activeTruthCheck && !activeTruthCheck.fallback_primitive_dominance && activeTruthCheck.scaffold_status !== "SCAFFOLD_ACTIVE");
+  const diagnosticsClear = Boolean(activeDiagnostics && diagnosticsActivity.tone !== "warn" && diagnosticsActivity.tone !== "blocked" && validationActivity.tone !== "blocked");
+  const rollbackWarningsActive = diagnosticsActivity.tone === "warn" || validationActivity.tone === "warn" || Boolean(rollback?.deleted_output_targets.length);
+  const workflowFacts: GuidedWorkflowFacts = {
+    promptReady: form.prompt.trim().length > 0,
+    subjectStyleAligned: subjectStyleConfirmed && form.subject.trim().length > 0 && form.style.trim().length > 0,
+    manualApprovalEnabled: form.governance_approval,
+    microSequenceGenerated: microSequence?.status === "generated" || prerequisiteState?.micro_sequence_exists === true || microSequenceGalleryCards.length > 0,
+    microSequenceReviewed,
+    previewRequestAccepted: execution?.status === "accepted",
+    previewGenerationCompleted: previewGalleryCards.length > 0 || Boolean(latestAnimeCharacterReport?.visualReviewPackage),
+    previewOutputReviewed,
+    truthChecksPassed,
+    scaffoldFallbackInactive,
+    diagnosticsReviewed,
+    diagnosticsClear,
+    rollbackWarningsActive,
+    activeFailureReason: error,
+    finalVisualIntentMatched,
+    finalTruthChecksPassed,
+    finalScaffoldFallbackInactive,
+    finalDiagnosticsClear,
+  };
+  const guidedWorkflowSteps = buildGuidedWorkflowSteps(guidedWorkflowState, workflowFacts);
+  const activeGuidedStep = guidedWorkflowSteps.find((step) => step.isActive) ?? guidedWorkflowSteps[0];
+  const activeGuidedSectionId = activeGuidedStep.sectionId;
+  const guidedWarningSectionIds = new Set(guidedWorkflowSteps.filter((step) => step.hasPersistentWarning || step.status === "warning" || step.status === "failed" || step.status === "blocked").map((step) => step.sectionId));
+  const finalOperatorVerdict = evaluateFinalOperatorVerdict(workflowFacts);
+
+  function guidedSectionProps(sectionId: GuidedWorkflowSectionId) {
+    const anchoredStep = guidedWorkflowSteps.find((step) => step.sectionId === sectionId && (step.isActive || step.hasPersistentWarning))
+      ?? guidedWorkflowSteps.find((step) => step.sectionId === sectionId);
+    return {
+      guidedStepLabel: anchoredStep ? `Step ${anchoredStep.number}: ${anchoredStep.title}` : undefined,
+      containsActiveStep: activeGuidedSectionId === sectionId,
+      hasWorkflowWarning: guidedWarningSectionIds.has(sectionId),
+    };
+  }
+
+  function handleAdvanceGuidedWorkflow() {
+    const result = advanceGuidedWorkflow(guidedWorkflowState, workflowFacts);
+    setGuidedWorkflowState(result.state);
+    setGuidedWorkflowNotice(result.reason);
+  }
+
+  useEffect(() => {
+    activeGuidedStepRef.current?.focus();
+  }, [guidedWorkflowState.activeStepId]);
+
   const styleIntensityDisplayCells = [
     ...starterStyleIntensityCells,
     ...highProbeStyleIntensityCells.filter((probe) => !starterStyleIntensityCells.some((starter) => starter.cellId === probe.cellId)),
@@ -1517,12 +1811,37 @@ export function PreviewGenerationClient() {
           </div>
         </div>
 
+        <OperatorGuidedWorkflow
+          steps={guidedWorkflowSteps}
+          activeStepRef={activeGuidedStepRef}
+          notice={guidedWorkflowNotice}
+          finalVerdict={finalOperatorVerdict}
+          subjectStyleConfirmed={subjectStyleConfirmed}
+          onSubjectStyleConfirmedChange={setSubjectStyleConfirmed}
+          microSequenceReviewed={microSequenceReviewed}
+          onMicroSequenceReviewedChange={setMicroSequenceReviewed}
+          previewOutputReviewed={previewOutputReviewed}
+          onPreviewOutputReviewedChange={setPreviewOutputReviewed}
+          diagnosticsReviewed={diagnosticsReviewed}
+          onDiagnosticsReviewedChange={setDiagnosticsReviewed}
+          finalVisualIntentMatched={finalVisualIntentMatched}
+          onFinalVisualIntentMatchedChange={setFinalVisualIntentMatched}
+          finalTruthChecksPassed={finalTruthChecksPassed}
+          onFinalTruthChecksPassedChange={setFinalTruthChecksPassed}
+          finalScaffoldFallbackInactive={finalScaffoldFallbackInactive}
+          onFinalScaffoldFallbackInactiveChange={setFinalScaffoldFallbackInactive}
+          finalDiagnosticsClear={finalDiagnosticsClear}
+          onFinalDiagnosticsClearChange={setFinalDiagnosticsClear}
+          onAdvance={handleAdvanceGuidedWorkflow}
+        />
+
         <CollapsibleActivitySection
           sectionLabel="Dashboard Controls"
           title="Prompt, Style, Intensity, HIGH Probe, And Character Profile Controls"
           activity={capabilityHarnessActivity}
           defaultOpen={capabilityHarnessActivity.critical}
           className="mb-6"
+          {...guidedSectionProps("dashboard-controls")}
         >
         <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
           <article className="glass-card rounded-[2rem] p-6 shadow-float">
@@ -2687,6 +3006,7 @@ export function PreviewGenerationClient() {
             title="Character-Centered Diagnostic Summary"
             activity={animeSummaryActivity}
             defaultOpen={animeSummaryActivity.critical}
+            {...guidedSectionProps("anime-character-report")}
           >
             {animeCharacterSummary ? (
               <div className="mb-4 flex flex-wrap gap-2">
@@ -2790,6 +3110,7 @@ export function PreviewGenerationClient() {
             title="Request Form And Preview Actions"
             activity={requestControlsActivity}
             defaultOpen={false}
+            {...guidedSectionProps("execution-controls")}
           >
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <label className="flex flex-col gap-2 rounded-[1.25rem] border border-ink/10 bg-white/80 p-4 md:col-span-2">
@@ -2935,10 +3256,11 @@ export function PreviewGenerationClient() {
             title="Governed Preview Runtime State"
             activity={executionActivity}
             defaultOpen={executionActivity.critical || Boolean(error)}
+            {...guidedSectionProps("execution-status")}
           >
             <div className="mt-5 space-y-4">
               <div className="flex flex-wrap items-center gap-2">
-                <StatusPill label={execution?.status ?? "idle"} tone={statusTone} />
+                <StatusPill label={execution?.status === "accepted" ? "request-accepted" : execution?.status ?? "idle"} tone={statusTone} />
                 <StatusPill label={isPending ? "pending" : "ready"} tone={isPending ? "warn" : "default"} />
                 <StatusPill label={motionPreviewReady ? "prerequisite-ready" : "prerequisite-required"} tone={motionPreviewReady ? "ok" : "warn"} />
               </div>
@@ -3092,6 +3414,7 @@ export function PreviewGenerationClient() {
             title="Prerequisite Renderer Frames"
             activity={microSequenceOutputActivity}
             defaultOpen={microSequenceOutputActivity.critical}
+            {...guidedSectionProps("micro-sequence-frames")}
           >
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
               {microSequenceGalleryCards.length ? (
@@ -3162,6 +3485,7 @@ export function PreviewGenerationClient() {
             title="Renderer Output Gallery"
             activity={rendererOutputActivity}
             defaultOpen={rendererOutputActivity.critical}
+            {...guidedSectionProps("preview-outputs")}
           >
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
               {previewGalleryCards.length ? (
@@ -3237,6 +3561,7 @@ export function PreviewGenerationClient() {
             title="Continuity Comparison"
             activity={comparisonActivity}
             defaultOpen={false}
+            {...guidedSectionProps("frame-comparison")}
           >
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
               {comparisonCards.length === 2 ? (
@@ -3261,25 +3586,25 @@ export function PreviewGenerationClient() {
         </section>
 
         <section className="mt-6 grid gap-6 lg:grid-cols-1">
-          {activeDiagnostics ? (
-            <CollapsibleActivitySection
-              sectionLabel="Governed Diagnostics"
-              title="Diagnostics Activity"
-              activity={diagnosticsActivity}
-              defaultOpen={false}
-              className="lg:col-span-3"
-            >
-              <div className="mt-5">
-                <DiagnosticsOverview diagnostics={activeDiagnostics} />
-              </div>
-            </CollapsibleActivitySection>
-          ) : null}
+          <CollapsibleActivitySection
+            sectionLabel="Governed Diagnostics"
+            title="Diagnostics Activity"
+            activity={diagnosticsActivity}
+            defaultOpen={false}
+            className="lg:col-span-3"
+            {...guidedSectionProps("governed-diagnostics")}
+          >
+            <div className="mt-5">
+              {activeDiagnostics ? <DiagnosticsOverview diagnostics={activeDiagnostics} /> : <p className="text-sm leading-7 body-muted">No diagnostics are available yet. Generate and review outputs before completing this step.</p>}
+            </div>
+          </CollapsibleActivitySection>
 
           <CollapsibleActivitySection
             sectionLabel="Blockers And Rollback"
             title="Validation And Sandbox Recovery"
             activity={validationActivity}
             defaultOpen={validationActivity.critical}
+            {...guidedSectionProps("blockers-rollback")}
           >
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
               {prerequisiteState?.continuity_validation.blockers.length ? (
