@@ -422,6 +422,91 @@ test("executeGovernedPreviewMicroSequenceRequest returns micro-sequence frame re
   assert.equal(result.preview_diagnostics?.frame_diagnostics.length, 3);
 });
 
+test("anime character prompts are blocked from prerequisite micro-sequence fallback", async () => {
+  let simulateCallCount = 0;
+  const request = compileGovernedPreviewRequest({
+    prompt: "A clearly anime-style young woman with long silver-blue hair and bright teal eyes stands in a glowing sci-fi chamber beside a softly pulsing beacon. Her face is clearly visible and the camera frames her as the primary subject in an unmistakably anime look.",
+    subject: "anime-style young woman",
+    motion_intent: "small readable pose shift",
+    style: "anime cinematic portrait with character-primary framing",
+    duration_seconds: 2,
+    resolution: "720p",
+    continuity_priority: "high",
+    governance_approval: true,
+    package_gif_preview: true,
+  });
+
+  const result = await executeGovernedPreviewMicroSequenceRequest(request, {
+    deps: {
+      simulateBootstrap: async () => {
+        simulateCallCount += 1;
+        throw new Error("prerequisite renderer should not run for anime requests");
+      },
+      clearPreviewSandbox: async () => {
+        throw new Error("cleanup should not run because no fallback output should be exported");
+      },
+    },
+  });
+
+  assert.equal(simulateCallCount, 0);
+  assert.equal(result.status, "blocked");
+  assert.deepEqual(result.generated_frame_references, []);
+  assert.equal(result.preview_diagnostics, null);
+  assert.equal(result.live_workspace_blocked_output, true);
+  assert.deepEqual(result.blockers, ["character-first-render-required"]);
+  assert.match(result.governance_status, /Character-first render required/i);
+});
+
+test("anime character prompts are blocked from governed preview fallback even when prerequisite exists", async () => {
+  let simulateCallCount = 0;
+  const request = compileGovernedPreviewRequest({
+    prompt: "anime character heroine with readable face, large bright eyes, stylized hair silhouette, and character primary subject framing",
+    subject: "anime character heroine",
+    motion_intent: "small readable pose shift",
+    style: "unmistakable anime look and cel shaded portrait",
+    duration_seconds: 2,
+    resolution: "720p",
+    continuity_priority: "high",
+    governance_approval: true,
+    package_gif_preview: true,
+  });
+
+  const result = await executeGovernedPreviewRequest(request, {
+    deps: {
+      readProductionMemory: async () => buildProductionMemoryMock({
+        governed_micro_sequence_sandbox_history: [
+          {
+            sequence_directory: ".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001",
+            output_root: ".aie/governed_micro_sequence_sandbox",
+            output_file_paths: [".aie/governed_micro_sequence_sandbox/sequence-governed-micro-preview-001/governed_preview_sequence_frame_001.png"],
+            real_sequence_written: true,
+            preview_diagnostics: buildPreviewDiagnosticsMock(3),
+          },
+        ],
+        frame_to_frame_continuity_validation_history: [
+          {
+            valid: true,
+            blocked_transitions: [],
+            next_unlock_condition: "Micro-sequence continuity preview is validated.",
+          },
+        ],
+      }),
+      simulateBootstrap: async () => {
+        simulateCallCount += 1;
+        throw new Error("governed preview fallback should not run for anime requests");
+      },
+    },
+  });
+
+  assert.equal(simulateCallCount, 0);
+  assert.equal(result.status, "blocked");
+  assert.equal(result.sandbox_path, null);
+  assert.deepEqual(result.generated_preview_references, []);
+  assert.equal(result.preview_diagnostics, null);
+  assert.deepEqual(result.blockers, ["character-first-render-required"]);
+  assert.match(result.continuity_validation.summary, /Prerequisite beacon renderer is not a valid anime-character review artifact/i);
+});
+
 test("rollbackGovernedPreviewSandbox stays bounded to preview sandbox outputs", async () => {
   const result = await rollbackGovernedPreviewSandbox({
     deps: {

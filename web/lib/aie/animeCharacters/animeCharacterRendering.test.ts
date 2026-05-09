@@ -190,6 +190,8 @@ test("approved character render executes bounded preview and reports anime diagn
   assert.equal(report.truthCheck.character_primary_subject, true);
   assert.equal(report.truthCheck.fallback_primitive_dominance, false);
   assert.equal(report.truthCheck.diagnostics_match_rendered_output, true);
+  assert.notEqual(report.diagnostics?.active_beat_type, "BEACON_REVEAL");
+  assert.equal(report.diagnostics?.active_focus_subject, "CHARACTER_FACE");
   assert.equal(report.visualReviewPackage?.reviewLabel, "USER_VISUAL_CHECK_READY");
   assert.equal(report.characterApproved, true);
   assert.equal(report.poseTemplateId, "NEUTRAL_HERO_STANCE");

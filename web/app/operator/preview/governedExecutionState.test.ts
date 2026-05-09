@@ -214,3 +214,44 @@ test("rollback state is explicit", () => {
   assert.equal(complete.renderCompleted, true);
   assert.match(complete.statusMessage, /Rollback complete/i);
 });
+
+test("anime character execution uses character render phases", () => {
+  const started = startGovernedExecution(INITIAL_GOVERNED_EXECUTION_STATE, {
+    action: "anime-character-render",
+    requestId: "operator-anime-character-render-001",
+    startedAt: 100,
+    manualApprovalGranted: true,
+    gifPackagingRequested: true,
+  }).state;
+  const validating = advanceGovernedExecutionPhase(started, "CHARACTER_RENDER_VALIDATING");
+  const rendering = advanceGovernedExecutionPhase(validating, "CHARACTER_RENDER_RUNNING");
+  const packaging = advanceGovernedExecutionPhase(rendering, "CHARACTER_GIF_PACKAGING");
+  const exporting = advanceGovernedExecutionPhase(packaging, "CHARACTER_EXPORTING_OUTPUTS");
+  const complete = completeGovernedExecution(exporting, {
+    finishedAt: 500,
+    status: "complete",
+    sandboxPath: ".aie/governed_anime_character_preview_sandbox/character-001",
+    exportedArtifactPaths: [
+      ".aie/governed_anime_character_preview_sandbox/character-001/anime_character_frame_001.png",
+      ".aie/governed_anime_character_preview_sandbox/character-001/anime_character_preview.gif",
+      ".aie/governed_anime_character_preview_sandbox/character-001/anime_character_manifest.json",
+    ],
+    diagnosticsGenerated: true,
+    gifPackagingRequested: true,
+  });
+
+  assert.equal(started.currentPhase, "CHARACTER_REQUEST_ACCEPTED");
+  assert.equal(packaging.gifPackagingInProgress, true);
+  assert.equal(exporting.exportInProgress, true);
+  assert.equal(complete.currentPhase, "CHARACTER_RENDER_COMPLETE");
+  assert.equal(complete.gifArtifactPath, ".aie/governed_anime_character_preview_sandbox/character-001/anime_character_preview.gif");
+  assert.match(complete.statusMessage, /Anime character export complete/i);
+  assert.deepEqual(complete.phaseHistory, [
+    "CHARACTER_REQUEST_ACCEPTED",
+    "CHARACTER_RENDER_VALIDATING",
+    "CHARACTER_RENDER_RUNNING",
+    "CHARACTER_GIF_PACKAGING",
+    "CHARACTER_EXPORTING_OUTPUTS",
+    "CHARACTER_RENDER_COMPLETE",
+  ]);
+});

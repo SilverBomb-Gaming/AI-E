@@ -10,7 +10,15 @@ export type GovernedExecutionPhase =
   | "RENDER_COMPLETE"
   | "RENDER_FAILED"
   | "RENDER_REJECTED"
-  | "ROLLBACK_RESTORING";
+  | "ROLLBACK_RESTORING"
+  | "CHARACTER_REQUEST_ACCEPTED"
+  | "CHARACTER_RENDER_VALIDATING"
+  | "CHARACTER_RENDER_RUNNING"
+  | "CHARACTER_GIF_PACKAGING"
+  | "CHARACTER_EXPORTING_OUTPUTS"
+  | "CHARACTER_RENDER_COMPLETE"
+  | "CHARACTER_RENDER_REJECTED"
+  | "CHARACTER_RENDER_FAILED";
 
 export type GovernedExecutionAction = "micro-sequence" | "preview" | "anime-character-render" | "rollback";
 
@@ -111,6 +119,11 @@ const ACTIVE_PHASES: GovernedExecutionPhase[] = [
   "GIF_PACKAGING",
   "EXPORTING_OUTPUTS",
   "ROLLBACK_RESTORING",
+  "CHARACTER_REQUEST_ACCEPTED",
+  "CHARACTER_RENDER_VALIDATING",
+  "CHARACTER_RENDER_RUNNING",
+  "CHARACTER_GIF_PACKAGING",
+  "CHARACTER_EXPORTING_OUTPUTS",
 ];
 
 const PHASE_LABELS: Record<GovernedExecutionPhase, string> = {
@@ -126,6 +139,14 @@ const PHASE_LABELS: Record<GovernedExecutionPhase, string> = {
   RENDER_FAILED: "Render failed",
   RENDER_REJECTED: "Governance rejected request",
   ROLLBACK_RESTORING: "Rollback restoring sandbox",
+  CHARACTER_REQUEST_ACCEPTED: "Anime character request accepted",
+  CHARACTER_RENDER_VALIDATING: "Resolving approved character profile",
+  CHARACTER_RENDER_RUNNING: "Rendering anime character",
+  CHARACTER_GIF_PACKAGING: "Packaging anime character GIF",
+  CHARACTER_EXPORTING_OUTPUTS: "Exporting anime character outputs",
+  CHARACTER_RENDER_COMPLETE: "Anime character export complete",
+  CHARACTER_RENDER_REJECTED: "Anime character render rejected",
+  CHARACTER_RENDER_FAILED: "Anime character render failed",
 };
 
 export function isGovernedExecutionLocked(state: GovernedExecutionState): boolean {
@@ -137,10 +158,10 @@ export function getGovernedExecutionPhaseLabel(phase: GovernedExecutionPhase): s
 }
 
 export function getGovernedExecutionPhaseTone(phase: GovernedExecutionPhase): "ok" | "warn" | "blocked" | "default" {
-  if (phase === "RENDER_COMPLETE") {
+  if (phase === "RENDER_COMPLETE" || phase === "CHARACTER_RENDER_COMPLETE") {
     return "ok";
   }
-  if (phase === "RENDER_FAILED" || phase === "RENDER_REJECTED") {
+  if (phase === "RENDER_FAILED" || phase === "RENDER_REJECTED" || phase === "CHARACTER_RENDER_FAILED" || phase === "CHARACTER_RENDER_REJECTED") {
     return "blocked";
   }
   if (phase === "IDLE") {
@@ -181,7 +202,9 @@ export function startGovernedExecution(state: GovernedExecutionState, input: Gov
     };
   }
 
-  const currentPhase: GovernedExecutionPhase = input.manualApprovalGranted ? "REQUEST_ACCEPTED" : "WAITING_FOR_APPROVAL";
+  const currentPhase: GovernedExecutionPhase = input.manualApprovalGranted
+    ? input.action === "anime-character-render" ? "CHARACTER_REQUEST_ACCEPTED" : "REQUEST_ACCEPTED"
+    : "WAITING_FOR_APPROVAL";
   const nextState: GovernedExecutionState = {
     ...INITIAL_GOVERNED_EXECUTION_STATE,
     currentPhase,
@@ -216,13 +239,13 @@ export function advanceGovernedExecutionPhase(state: GovernedExecutionState, pha
     ...state,
     currentPhase: phase,
     waitingForApproval: phase === "WAITING_FOR_APPROVAL",
-    gifPackagingInProgress: phase === "GIF_PACKAGING",
-    exportInProgress: phase === "EXPORTING_OUTPUTS",
+    gifPackagingInProgress: phase === "GIF_PACKAGING" || phase === "CHARACTER_GIF_PACKAGING",
+    exportInProgress: phase === "EXPORTING_OUTPUTS" || phase === "CHARACTER_EXPORTING_OUTPUTS",
     rollbackInProgress: phase === "ROLLBACK_RESTORING",
     statusMessage: PHASE_LABELS[phase],
-    nextActionRecommendation: phase === "EXPORTING_OUTPUTS"
+    nextActionRecommendation: phase === "EXPORTING_OUTPUTS" || phase === "CHARACTER_EXPORTING_OUTPUTS"
       ? "Wait for exported artifact paths before visual review."
-      : phase === "GIF_PACKAGING"
+      : phase === "GIF_PACKAGING" || phase === "CHARACTER_GIF_PACKAGING"
         ? "Wait for GIF packaging to finish before inspecting outputs."
         : "Execution controls remain locked while this phase is active.",
     phaseHistory: addPhase(state, phase),
@@ -232,11 +255,17 @@ export function advanceGovernedExecutionPhase(state: GovernedExecutionState, pha
 export function completeGovernedExecution(state: GovernedExecutionState, input: GovernedExecutionCompletionInput): GovernedExecutionState {
   const exportedArtifactPaths = input.exportedArtifactPaths ?? [];
   const gifArtifactPath = extractGifArtifactPath(exportedArtifactPaths);
-  const currentPhase: GovernedExecutionPhase = input.status === "complete"
-    ? "RENDER_COMPLETE"
-    : input.status === "rejected"
-      ? "RENDER_REJECTED"
-      : "RENDER_FAILED";
+  const currentPhase: GovernedExecutionPhase = state.activeAction === "anime-character-render"
+    ? input.status === "complete"
+      ? "CHARACTER_RENDER_COMPLETE"
+      : input.status === "rejected"
+        ? "CHARACTER_RENDER_REJECTED"
+        : "CHARACTER_RENDER_FAILED"
+    : input.status === "complete"
+      ? "RENDER_COMPLETE"
+      : input.status === "rejected"
+        ? "RENDER_REJECTED"
+        : "RENDER_FAILED";
   const failureReason = input.failureReason ?? null;
 
   return {
@@ -259,12 +288,12 @@ export function completeGovernedExecution(state: GovernedExecutionState, input: 
     gifArtifactPath,
     diagnosticsGenerated: input.diagnosticsGenerated === true,
     statusMessage: input.status === "complete"
-      ? "Export complete. Outputs are ready for visual review."
+      ? state.activeAction === "anime-character-render" ? "Anime character export complete. Outputs are ready for visual review." : "Export complete. Outputs are ready for visual review."
       : input.status === "rejected"
         ? `Governance rejected request${failureReason ? `: ${failureReason}` : "."}`
         : `Render failed${failureReason ? `: ${failureReason}` : "."}`,
     nextActionRecommendation: input.status === "complete"
-      ? "Open the exported PNG/GIF artifacts, review diagnostics, then set the final operator verdict."
+      ? state.activeAction === "anime-character-render" ? "Open anime_character_preview.gif, inspect visual identity, review character diagnostics, then set the final operator verdict." : "Open the exported PNG/GIF artifacts, review diagnostics, then set the final operator verdict."
       : input.status === "rejected"
         ? "Resolve the governance blocker, confirm approval, then rerun the bounded request."
         : "Inspect the failure reason and rollback state before rerunning.",
@@ -307,11 +336,11 @@ export function failGovernedExecution(state: GovernedExecutionState, input: { fi
 }
 
 export function buildGovernedExecutionTimeline(state: GovernedExecutionState, facts: GovernedExecutionTimelineFacts): GovernedExecutionTimelineItem[] {
-  const requestAccepted = state.phaseHistory.includes("REQUEST_ACCEPTED") || state.renderCompleted;
-  const validationStarted = state.phaseHistory.includes("VALIDATING") || state.renderCompleted || state.renderRejected || state.renderFailed;
-  const renderStarted = state.phaseHistory.some((phase) => phase === "MICRO_SEQUENCE_RUNNING" || phase === "PREVIEW_RENDER_RUNNING");
-  const gifRequested = state.phaseHistory.includes("GIF_PACKAGING") || Boolean(state.gifArtifactPath);
-  const exportStarted = state.phaseHistory.includes("EXPORTING_OUTPUTS") || state.exportedArtifactPaths.length > 0;
+  const requestAccepted = state.phaseHistory.includes("REQUEST_ACCEPTED") || state.phaseHistory.includes("CHARACTER_REQUEST_ACCEPTED") || state.renderCompleted;
+  const validationStarted = state.phaseHistory.includes("VALIDATING") || state.phaseHistory.includes("CHARACTER_RENDER_VALIDATING") || state.renderCompleted || state.renderRejected || state.renderFailed;
+  const renderStarted = state.phaseHistory.some((phase) => phase === "MICRO_SEQUENCE_RUNNING" || phase === "PREVIEW_RENDER_RUNNING" || phase === "CHARACTER_RENDER_RUNNING");
+  const gifRequested = state.phaseHistory.includes("GIF_PACKAGING") || state.phaseHistory.includes("CHARACTER_GIF_PACKAGING") || Boolean(state.gifArtifactPath);
+  const exportStarted = state.phaseHistory.includes("EXPORTING_OUTPUTS") || state.phaseHistory.includes("CHARACTER_EXPORTING_OUTPUTS") || state.exportedArtifactPaths.length > 0;
 
   return [
     {
@@ -323,25 +352,25 @@ export function buildGovernedExecutionTimeline(state: GovernedExecutionState, fa
     {
       id: "validation",
       label: "Validation passed",
-      status: state.currentPhase === "VALIDATING" ? "active" : state.renderRejected ? "blocked" : validationStarted ? "complete" : "waiting",
+      status: state.currentPhase === "VALIDATING" || state.currentPhase === "CHARACTER_RENDER_VALIDATING" ? "active" : state.renderRejected ? "blocked" : validationStarted ? "complete" : "waiting",
       detail: state.renderRejected ? state.failureReason ?? "Governance blocked execution." : "Bounded request, approval, and prerequisites checked.",
     },
     {
       id: "render-started",
-      label: state.activeAction === "micro-sequence" ? "Micro-sequence started" : "Preview render started",
-      status: state.currentPhase === "MICRO_SEQUENCE_RUNNING" || state.currentPhase === "PREVIEW_RENDER_RUNNING" ? "active" : state.renderFailed ? "failed" : renderStarted || state.renderCompleted ? "complete" : "waiting",
+      label: state.activeAction === "micro-sequence" ? "Micro-sequence started" : state.activeAction === "anime-character-render" ? "Anime character render started" : "Preview render started",
+      status: state.currentPhase === "MICRO_SEQUENCE_RUNNING" || state.currentPhase === "PREVIEW_RENDER_RUNNING" || state.currentPhase === "CHARACTER_RENDER_RUNNING" ? "active" : state.renderFailed ? "failed" : renderStarted || state.renderCompleted ? "complete" : "waiting",
       detail: state.activeAction ? `Active mode: ${actionLabel(state.activeAction)}.` : "No render has started.",
     },
     {
       id: "gif-packaging",
       label: "GIF packaging complete",
-      status: state.currentPhase === "GIF_PACKAGING" ? "active" : state.gifArtifactPath ? "complete" : gifRequested ? "waiting" : "waiting",
+      status: state.currentPhase === "GIF_PACKAGING" || state.currentPhase === "CHARACTER_GIF_PACKAGING" ? "active" : state.gifArtifactPath ? "complete" : gifRequested ? "waiting" : "waiting",
       detail: state.gifArtifactPath ?? "No GIF artifact exported yet.",
     },
     {
       id: "export-complete",
       label: "Output export complete",
-      status: state.currentPhase === "EXPORTING_OUTPUTS" ? "active" : state.exportedArtifactPaths.length > 0 ? "complete" : state.renderFailed ? "failed" : exportStarted ? "waiting" : "waiting",
+      status: state.currentPhase === "EXPORTING_OUTPUTS" || state.currentPhase === "CHARACTER_EXPORTING_OUTPUTS" ? "active" : state.exportedArtifactPaths.length > 0 ? "complete" : state.renderFailed ? "failed" : exportStarted ? "waiting" : "waiting",
       detail: state.exportedArtifactPaths.length ? `${state.exportedArtifactPaths.length} artifact(s) recorded.` : "Waiting for exported PNG/GIF paths.",
     },
     {

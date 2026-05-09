@@ -73,6 +73,7 @@ import type {
   AnimeCharacterReport,
   GovernedAnimeCharacterState,
 } from "@/lib/aie/animeCharacters/governedAnimeCharacterState";
+import { CHARACTER_PROFILE_SELECTION_REQUIRED, resolveAnimeCharacterProfileForRequest } from "@/lib/aie/animeCharacters/characterFirstExecutionRouter";
 import {
   activityIconLabel,
   buildAnimeReportActivity,
@@ -128,7 +129,7 @@ const DEFAULT_FORM: GovernedPreviewFormInput = {
 type PreviewGalleryCard = {
   id: string;
   label: string;
-  source: "micro-sequence" | "motion-preview";
+  source: "micro-sequence" | "motion-preview" | "anime-character";
   format: "png" | "gif";
   assetPath: string;
   assetUrl: string;
@@ -305,10 +306,14 @@ function buildGalleryCards(
       const frameIndex = extractFrameIndex(assetPath);
       const format = assetPath.endsWith(".gif") ? "gif" : "png";
       const label = format === "gif"
-        ? source === "motion-preview"
+        ? source === "anime-character"
+          ? "Anime character preview GIF"
+          : source === "motion-preview"
           ? "Governed motion preview GIF"
           : "Governed micro-sequence GIF"
-        : frameIndex !== null
+        : source === "anime-character"
+          ? `Anime character frame ${String(frameIndex ?? 1).padStart(3, "0")}`
+          : frameIndex !== null
           ? `${source === "motion-preview" ? "Preview" : "Sequence"} frame ${String(frameIndex).padStart(3, "0")}`
           : `${source} preview asset`;
 
@@ -483,6 +488,31 @@ function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPr
   );
 }
 
+function CharacterDiagnosticsOverview({ report }: { report: AnimeCharacterReport }) {
+  return (
+    <div className="mb-4 rounded-[1.25rem] border border-ocean/20 bg-ocean/5 p-4 text-sm leading-7 body-muted">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="font-semibold text-ink">Character-First Diagnostics</p>
+        <StatusPill label={report.truthCheck.renderer_path} tone={report.truthCheck.renderer_path === "CHARACTER_FIRST" ? "ok" : "blocked"} />
+      </div>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <p><strong className="text-ink">Character Face Readability:</strong> {report.metrics?.characterFaceReadability ?? "not scored"}{report.metrics ? "/100" : ""}</p>
+        <p><strong className="text-ink">Character Silhouette:</strong> {report.metrics?.characterSilhouette ?? "not scored"}{report.metrics ? "/100" : ""}</p>
+        <p><strong className="text-ink">Pose Readability:</strong> {report.metrics?.characterPoseReadability ?? "not scored"}{report.metrics ? "/100" : ""}</p>
+        <p><strong className="text-ink">Anime Style Identity:</strong> {report.metrics?.animeStyleIdentity ?? "not scored"}{report.metrics ? "/100" : ""}</p>
+        <p><strong className="text-ink">Character Scene Integration:</strong> {report.metrics?.characterSceneIntegration ?? "not scored"}{report.metrics ? "/100" : ""}</p>
+        <p><strong className="text-ink">Character Focus Priority:</strong> {report.metrics?.characterFocusPriority ?? "not scored"}{report.metrics ? "/100" : ""}</p>
+        <p><strong className="text-ink">Fallback Primitive Dominance:</strong> {report.truthCheck.fallback_primitive_dominance ? "yes" : "no"}</p>
+        <p><strong className="text-ink">Diagnostics Match Rendered Output:</strong> {report.truthCheck.diagnostics_match_rendered_output ? "yes" : "no"}</p>
+        <p><strong className="text-ink">Character Pixels Generated:</strong> {report.truthCheck.character_pixels_generated ? "yes" : "no"}</p>
+        <p><strong className="text-ink">Character Primary Subject:</strong> {report.truthCheck.character_primary_subject ? "yes" : "no"}</p>
+        <p><strong className="text-ink">Scaffold Status:</strong> {report.scaffoldStatus}</p>
+        <p><strong className="text-ink">Visual Review:</strong> {report.visualReviewPackage?.reviewLabel ?? "not ready"}</p>
+      </div>
+    </div>
+  );
+}
+
 function FieldLabel({ children }: { children: string }) {
   return <span className="text-xs uppercase tracking-[0.18em] text-slate">{children}</span>;
 }
@@ -513,6 +543,18 @@ function formatExecutionTimestamp(value: number | null): string {
 
 function formatArtifactName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function formatBoolean(value: boolean): string {
+  return value ? "yes" : "no";
+}
+
+function formatDateTime(value: number | null): string {
+  return value ? new Date(value).toLocaleString() : "not recorded";
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => Boolean(value))));
 }
 
 function actionRenderMode(action: GovernedExecutionAction | null): string {
@@ -1057,6 +1099,7 @@ export function PreviewGenerationClient() {
   const [finalTruthChecksPassed, setFinalTruthChecksPassed] = useState<boolean>(false);
   const [finalScaffoldFallbackInactive, setFinalScaffoldFallbackInactive] = useState<boolean>(false);
   const [finalDiagnosticsClear, setFinalDiagnosticsClear] = useState<boolean>(false);
+  const [forceCharacterControlsOpen, setForceCharacterControlsOpen] = useState<boolean>(false);
   const activeGuidedStepRef = useRef<HTMLButtonElement>(null);
   const executionLockRef = useRef<boolean>(false);
   const [isPending, startTransition] = useTransition();
@@ -1350,11 +1393,61 @@ export function PreviewGenerationClient() {
     return Array.from(new Set(packageArtifacts.filter((path): path is string => Boolean(path))));
   }
 
+  function scrollToAnimeCharacterRenderingControls(messageText: string) {
+    setForceCharacterControlsOpen(true);
+    setMessage(messageText);
+    setGuidedWorkflowNotice(messageText);
+    requestAnimationFrame(() => {
+      const section = document.getElementById("anime-character-rendering-section");
+      section?.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.setTimeout(() => {
+        const approval = document.querySelector("[data-guided-focus='anime-character-approval']") as HTMLElement | null;
+        approval?.focus({ preventScroll: true });
+      }, 275);
+    });
+  }
+
+  function routeAnimeRequestFromForm(trigger: "micro-sequence" | "preview"): boolean {
+    const profileResolution = resolveAnimeCharacterProfileForRequest({
+      prompt: form.prompt,
+      subject: form.subject,
+      style: form.style,
+      motionIntent: form.motion_intent,
+    });
+
+    if (!profileResolution.isAnimeCharacterRequest) {
+      return false;
+    }
+
+    setError(null);
+    if (profileResolution.resolutionStatus !== "RESOLVED" || !profileResolution.resolvedProfileId) {
+      scrollToAnimeCharacterRenderingControls("Anime character request detected. Choose approved anime character profile before rendering.");
+      return true;
+    }
+
+    setSelectedAnimeCharacterProfileId(profileResolution.resolvedProfileId);
+    if (!form.governance_approval || !animeCharacterApproval) {
+      scrollToAnimeCharacterRenderingControls(`${CHARACTER_PROFILE_SELECTION_REQUIRED} Next action: approve anime character rendering and select ${profileResolution.resolvedProfileLabel}.`);
+      return true;
+    }
+
+    setMessage(`Anime character request detected. Routing ${trigger === "micro-sequence" ? "Generate Micro-Sequence First" : "Generate Preview"} to ${profileResolution.resolvedProfileLabel} character-first renderer.`);
+    setForceCharacterControlsOpen(true);
+    handleRunAnimeCharacter(profileResolution.resolvedProfileId);
+    return true;
+  }
+
   async function runVisibleExecutionPhases(action: GovernedExecutionAction) {
     await waitForExecutionPhase(90);
-    updateOperatorExecutionPhase("VALIDATING");
+    updateOperatorExecutionPhase(action === "anime-character-render" ? "CHARACTER_RENDER_VALIDATING" : "VALIDATING");
     await waitForExecutionPhase(160);
-    updateOperatorExecutionPhase(action === "micro-sequence" ? "MICRO_SEQUENCE_RUNNING" : action === "rollback" ? "ROLLBACK_RESTORING" : "PREVIEW_RENDER_RUNNING");
+    updateOperatorExecutionPhase(action === "micro-sequence"
+      ? "MICRO_SEQUENCE_RUNNING"
+      : action === "rollback"
+        ? "ROLLBACK_RESTORING"
+        : action === "anime-character-render"
+          ? "CHARACTER_RENDER_RUNNING"
+          : "PREVIEW_RENDER_RUNNING");
   }
 
   function handleClassifyPromptVariation() {
@@ -1718,10 +1811,10 @@ export function PreviewGenerationClient() {
 
         const exportedArtifactPaths = exportedAnimeCharacterArtifacts(report);
         if (report.visualReviewPackage?.gifToInspect) {
-          updateOperatorExecutionPhase("GIF_PACKAGING");
+          updateOperatorExecutionPhase("CHARACTER_GIF_PACKAGING");
           await waitForExecutionPhase(180);
         }
-        updateOperatorExecutionPhase("EXPORTING_OUTPUTS");
+        updateOperatorExecutionPhase("CHARACTER_EXPORTING_OUTPUTS");
         await waitForExecutionPhase(180);
 
         setSelectedAnimeCharacterProfileId(profileId);
@@ -1758,6 +1851,10 @@ export function PreviewGenerationClient() {
   }
 
   function handleGenerate() {
+    if (routeAnimeRequestFromForm("preview")) {
+      return;
+    }
+
     if (!beginOperatorExecution("preview", form.governance_approval)) {
       return;
     }
@@ -1825,6 +1922,10 @@ export function PreviewGenerationClient() {
   }
 
   function handleGenerateMicroSequence() {
+    if (routeAnimeRequestFromForm("micro-sequence")) {
+      return;
+    }
+
     if (!beginOperatorExecution("micro-sequence", form.governance_approval)) {
       return;
     }
@@ -1936,7 +2037,8 @@ export function PreviewGenerationClient() {
     : (prerequisiteState?.generated_frame_references ?? []);
   const activeDiagnostics = execution?.preview_diagnostics ?? microSequence?.preview_diagnostics ?? prerequisiteState?.preview_diagnostics ?? null;
   const microSequenceGalleryCards = buildGalleryCards(latestMicroSequenceFrameReferences, "micro-sequence", microSequence?.preview_diagnostics ?? prerequisiteState?.preview_diagnostics);
-  const previewGalleryCards = buildGalleryCards(execution?.generated_preview_references ?? [], "motion-preview", execution?.preview_diagnostics);
+  const previewGallerySource: PreviewGalleryCard["source"] = execution?.generated_preview_references.some((path) => path.includes("anime_character_")) ? "anime-character" : "motion-preview";
+  const previewGalleryCards = buildGalleryCards(execution?.generated_preview_references ?? [], previewGallerySource, execution?.preview_diagnostics);
   const motionPreviewFrameCards = previewGalleryCards.filter((entry) => entry.format === "png");
   const comparisonCards = motionPreviewFrameCards.length >= 2
     ? [motionPreviewFrameCards[0], motionPreviewFrameCards[motionPreviewFrameCards.length - 1]]
@@ -2146,9 +2248,190 @@ export function PreviewGenerationClient() {
     ...starterStyleIntensityCells,
     ...highProbeStyleIntensityCells.filter((probe) => !starterStyleIntensityCells.some((starter) => starter.cellId === probe.cellId)),
   ];
+  const dashboardGuidedProps = guidedSectionProps("dashboard-controls");
+
+  function handleExportRunReportPdf() {
+    setMessage("Preparing operator run report PDF export. Choose Save as PDF in the print dialog.");
+    window.requestAnimationFrame(() => window.print());
+  }
 
   return (
     <main className="page-shell min-h-screen bg-mist/80">
+      <style jsx global>{`
+        .operator-run-report-print {
+          display: none;
+        }
+
+        @media print {
+          @page {
+            size: A4;
+            margin: 14mm;
+          }
+
+          body * {
+            visibility: hidden !important;
+          }
+
+          .operator-run-report-print,
+          .operator-run-report-print * {
+            visibility: visible !important;
+          }
+
+          .operator-run-report-print {
+            display: block !important;
+            position: absolute;
+            inset: 0 auto auto 0;
+            width: 100%;
+            padding: 0;
+            background: #ffffff;
+            color: #172033;
+            font-family: Arial, sans-serif;
+            font-size: 10.5pt;
+            line-height: 1.45;
+          }
+
+          .operator-report-header {
+            border-bottom: 2px solid #172033;
+            margin-bottom: 14px;
+            padding-bottom: 10px;
+          }
+
+          .operator-report-header p,
+          .operator-report-header span {
+            margin: 0;
+            color: #64748b;
+            font-size: 9pt;
+            text-transform: uppercase;
+          }
+
+          .operator-report-header h1 {
+            margin: 4px 0;
+            color: #172033;
+            font-size: 20pt;
+          }
+
+          .operator-report-section {
+            break-inside: avoid;
+            border: 1px solid #d7dee8;
+            margin: 0 0 10px;
+            padding: 10px;
+          }
+
+          .operator-report-section h2 {
+            margin: 0 0 8px;
+            color: #172033;
+            font-size: 13pt;
+          }
+
+          .operator-report-kv {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 6px 14px;
+            margin: 0;
+          }
+
+          .operator-report-kv div {
+            break-inside: avoid;
+          }
+
+          .operator-report-kv dt {
+            color: #64748b;
+            font-size: 8pt;
+            font-weight: 700;
+            text-transform: uppercase;
+          }
+
+          .operator-report-kv dd {
+            margin: 1px 0 0;
+            overflow-wrap: anywhere;
+          }
+
+          .operator-report-paths,
+          .operator-report-timeline {
+            margin: 0;
+            padding-left: 18px;
+          }
+
+          .operator-report-paths li,
+          .operator-report-timeline li {
+            margin-bottom: 4px;
+            overflow-wrap: anywhere;
+          }
+
+          .operator-report-muted {
+            color: #64748b;
+            margin: 0;
+          }
+
+          .operator-report-gallery {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+          }
+
+          .operator-report-gallery article {
+            break-inside: avoid;
+            border: 1px solid #d7dee8;
+            padding: 8px;
+          }
+
+          .operator-report-gallery h3 {
+            margin: 6px 0 2px;
+            font-size: 10pt;
+          }
+
+          .operator-report-gallery p {
+            margin: 2px 0;
+            color: #475569;
+            font-size: 8pt;
+            overflow-wrap: anywhere;
+          }
+
+          .operator-report-thumb {
+            align-items: center;
+            background: #f1f5f9;
+            display: flex;
+            height: 120px;
+            justify-content: center;
+          }
+
+          .operator-report-thumb img {
+            height: 112px;
+            max-width: 100%;
+            object-fit: contain;
+            width: auto;
+          }
+        }
+      `}</style>
+      <OperatorRunReport
+        form={form}
+        compiledRequest={compiledRequest}
+        execution={execution}
+        microSequence={microSequence}
+        prerequisiteState={prerequisiteState}
+        rollback={rollback}
+        executionState={governedExecutionState}
+        timeline={governedExecutionTimeline}
+        finalVerdict={finalOperatorVerdict}
+        message={message}
+        error={error}
+        activeDiagnostics={activeDiagnostics}
+        latestAnimeCharacterReport={latestAnimeCharacterReport}
+        animeCharacterSummary={animeCharacterSummary}
+        activeTruthCheck={activeTruthCheck}
+        reviewState={{
+          subjectStyleConfirmed,
+          microSequenceReviewed,
+          previewOutputReviewed,
+          diagnosticsReviewed,
+          finalVisualIntentMatched,
+          finalTruthChecksPassed,
+          finalScaffoldFallbackInactive,
+          finalDiagnosticsClear,
+        }}
+        previewCards={previewGalleryCards}
+        microSequenceCards={microSequenceGalleryCards}
+      />
       <section className="relative z-10 mx-auto max-w-6xl px-6 py-12 lg:px-10">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -2159,6 +2442,13 @@ export function PreviewGenerationClient() {
             </p>
           </div>
           <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={handleExportRunReportPdf}
+              className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:-translate-y-0.5"
+            >
+              Export Run Report to PDF
+            </button>
             <Link href="/operator" className="rounded-full border border-ink/10 bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:-translate-y-0.5">
               Operator Dashboard
             </Link>
@@ -2199,7 +2489,8 @@ export function PreviewGenerationClient() {
           activity={capabilityHarnessActivity}
           defaultOpen={capabilityHarnessActivity.critical}
           className="mb-6"
-          {...guidedSectionProps("dashboard-controls")}
+          {...dashboardGuidedProps}
+          containsActiveStep={dashboardGuidedProps.containsActiveStep || forceCharacterControlsOpen}
         >
         <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
           <article
@@ -3994,6 +4285,7 @@ export function PreviewGenerationClient() {
           >
             <div data-guided-highlight="diagnostics" data-guided-focus="diagnostics-panel" tabIndex={-1} className={`mt-5 scroll-mt-6 rounded-[1.25rem] border p-4 ${guidedTargetHighlightClass(isGuidedHighlightActive("diagnostics"))}`}>
               <GuidedTargetCallout active={isGuidedHighlightActive("diagnostics")} label={activeGuidedTarget.calloutLabel} instruction={activeGuidedTarget.instruction} />
+              {latestAnimeCharacterReport ? <CharacterDiagnosticsOverview report={latestAnimeCharacterReport} /> : null}
               {activeDiagnostics ? <DiagnosticsOverview diagnostics={activeDiagnostics} /> : <p className="text-sm leading-7 body-muted">No diagnostics are available yet. Generate and review outputs before completing this step.</p>}
             </div>
           </CollapsibleActivitySection>
@@ -4036,5 +4328,258 @@ export function PreviewGenerationClient() {
         </section>
       </section>
     </main>
+  );
+}
+
+function ReportSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="operator-report-section">
+      <h2>{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function ReportKeyValueList({ items }: { items: Array<{ label: string; value: ReactNode }> }) {
+  return (
+    <dl className="operator-report-kv">
+      {items.map((item) => (
+        <div key={item.label}>
+          <dt>{item.label}</dt>
+          <dd>{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function ReportPathList({ paths, emptyLabel }: { paths: string[]; emptyLabel: string }) {
+  if (!paths.length) {
+    return <p className="operator-report-muted">{emptyLabel}</p>;
+  }
+
+  return (
+    <ul className="operator-report-paths">
+      {paths.map((path) => (
+        <li key={path}>{path}</li>
+      ))}
+    </ul>
+  );
+}
+
+function ReportGallery({ cards }: { cards: PreviewGalleryCard[] }) {
+  if (!cards.length) {
+    return <p className="operator-report-muted">No preview frame or GIF references are available yet.</p>;
+  }
+
+  return (
+    <div className="operator-report-gallery">
+      {cards.map((card) => (
+        <article key={`report-${card.id}`}>
+          <div className="operator-report-thumb">
+            <Image src={card.assetUrl} alt={card.label} width={160} height={160} unoptimized />
+          </div>
+          <h3>{card.label}</h3>
+          <p>{card.format.toUpperCase()} | {card.source}</p>
+          <p>{card.assetPath}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+type OperatorRunReportProps = {
+  form: GovernedPreviewFormInput;
+  compiledRequest: GovernedPreviewRequest | null;
+  execution: GovernedPreviewExecutionResult | null;
+  microSequence: GovernedPreviewMicroSequenceResult | null;
+  prerequisiteState: GovernedPreviewPrerequisiteState | null;
+  rollback: GovernedPreviewRollbackResult | null;
+  executionState: GovernedExecutionState;
+  timeline: GovernedExecutionTimelineItem[];
+  finalVerdict: FinalOperatorVerdict;
+  message: string;
+  error: string | null;
+  activeDiagnostics: CinematicGovernedPreviewDiagnostics | null;
+  latestAnimeCharacterReport: AnimeCharacterReport | null;
+  animeCharacterSummary: AnimeCharacterDiagnosticSummary | null;
+  activeTruthCheck: AnimeCharacterReport["truthCheck"] | CinematicGovernedPreviewDiagnostics["anime_character_truth_check"] | null;
+  reviewState: {
+    subjectStyleConfirmed: boolean;
+    microSequenceReviewed: boolean;
+    previewOutputReviewed: boolean;
+    diagnosticsReviewed: boolean;
+    finalVisualIntentMatched: boolean;
+    finalTruthChecksPassed: boolean;
+    finalScaffoldFallbackInactive: boolean;
+    finalDiagnosticsClear: boolean;
+  };
+  previewCards: PreviewGalleryCard[];
+  microSequenceCards: PreviewGalleryCard[];
+};
+
+function OperatorRunReport({
+  form,
+  compiledRequest,
+  execution,
+  microSequence,
+  prerequisiteState,
+  rollback,
+  executionState,
+  timeline,
+  finalVerdict,
+  message,
+  error,
+  activeDiagnostics,
+  latestAnimeCharacterReport,
+  animeCharacterSummary,
+  activeTruthCheck,
+  reviewState,
+  previewCards,
+  microSequenceCards,
+}: OperatorRunReportProps) {
+  const allArtifactPaths = uniqueStrings([
+    ...executionState.exportedArtifactPaths,
+    ...(execution?.generated_preview_references ?? []),
+    ...(microSequence?.generated_frame_references ?? []),
+    ...(prerequisiteState?.generated_frame_references ?? []),
+    latestAnimeCharacterReport?.visualReviewPackage?.firstPngToInspect,
+    latestAnimeCharacterReport?.visualReviewPackage?.gifToInspect,
+    latestAnimeCharacterReport?.visualReviewPackage?.manifestPath,
+    latestAnimeCharacterReport?.visualReviewPackage?.diagnosticsPath,
+    latestAnimeCharacterReport?.visualReviewPackage?.operatorSummaryPath,
+  ]);
+  const blockers = uniqueStrings([
+    ...(execution?.blockers ?? []),
+    ...(microSequence?.blockers ?? []),
+    ...(prerequisiteState?.continuity_validation.blockers ?? []),
+  ]);
+  const previewReferences = [...microSequenceCards, ...previewCards];
+  const scaffoldStatus = activeTruthCheck?.scaffold_status
+    ?? latestAnimeCharacterReport?.scaffoldStatus
+    ?? animeCharacterSummary?.scaffoldStatus
+    ?? "not evaluated";
+  const fallbackDominance = activeTruthCheck?.fallback_primitive_dominance
+    ?? latestAnimeCharacterReport?.truthCheck.fallback_primitive_dominance
+    ?? null;
+
+  return (
+    <div className="operator-run-report-print" aria-label="Printable operator run report">
+      <header className="operator-report-header">
+        <p>AI-E Operator Run Report</p>
+        <h1>Governed Preview Generation Review</h1>
+        <span>Generated {new Date().toLocaleString()}</span>
+      </header>
+
+      <ReportSection title="Request Summary">
+        <ReportKeyValueList items={[
+          { label: "Prompt", value: form.prompt || "not provided" },
+          { label: "Subject", value: form.subject || "not provided" },
+          { label: "Motion intent", value: form.motion_intent || "not provided" },
+          { label: "Style", value: form.style || "not provided" },
+          { label: "Duration", value: `${form.duration_seconds}s` },
+          { label: "Resolution", value: form.resolution },
+          { label: "Continuity priority", value: form.continuity_priority },
+          { label: "Manual approval", value: formatBoolean(form.governance_approval) },
+          { label: "GIF packaging requested", value: formatBoolean(form.package_gif_preview) },
+          { label: "Compiled request", value: compiledRequest?.request_id ?? "not compiled" },
+          { label: "Operator message", value: message },
+          { label: "Current error", value: error ?? "none" },
+        ]} />
+      </ReportSection>
+
+      <ReportSection title="Execution Lifecycle">
+        <ReportKeyValueList items={[
+          { label: "Current phase", value: getGovernedExecutionPhaseLabel(executionState.currentPhase) },
+          { label: "Active action", value: actionRenderMode(executionState.activeAction) },
+          { label: "Active request", value: executionState.activeRequestId ?? "none" },
+          { label: "Started", value: formatDateTime(executionState.executionStartedAt) },
+          { label: "Finished", value: formatDateTime(executionState.executionFinishedAt) },
+          { label: "Status message", value: executionState.statusMessage },
+          { label: "Next action", value: executionState.nextActionRecommendation },
+          { label: "Render completed", value: formatBoolean(executionState.renderCompleted) },
+          { label: "Render rejected", value: formatBoolean(executionState.renderRejected) },
+          { label: "Render failed", value: formatBoolean(executionState.renderFailed) },
+          { label: "Failure reason", value: executionState.failureReason ?? "none" },
+        ]} />
+        <ol className="operator-report-timeline">
+          {timeline.map((item) => (
+            <li key={`report-timeline-${item.id}`}>
+              <strong>{item.label}</strong> [{item.status}] {item.detail}
+            </li>
+          ))}
+        </ol>
+      </ReportSection>
+
+      <ReportSection title="Output Artifact Paths">
+        <ReportPathList paths={allArtifactPaths} emptyLabel="No output artifact paths are recorded yet." />
+      </ReportSection>
+
+      <ReportSection title="Visual Review Status">
+        <ReportKeyValueList items={[
+          { label: "Subject/style confirmed", value: formatBoolean(reviewState.subjectStyleConfirmed) },
+          { label: "Micro-sequence reviewed", value: formatBoolean(reviewState.microSequenceReviewed) },
+          { label: "Preview output reviewed", value: formatBoolean(reviewState.previewOutputReviewed) },
+          { label: "Diagnostics reviewed", value: formatBoolean(reviewState.diagnosticsReviewed) },
+          { label: "Visual intent matched", value: formatBoolean(reviewState.finalVisualIntentMatched) },
+          { label: "Truth checks passed", value: formatBoolean(reviewState.finalTruthChecksPassed) },
+          { label: "Scaffold/fallback inactive", value: formatBoolean(reviewState.finalScaffoldFallbackInactive) },
+          { label: "Diagnostics clear", value: formatBoolean(reviewState.finalDiagnosticsClear) },
+          { label: "Visual review package", value: latestAnimeCharacterReport?.visualReviewPackage?.reviewLabel ?? "not ready" },
+        ]} />
+      </ReportSection>
+
+      <ReportSection title="Scaffold Status">
+        <ReportKeyValueList items={[
+          { label: "Scaffold status", value: scaffoldStatus },
+          { label: "Renderer path", value: activeTruthCheck?.renderer_path ?? latestAnimeCharacterReport?.truthCheck.renderer_path ?? "not evaluated" },
+          { label: "Character pixels generated", value: activeTruthCheck ? formatBoolean(activeTruthCheck.character_pixels_generated) : "not evaluated" },
+          { label: "Character primary subject", value: activeTruthCheck ? formatBoolean(activeTruthCheck.character_primary_subject) : "not evaluated" },
+          { label: "Fallback primitive dominance", value: fallbackDominance === null ? "not evaluated" : formatBoolean(fallbackDominance) },
+          { label: "Diagnostics match output", value: activeTruthCheck ? formatBoolean(activeTruthCheck.diagnostics_match_rendered_output) : "not evaluated" },
+          { label: "Anime summary fallback count", value: animeCharacterSummary?.fallbackPrimitiveDominanceCount ?? "not evaluated" },
+        ]} />
+      </ReportSection>
+
+      <ReportSection title="Diagnostics">
+        <ReportKeyValueList items={[
+          { label: "Diagnostics present", value: formatBoolean(Boolean(activeDiagnostics)) },
+          { label: "Recognizable object", value: activeDiagnostics?.recognizable_object ?? "not recorded" },
+          { label: "Active entity", value: activeDiagnostics?.active_entity_type ?? "not recorded" },
+          { label: "Active formation", value: activeDiagnostics?.active_formation_type ?? "not recorded" },
+          { label: "Active beat", value: activeDiagnostics?.active_beat_type ?? "not recorded" },
+          { label: "Active focus", value: activeDiagnostics?.active_focus_subject ?? activeDiagnostics?.focus_subject ?? "not recorded" },
+          { label: "Frame coherence", value: activeDiagnostics ? `${activeDiagnostics.frame_coherence_score}/100` : "not recorded" },
+          { label: "Camera stability", value: activeDiagnostics ? `${activeDiagnostics.camera_stability_score}/100` : "not recorded" },
+          { label: "Scene overlay", value: activeDiagnostics?.scene_readability_overlay ?? "not recorded" },
+        ]} />
+        <ReportPathList paths={activeDiagnostics?.artifact_diagnostics ?? []} emptyLabel="No artifact diagnostics are recorded." />
+      </ReportSection>
+
+      <ReportSection title="Rollback Info">
+        <ReportKeyValueList items={[
+          { label: "Execution rollback state", value: executionState.rollbackInProgress ? "restoring" : executionState.activeAction === "rollback" && executionState.renderCompleted ? "complete" : "idle" },
+          { label: "Preview rollback status", value: execution?.rollback_status ?? microSequence?.rollback_status ?? "not recorded" },
+          { label: "Rollback result", value: rollback?.rollback_status ?? "not run" },
+          { label: "Rollback sandbox", value: rollback?.sandbox_path ?? executionState.sandboxPath ?? execution?.sandbox_path ?? microSequence?.sandbox_path ?? "not recorded" },
+          { label: "Sandbox limited", value: rollback ? formatBoolean(rollback.sandbox_limited) : "not recorded" },
+        ]} />
+        <ReportPathList paths={rollback?.deleted_output_targets ?? []} emptyLabel="No rollback cleanup targets are recorded." />
+      </ReportSection>
+
+      <ReportSection title="Final Verdict">
+        <ReportKeyValueList items={[
+          { label: "Final operator verdict", value: finalVerdict },
+          { label: "Preview status", value: execution?.status ?? "not run" },
+          { label: "Micro-sequence status", value: microSequence?.status ?? "not run" },
+          { label: "Continuity valid", value: formatBoolean(execution?.continuity_validation.valid ?? microSequence?.continuity_validation.valid ?? prerequisiteState?.continuity_validation.valid ?? false) },
+          { label: "Active blockers", value: blockers.length ? blockers.join(", ") : "none" },
+        ]} />
+      </ReportSection>
+
+      <ReportSection title="Preview Frame And GIF References">
+        <ReportGallery cards={previewReferences} />
+      </ReportSection>
+    </div>
   );
 }

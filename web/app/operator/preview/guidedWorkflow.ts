@@ -281,7 +281,10 @@ function nextStepId(stepId: GuidedWorkflowStepId): GuidedWorkflowStepId {
 
 export function evaluateFinalOperatorVerdict(facts: GuidedWorkflowFacts): FinalOperatorVerdict {
   const reviewedEverything = facts.previewOutputReviewed && facts.diagnosticsReviewed;
-  const allPassed = facts.finalVisualIntentMatched
+  const allPassed = facts.previewGenerationCompleted
+    && facts.truthChecksPassed
+    && facts.scaffoldFallbackInactive
+    && facts.finalVisualIntentMatched
     && facts.finalTruthChecksPassed
     && facts.finalScaffoldFallbackInactive
     && facts.finalDiagnosticsClear;

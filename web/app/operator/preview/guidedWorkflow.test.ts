@@ -159,11 +159,26 @@ test("final verdict cannot pass without output review and truth-check confirmati
   assert.equal(evaluateFinalOperatorVerdict(facts({
     previewOutputReviewed: true,
     diagnosticsReviewed: true,
+    previewGenerationCompleted: true,
+    truthChecksPassed: true,
+    scaffoldFallbackInactive: true,
     finalVisualIntentMatched: true,
     finalTruthChecksPassed: true,
     finalScaffoldFallbackInactive: true,
     finalDiagnosticsClear: true,
   })), "PASS");
+
+  assert.equal(evaluateFinalOperatorVerdict(facts({
+    previewOutputReviewed: true,
+    diagnosticsReviewed: true,
+    previewGenerationCompleted: true,
+    truthChecksPassed: false,
+    scaffoldFallbackInactive: true,
+    finalVisualIntentMatched: true,
+    finalTruthChecksPassed: true,
+    finalScaffoldFallbackInactive: true,
+    finalDiagnosticsClear: true,
+  })), "NEEDS REVIEW");
 });
 
 test("completed execution still requires visual review before final verdict", () => {

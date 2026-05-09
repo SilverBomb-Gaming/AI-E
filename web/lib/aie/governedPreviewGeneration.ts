@@ -14,6 +14,10 @@ import {
   type GovernedPreviewFormInput,
   type GovernedPreviewRequest,
 } from "./governedPreviewGenerationContract";
+import {
+  CHARACTER_FIRST_FALLBACK_REJECTION,
+  resolveCharacterFirstExecutionRoute,
+} from "./animeCharacters/characterFirstExecutionRouter";
 
 export type GovernedPreviewExecutionResult = {
   status: GovernedPreviewExecutionStatus;
@@ -150,11 +154,82 @@ export async function readGovernedPreviewPrerequisiteState(options?: GovernedPre
   });
 }
 
+function buildCharacterFirstBlockedPrerequisiteState(): GovernedPreviewPrerequisiteState {
+  return {
+    micro_sequence_exists: false,
+    motion_preview_ready: false,
+    sandbox_path: null,
+    sandbox_output_root: null,
+    generated_frame_references: [],
+    preview_diagnostics: null,
+    continuity_validation: {
+      valid: false,
+      blockers: ["character-first-render-required"],
+      summary: CHARACTER_FIRST_FALLBACK_REJECTION,
+    },
+    next_step_action: null,
+    next_step_label: "Use Render Character or select an approved anime character profile",
+  };
+}
+
+function buildCharacterFirstBlockedMicroSequenceResult(request: GovernedPreviewRequest): GovernedPreviewMicroSequenceResult {
+  const prerequisiteState = buildCharacterFirstBlockedPrerequisiteState();
+
+  return {
+    status: "blocked",
+    request,
+    governance_status: CHARACTER_FIRST_FALLBACK_REJECTION,
+    sandbox_path: null,
+    sandbox_output_root: null,
+    generated_frame_references: [],
+    rollback_status: "No prerequisite fallback outputs were exported for this anime-character request.",
+    rollback_enabled: true,
+    preview_diagnostics: null,
+    continuity_validation: prerequisiteState.continuity_validation,
+    preview_cleanup_targets: [],
+    live_workspace_blocked_output: true,
+    errors: [CHARACTER_FIRST_FALLBACK_REJECTION],
+    blockers: ["character-first-render-required"],
+    prerequisite_state: prerequisiteState,
+  };
+}
+
+function buildCharacterFirstBlockedPreviewResult(request: GovernedPreviewRequest): GovernedPreviewExecutionResult {
+  const prerequisiteState = buildCharacterFirstBlockedPrerequisiteState();
+
+  return {
+    status: "blocked",
+    request,
+    governance_status: CHARACTER_FIRST_FALLBACK_REJECTION,
+    sandbox_path: null,
+    sandbox_output_root: null,
+    generated_preview_references: [],
+    manifest_file_path: null,
+    rollback_status: "No prerequisite fallback outputs were exported for this anime-character request.",
+    rollback_enabled: true,
+    preview_diagnostics: null,
+    continuity_validation: prerequisiteState.continuity_validation,
+    execution_ledger_state: {
+      ledger_id: null,
+      attempt_count: 0,
+    },
+    live_workspace_blocked_output: true,
+    errors: [CHARACTER_FIRST_FALLBACK_REJECTION],
+    blockers: ["character-first-render-required"],
+    prerequisite_state: prerequisiteState,
+  };
+}
+
 export async function executeGovernedPreviewMicroSequenceRequest(
   request: GovernedPreviewRequest,
   options?: GovernedPreviewExecutionOptions,
 ): Promise<GovernedPreviewMicroSequenceResult> {
   const deps = resolveDependencies(options?.deps);
+
+  const characterRoute = resolveCharacterFirstExecutionRoute({ request, requestedSurface: "PREREQUISITE_MICRO_SEQUENCE" });
+  if (characterRoute.blockPrerequisiteRenderer) {
+    return buildCharacterFirstBlockedMicroSequenceResult(request);
+  }
 
   if (request.blockers.length > 0) {
     const prerequisiteState = await readGovernedPreviewPrerequisiteState(options);
@@ -222,6 +297,11 @@ export async function executeGovernedPreviewRequest(
   options?: GovernedPreviewExecutionOptions,
 ): Promise<GovernedPreviewExecutionResult> {
   const deps = resolveDependencies(options?.deps);
+
+  const characterRoute = resolveCharacterFirstExecutionRoute({ request, requestedSurface: "GOVERNED_PREVIEW" });
+  if (characterRoute.blockPrerequisiteRenderer) {
+    return buildCharacterFirstBlockedPreviewResult(request);
+  }
 
   if (request.blockers.length > 0) {
     const prerequisiteState = await readGovernedPreviewPrerequisiteState(options);
