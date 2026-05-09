@@ -503,10 +503,12 @@ Visual validation contract:
 
 Localhost operator UI behavior:
 
-- `/operator/preview` now groups noisy operator areas into collapsible activity sections with header indicators for generated output, completed work, warnings, failed validation, scaffold/fallback blocks, diagnostics, and user-review-needed visual packages
+- `/operator/preview` now opens as a compact dashboard of obvious dropdown-style headers instead of one always-open report: Dashboard Controls, Anime Character Report, Execution Controls, Execution Status, Micro-Sequence Frames, Preview Outputs, Frame Comparison, Governed Diagnostics, and Blockers And Rollback
+- most non-critical sections default collapsed, with visible chevrons, `Expand` / `Collapse` controls, and activity labels such as `Ready`, `New activity`, `Needs review`, `Warning`, or `Failure or block`
 - renderer output galleries, anime character reports, diagnostics, execution status, blocker/rollback status, truth checks, visual review packages, scaffold status, and validation metrics can be expanded or collapsed from their section headers
-- blocked scaffold/fallback activity, failed validation, and critical diagnostics stay strongly indicated in the collapsed header and keep a visible warning summary below the header, so collapsing the UI cannot silently hide dangerous state
+- blocked scaffold/fallback activity, failed validation, and critical diagnostics stay strongly indicated in the collapsed header and keep a visible warning summary below the header when needed, so collapsing the UI cannot silently hide dangerous state
 - user-review-ready character packages surface as activity in the header while the first PNG, GIF, manifest, diagnostics JSON, and operator summary remain available inside the expanded section
+- manual UX check: open `http://localhost:3000/operator/preview` or the active Next.js fallback port, confirm the first screen shows compact dropdown headers with chevrons and `Expand` labels, click a header to reveal its body, and click it again to return to the compact dashboard
 
 Approved character profiles:
 

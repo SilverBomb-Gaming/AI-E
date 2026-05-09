@@ -485,6 +485,16 @@ function CollapsibleActivitySection({
   className?: string;
 }) {
   const [isOpen, setIsOpen] = useState(defaultOpen ?? activity.critical);
+  const actionLabel = isOpen ? "Collapse" : "Expand";
+  const activityLabel = activity.tone === "blocked"
+    ? "Failure or block"
+    : activity.tone === "warn"
+      ? "Warning"
+      : activity.tone === "review"
+        ? "Needs review"
+        : activity.tone === "ok"
+          ? "New activity"
+          : "Ready";
   const iconClassName = activity.tone === "blocked"
     ? "border-coral/30 bg-coral/10 text-ember"
     : activity.tone === "warn" || activity.tone === "review"
@@ -494,26 +504,30 @@ function CollapsibleActivitySection({
         : "border-ink/10 bg-white text-ink/75";
 
   return (
-    <article className={`glass-card rounded-[2rem] p-0 shadow-float ${className}`}>
+    <article className={`self-start rounded-[1.25rem] border border-ink/15 bg-white/90 shadow-float ${className}`}>
       <button
         type="button"
         onClick={() => setIsOpen((current) => !current)}
         aria-expanded={isOpen}
-        className="flex w-full items-start justify-between gap-4 rounded-[2rem] px-6 py-5 text-left transition hover:bg-white/40"
+        className="flex w-full flex-col items-start justify-between gap-4 rounded-[1.25rem] border-b border-ink/10 bg-white px-5 py-4 text-left transition hover:bg-mist/60 xl:flex-row"
       >
         <span className="flex min-w-0 items-start gap-3">
-          <span className={`mt-1 inline-flex h-8 min-w-8 items-center justify-center rounded-full border px-2 text-xs font-bold ${iconClassName}`} aria-hidden="true">
+          <span className={`mt-1 inline-flex h-9 min-w-9 items-center justify-center rounded-full border px-2 text-sm font-bold ${iconClassName}`} aria-hidden="true">
             {activityIconLabel(activity.tone)}
           </span>
           <span className="min-w-0">
             <span className="section-label block">{sectionLabel}</span>
-            <span className="mt-3 block text-2xl font-semibold text-ink">{title}</span>
+            <span className="mt-2 flex flex-wrap items-center gap-2 text-2xl font-semibold text-ink">
+              <span className="text-xl" aria-hidden="true">{isOpen ? "v" : ">"}</span>
+              <span>{title}</span>
+            </span>
             <span className="mt-2 block text-sm leading-7 body-muted">{activity.summary}</span>
           </span>
         </span>
-        <span className="flex shrink-0 flex-col items-end gap-2">
+        <span className="flex shrink-0 flex-col items-start gap-2 xl:items-end">
+          <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${iconClassName}`}>{activityLabel}</span>
           <StatusPill label={activity.label} tone={statusToneFromActivity(activity.tone)} />
-          <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate">{isOpen ? "collapse" : "expand"}</span>
+          <span className="rounded-full border border-ink/10 bg-mist/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-ink">{actionLabel}</span>
         </span>
       </button>
       {!isOpen && activity.critical ? (
@@ -1445,6 +1459,38 @@ export function PreviewGenerationClient() {
         summary: message,
         critical: statusTone === "blocked",
       };
+  const capabilityHarnessActivity = {
+    label: "controls collapsed",
+    tone: promptVariationSafety?.status === "REJECTED" || promptDomainSafety?.status === "REJECTED" ? "blocked" as const : "info" as const,
+    summary: "Prompt, domain, style, intensity, HIGH probe, and anime profile controls are grouped as dashboard dropdowns.",
+    critical: promptVariationSafety?.status === "REJECTED" || promptDomainSafety?.status === "REJECTED",
+  };
+  const requestControlsActivity = !motionPreviewReady
+    ? {
+      label: "prerequisite needed",
+      tone: "warn" as const,
+      summary: "Motion preview controls are collapsed; micro-sequence prerequisite is still required.",
+      critical: false,
+    }
+    : {
+      label: "controls ready",
+      tone: "info" as const,
+      summary: "Execution controls and request fields are available when expanded.",
+      critical: false,
+    };
+  const comparisonActivity = comparisonCards.length === 2
+    ? {
+      label: "comparison ready",
+      tone: "ok" as const,
+      summary: "Frame comparison is available when expanded.",
+      critical: false,
+    }
+    : {
+      label: "no comparison yet",
+      tone: "info" as const,
+      summary: "Generate at least two governed PNG frames to compare continuity.",
+      critical: false,
+    };
   const styleIntensityDisplayCells = [
     ...starterStyleIntensityCells,
     ...highProbeStyleIntensityCells.filter((probe) => !starterStyleIntensityCells.some((starter) => starter.cellId === probe.cellId)),
@@ -1471,6 +1517,13 @@ export function PreviewGenerationClient() {
           </div>
         </div>
 
+        <CollapsibleActivitySection
+          sectionLabel="Dashboard Controls"
+          title="Prompt, Style, Intensity, HIGH Probe, And Character Profile Controls"
+          activity={capabilityHarnessActivity}
+          defaultOpen={capabilityHarnessActivity.critical}
+          className="mb-6"
+        >
         <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
           <article className="glass-card rounded-[2rem] p-6 shadow-float">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2626,12 +2679,14 @@ export function PreviewGenerationClient() {
           </article>
         </section>
 
+        </CollapsibleActivitySection>
+
         <section className="mb-6">
           <CollapsibleActivitySection
             sectionLabel="Anime Character Report"
             title="Character-Centered Diagnostic Summary"
             activity={animeSummaryActivity}
-            defaultOpen={animeSummaryActivity.critical || Boolean(animeCharacterSummary)}
+            defaultOpen={animeSummaryActivity.critical}
           >
             {animeCharacterSummary ? (
               <div className="mb-4 flex flex-wrap gap-2">
@@ -2730,8 +2785,12 @@ export function PreviewGenerationClient() {
         </section>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-          <section className="glass-card rounded-[2rem] p-6 shadow-float">
-            <p className="section-label">Request Form</p>
+          <CollapsibleActivitySection
+            sectionLabel="Execution Controls"
+            title="Request Form And Preview Actions"
+            activity={requestControlsActivity}
+            defaultOpen={false}
+          >
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <label className="flex flex-col gap-2 rounded-[1.25rem] border border-ink/10 bg-white/80 p-4 md:col-span-2">
                 <FieldLabel>Prompt</FieldLabel>
@@ -2869,7 +2928,7 @@ export function PreviewGenerationClient() {
                 Motion preview generation stays disabled until the governed micro-sequence exists and frame-to-frame continuity validation passes.
               </p>
             ) : null}
-          </section>
+          </CollapsibleActivitySection>
 
           <CollapsibleActivitySection
             sectionLabel="Execution Status"
@@ -3032,7 +3091,7 @@ export function PreviewGenerationClient() {
             sectionLabel="Micro-Sequence Frames"
             title="Prerequisite Renderer Frames"
             activity={microSequenceOutputActivity}
-            defaultOpen={microSequenceOutputActivity.critical || microSequenceGalleryCards.length > 0}
+            defaultOpen={microSequenceOutputActivity.critical}
           >
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
               {microSequenceGalleryCards.length ? (
@@ -3102,7 +3161,7 @@ export function PreviewGenerationClient() {
             sectionLabel="Preview Outputs"
             title="Renderer Output Gallery"
             activity={rendererOutputActivity}
-            defaultOpen={rendererOutputActivity.critical || previewGalleryCards.length > 0}
+            defaultOpen={rendererOutputActivity.critical}
           >
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
               {previewGalleryCards.length ? (
@@ -3173,8 +3232,12 @@ export function PreviewGenerationClient() {
             </div>
           </CollapsibleActivitySection>
 
-          <article className="glass-card rounded-[2rem] p-6 shadow-float">
-            <p className="section-label">Frame Comparison</p>
+          <CollapsibleActivitySection
+            sectionLabel="Frame Comparison"
+            title="Continuity Comparison"
+            activity={comparisonActivity}
+            defaultOpen={false}
+          >
             <div className="mt-5 space-y-3 text-sm leading-7 body-muted">
               {comparisonCards.length === 2 ? (
                 <div className="grid gap-4 md:grid-cols-2">
@@ -3194,7 +3257,7 @@ export function PreviewGenerationClient() {
                 <p>Generate at least two governed PNG frames to compare continuity side by side.</p>
               )}
             </div>
-          </article>
+          </CollapsibleActivitySection>
         </section>
 
         <section className="mt-6 grid gap-6 lg:grid-cols-1">
@@ -3203,7 +3266,7 @@ export function PreviewGenerationClient() {
               sectionLabel="Governed Diagnostics"
               title="Diagnostics Activity"
               activity={diagnosticsActivity}
-              defaultOpen={diagnosticsActivity.critical || Boolean(activeDiagnostics)}
+              defaultOpen={false}
               className="lg:col-span-3"
             >
               <div className="mt-5">
