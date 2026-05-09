@@ -295,6 +295,47 @@ Remaining blocked cinematic escalations:
 - long-form rendering remains blocked
 - any cross-run cinematic memory persistence beyond the current operator session remains blocked
 
+## Governed Visual Style Profiles
+
+AI-E now extends the same bounded governed preview pipeline into a small operator-approved visual style registry so operators can compare how a single safe cinematic baseline behaves across multiple rendering looks without unlocking unrestricted style synthesis.
+
+Current Phase 1 progress:
+
+- the operator preview surface now lists five approved visual style profiles covering `CINEMATIC_SCI_FI`, `INDUSTRIAL_REALISM`, `ANIME_INSPIRED`, `NEON_DYSTOPIAN`, and `ATMOSPHERIC_PAINTERLY` while preserving the same two-second duration, low-resolution preview budget, manual approval gate, and rollback-safe sandbox path
+- approved style runs now keep a fixed safe baseline scene and vary only the governed visual style profile so cross-style diagnostics remain directly comparable instead of mixing prompt/domain changes with rendering changes
+- style profile evaluation now compares scene cohesion, phrase continuity, transition smoothness, visual continuity, focus continuity, tension continuity, momentum continuity, readability, final composition, lighting stability, reflection continuity, silhouette readability, environment identity, and rollback integrity inside a cross-style operator report
+- anime-inspired rendering remains explicitly bounded to non-humanoid, dialogue-free, readability-first chamber imagery, while industrial realism and neon dystopian profiles remain constrained to controlled material/lighting changes instead of unrestricted realism or anime escalation
+
+Approved visual style profiles:
+
+- `CINEMATIC_SCI_FI`
+- `INDUSTRIAL_REALISM`
+- `ANIME_INSPIRED`
+- `NEON_DYSTOPIAN`
+- `ATMOSPHERIC_PAINTERLY`
+
+Blocked style escalations:
+
+- unrestricted custom style synthesis remains blocked
+- humanoids, faces, dialogue, emotional acting, and story prompts remain blocked
+- unrestricted anime character generation and unrestricted realism escalation remain blocked
+- autonomous continuation, long-form rendering, and any style profile that attempts to create new systems remain blocked
+
+Governance preserved:
+
+- style profiles remain operator-approved only and bounded to at most five approved styles in Phase 1
+- sandbox containment, manual approval, rollback visibility, deterministic replay, and bounded preview duration remain unchanged
+- failed style runs keep diagnostics isolated and rollback-safe instead of mutating runtime systems or persisting cinematic memory across runs
+- style variation remains visual-only and does not bypass the existing governed prompt and preview safety constraints
+
+Remaining blocked cinematic escalations:
+
+- humanoid continuity, faces, and dialogue remain blocked
+- unrestricted custom-style expansion remains blocked
+- narrative autonomy and autonomous continuation remain blocked
+- long-form rendering remains blocked
+- any cross-run cinematic memory persistence beyond the current operator session remains blocked
+
 ## Autonomous Session Loop
 
 The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.

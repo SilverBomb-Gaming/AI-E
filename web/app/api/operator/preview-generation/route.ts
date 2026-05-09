@@ -36,6 +36,18 @@ import {
   type ApprovedPromptDomainTemplate,
 } from "@/lib/aie/promptDomains/approvedPromptDomainTemplates";
 import type { PromptDomainReport } from "@/lib/aie/promptDomains/governedPromptDomainRegistry";
+import {
+  buildGovernedVisualStyleHarnessState,
+  buildVisualStyleExecutionPlan,
+  listGovernedVisualStyleProfiles,
+  runGovernedVisualStyleProfileById,
+  summarizeGovernedVisualStyleReports,
+} from "@/lib/aie/styleProfiles/governedVisualStyleProfiles";
+import {
+  getApprovedVisualStyleProfileById,
+  type ApprovedVisualStyleProfile,
+} from "@/lib/aie/styleProfiles/approvedVisualStyleProfiles";
+import type { VisualStyleReport } from "@/lib/aie/styleProfiles/governedVisualStyleRegistry";
 
 export const runtime = "nodejs";
 
@@ -84,6 +96,10 @@ function normalizePromptDomainHistory(value: unknown): PromptDomainReport[] {
   return Array.isArray(value) ? value as PromptDomainReport[] : [];
 }
 
+function normalizeVisualStyleHistory(value: unknown): VisualStyleReport[] {
+  return Array.isArray(value) ? value as VisualStyleReport[] : [];
+}
+
 function buildVariantFormInput(variant: ApprovedPromptVariant, governanceApproval: boolean): GovernedPreviewFormInput {
   return {
     prompt: variant.prompt,
@@ -112,6 +128,20 @@ function buildDomainFormInput(domain: ApprovedPromptDomainTemplate, governanceAp
   };
 }
 
+function buildStyleFormInput(styleProfile: ApprovedVisualStyleProfile, governanceApproval: boolean): GovernedPreviewFormInput {
+  return {
+    prompt: styleProfile.prompt,
+    subject: styleProfile.subject,
+    motion_intent: styleProfile.motion_intent,
+    style: styleProfile.style,
+    duration_seconds: styleProfile.duration_seconds,
+    resolution: styleProfile.resolution,
+    continuity_priority: styleProfile.continuity_priority,
+    governance_approval: governanceApproval,
+    package_gif_preview: styleProfile.package_gif_preview,
+  };
+}
+
 function buildPromptVariationPayload() {
   const variants = listGovernedPromptVariationVariants();
   return {
@@ -127,6 +157,14 @@ function buildPromptDomainPayload() {
     domains,
     executionPlan: buildPromptDomainExecutionPlan(domains.map((entry) => entry.id)),
     unsafePromptExample: PROMPT_DOMAIN_UNSAFE_EXAMPLE,
+  };
+}
+
+function buildVisualStylePayload() {
+  const styles = listGovernedVisualStyleProfiles();
+  return {
+    styles,
+    executionPlan: buildVisualStyleExecutionPlan(styles.map((entry) => entry.id)),
   };
 }
 
@@ -149,6 +187,7 @@ export async function GET() {
       prerequisiteState,
       promptVariation: buildPromptVariationPayload(),
       promptDomain: buildPromptDomainPayload(),
+      visualStyle: buildVisualStylePayload(),
     });
   } catch (error) {
     console.error("[api/operator/preview-generation] status failed", serializeError(error));
@@ -171,13 +210,15 @@ export async function POST(request: Request) {
             ? "run-prompt-variation-variant"
             : body.action === "run-prompt-domain"
               ? "run-prompt-domain"
+              : body.action === "run-visual-style-profile"
+                ? "run-visual-style-profile"
         : body.action === "status"
           ? "status"
           : "generate";
 
     if (action === "status") {
       const prerequisiteState = await readGovernedPreviewPrerequisiteState();
-      return NextResponse.json({ prerequisiteState, promptVariation: buildPromptVariationPayload(), promptDomain: buildPromptDomainPayload() });
+      return NextResponse.json({ prerequisiteState, promptVariation: buildPromptVariationPayload(), promptDomain: buildPromptDomainPayload(), visualStyle: buildVisualStylePayload() });
     }
 
     if (action === "rollback") {
@@ -264,6 +305,39 @@ export async function POST(request: Request) {
         harnessState: buildGovernedPromptDomainHarnessState(reports),
         prerequisiteState: report.prerequisiteAfter ?? report.prerequisiteBefore,
         promptDomain: buildPromptDomainPayload(),
+      });
+    }
+
+    if (action === "run-visual-style-profile") {
+      const styleId = normalizeTextInput(body.styleId).trim().toUpperCase();
+      const governanceApproval = normalizeBoolean(body.governanceApproval);
+      const approvedStyles = listGovernedVisualStyleProfiles();
+      const styleProfile = getApprovedVisualStyleProfileById(styleId);
+
+      if (!styleProfile) {
+        return NextResponse.json({ error: "An approved visual style profile is required." }, { status: 400 });
+      }
+
+      const report = await runGovernedVisualStyleProfileById({
+        styleId,
+        governanceApproval,
+        styleIndex: Math.max(approvedStyles.findIndex((entry) => entry.id === styleId), 0) + 1,
+        totalStyles: approvedStyles.length,
+        rejectedStyleCount: normalizeVisualStyleHistory(body.priorReports).filter((entry) => entry.safetyStatus === "REJECTED").length,
+      });
+      const reports = [
+        ...normalizeVisualStyleHistory(body.priorReports).filter((entry) => entry.styleId !== report.styleId),
+        report,
+      ].sort((left, right) => left.styleIndex - right.styleIndex);
+
+      return NextResponse.json({
+        compiledRequest: compileGovernedPreviewRequest(buildStyleFormInput(styleProfile, governanceApproval)),
+        report,
+        reports,
+        reportSummary: summarizeGovernedVisualStyleReports(reports),
+        harnessState: buildGovernedVisualStyleHarnessState(reports),
+        prerequisiteState: report.prerequisiteAfter ?? report.prerequisiteBefore,
+        visualStyle: buildVisualStylePayload(),
       });
     }
 

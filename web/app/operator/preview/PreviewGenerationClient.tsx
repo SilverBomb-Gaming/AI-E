@@ -35,6 +35,13 @@ import type {
   PromptDomainExecutionPlan,
   PromptDomainReport,
 } from "@/lib/aie/promptDomains/governedPromptDomainRegistry";
+import type { ApprovedVisualStyleProfile } from "@/lib/aie/styleProfiles/approvedVisualStyleProfiles";
+import type {
+  GovernedVisualStyleState,
+  VisualStyleDiagnosticSummary,
+  VisualStyleExecutionPlan,
+  VisualStyleReport,
+} from "@/lib/aie/styleProfiles/governedVisualStyleRegistry";
 
 const DEFAULT_FORM: GovernedPreviewFormInput = {
   prompt: "",
@@ -71,11 +78,17 @@ type PromptDomainPayload = {
   unsafePromptExample: string;
 };
 
+type VisualStylePayload = {
+  styles: ApprovedVisualStyleProfile[];
+  executionPlan: VisualStyleExecutionPlan;
+};
+
 type PreviewGenerationBootstrapPayload = {
   error?: string;
   prerequisiteState?: GovernedPreviewPrerequisiteState;
   promptVariation?: PromptVariationPayload;
   promptDomain?: PromptDomainPayload;
+  visualStyle?: VisualStylePayload;
 };
 
 type PromptVariationClassificationPayload = {
@@ -110,6 +123,17 @@ type PromptDomainRunPayload = {
   harnessState?: GovernedPromptDomainState | null;
   prerequisiteState?: GovernedPreviewPrerequisiteState | null;
   promptDomain?: PromptDomainPayload;
+};
+
+type VisualStyleRunPayload = {
+  error?: string;
+  compiledRequest?: GovernedPreviewRequest;
+  report?: VisualStyleReport;
+  reports?: VisualStyleReport[];
+  reportSummary?: VisualStyleDiagnosticSummary;
+  harnessState?: GovernedVisualStyleState | null;
+  prerequisiteState?: GovernedPreviewPrerequisiteState | null;
+  visualStyle?: VisualStylePayload;
 };
 
 function buildSandboxAssetUrl(assetPath: string): string {
@@ -351,6 +375,16 @@ function promptDomainStatusTone(report: PromptDomainReport): "ok" | "warn" | "bl
   return "warn";
 }
 
+function visualStyleStatusTone(report: VisualStyleReport): "ok" | "warn" | "blocked" {
+  if (report.pass) {
+    return "ok";
+  }
+  if (report.safetyStatus === "REJECTED") {
+    return "blocked";
+  }
+  return "warn";
+}
+
 export function PreviewGenerationClient() {
   const [form, setForm] = useState<GovernedPreviewFormInput>(DEFAULT_FORM);
   const [compiledRequest, setCompiledRequest] = useState<GovernedPreviewRequest | null>(null);
@@ -376,6 +410,12 @@ export function PreviewGenerationClient() {
   const [promptDomainReports, setPromptDomainReports] = useState<PromptDomainReport[]>([]);
   const [promptDomainSummary, setPromptDomainSummary] = useState<PromptDomainDiagnosticSummary | null>(null);
   const [promptDomainHarnessState, setPromptDomainHarnessState] = useState<GovernedPromptDomainState | null>(null);
+  const [approvedVisualStyles, setApprovedVisualStyles] = useState<ApprovedVisualStyleProfile[]>([]);
+  const [visualStylePlan, setVisualStylePlan] = useState<VisualStyleExecutionPlan | null>(null);
+  const [selectedVisualStyleId, setSelectedVisualStyleId] = useState<string>("");
+  const [visualStyleReports, setVisualStyleReports] = useState<VisualStyleReport[]>([]);
+  const [visualStyleSummary, setVisualStyleSummary] = useState<VisualStyleDiagnosticSummary | null>(null);
+  const [visualStyleHarnessState, setVisualStyleHarnessState] = useState<GovernedVisualStyleState | null>(null);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -406,6 +446,9 @@ export function PreviewGenerationClient() {
         if (payload.promptDomain?.unsafePromptExample) {
           setPromptDomainPrompt(payload.promptDomain.unsafePromptExample);
         }
+        setApprovedVisualStyles(payload.visualStyle?.styles ?? []);
+        setVisualStylePlan(payload.visualStyle?.executionPlan ?? null);
+        setSelectedVisualStyleId((current) => current || payload.visualStyle?.styles[0]?.id || "");
         setMessage(payload.prerequisiteState.motion_preview_ready
           ? "Governed micro-sequence prerequisite satisfied. Motion preview generation is available."
           : "Governed motion preview is blocked until the micro-sequence continuity prerequisite is satisfied.");
@@ -455,6 +498,22 @@ export function PreviewGenerationClient() {
       package_gif_preview: domain.package_gif_preview,
     }));
     setMessage(`Loaded approved prompt domain ${domain.label} into the governed preview form.`);
+  }
+
+  function loadApprovedVisualStyle(styleProfile: ApprovedVisualStyleProfile) {
+    setSelectedVisualStyleId(styleProfile.id);
+    setForm((current) => ({
+      ...current,
+      prompt: styleProfile.prompt,
+      subject: styleProfile.subject,
+      motion_intent: styleProfile.motion_intent,
+      style: styleProfile.style,
+      duration_seconds: styleProfile.duration_seconds,
+      resolution: styleProfile.resolution,
+      continuity_priority: styleProfile.continuity_priority,
+      package_gif_preview: styleProfile.package_gif_preview,
+    }));
+    setMessage(`Loaded approved visual style ${styleProfile.label} into the governed preview form.`);
   }
 
   function handleClassifyPromptVariation() {
@@ -603,6 +662,49 @@ export function PreviewGenerationClient() {
     });
   }
 
+  function handleRunVisualStyle(styleId: string) {
+    setError(null);
+    setRollback(null);
+    startTransition(() => {
+      void fetch("/api/operator/preview-generation", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "run-visual-style-profile",
+          styleId,
+          governanceApproval: form.governance_approval,
+          priorReports: visualStyleReports,
+        }),
+      })
+        .then(async (response) => {
+          const payload = await response.json() as VisualStyleRunPayload;
+          if (!response.ok || !payload.report) {
+            throw new Error(payload.error ?? "Visual style execution failed.");
+          }
+
+          setSelectedVisualStyleId(styleId);
+          setCompiledRequest(payload.compiledRequest ?? null);
+          setMicroSequence(payload.report.microSequence);
+          setExecution(payload.report.previewExecution);
+          setRollback(payload.report.rollback);
+          setPrerequisiteState(payload.prerequisiteState ?? payload.report.prerequisiteAfter ?? payload.report.prerequisiteBefore);
+          setVisualStyleReports(payload.reports ?? [payload.report]);
+          setVisualStyleSummary(payload.reportSummary ?? null);
+          setVisualStyleHarnessState(payload.harnessState ?? null);
+          setApprovedVisualStyles(payload.visualStyle?.styles ?? approvedVisualStyles);
+          setVisualStylePlan(payload.visualStyle?.executionPlan ?? visualStylePlan);
+          setMessage(payload.report.pass
+            ? `Approved visual style ${payload.report.styleLabel} passed governed style thresholds.`
+            : payload.report.failureReason ?? `Approved visual style ${payload.report.styleLabel} failed governed style thresholds.`);
+        })
+        .catch((nextError) => {
+          setError(nextError instanceof Error ? nextError.message : "Visual style execution failed.");
+        });
+    });
+  }
+
   function handleGenerate() {
     setError(null);
     setRollback(null);
@@ -733,6 +835,7 @@ export function PreviewGenerationClient() {
     || microSequence?.status === "blocked";
   const selectedPromptVariation = approvedPromptVariants.find((entry) => entry.id === selectedPromptVariationId) ?? null;
   const selectedPromptDomain = approvedPromptDomains.find((entry) => entry.id === selectedPromptDomainId) ?? null;
+  const selectedVisualStyle = approvedVisualStyles.find((entry) => entry.id === selectedVisualStyleId) ?? null;
 
   return (
     <main className="page-shell min-h-screen bg-mist/80">
@@ -1109,6 +1212,166 @@ export function PreviewGenerationClient() {
               </div>
             ) : (
               <p className="mt-5 text-sm leading-7 body-muted">Run approved prompt domains manually to build the bounded operator domain report.</p>
+            )}
+          </article>
+        </section>
+
+        <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Visual Style Profiles</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Approved Governed Style Set</h2>
+              </div>
+              {visualStylePlan ? <StatusPill label={`max-${visualStylePlan.maxStyles}-styles`} tone="ok" /> : null}
+            </div>
+            <p className="mt-3 text-sm leading-7 body-muted">
+              Style profiles remain operator-approved only. No unrestricted style synthesis, humanoids, faces, dialogue, emotional acting, or long-form rendering.
+            </p>
+            {visualStylePlan ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {visualStylePlan.stages.map((stage) => (
+                  <StatusPill key={stage} label={stage} tone="default" />
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              {approvedVisualStyles.map((styleProfile) => (
+                <article key={styleProfile.id} className={`rounded-[1.25rem] border p-4 ${selectedVisualStyleId === styleProfile.id ? "border-ocean/30 bg-ocean/5" : "border-ink/10 bg-white/85"}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-ink">{styleProfile.label}</p>
+                    <StatusPill label={styleProfile.category.toLowerCase().replaceAll("_", "-")} tone="default" />
+                  </div>
+                  <p className="mt-3 text-sm leading-7 body-muted">{styleProfile.description}</p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-slate">
+                    {styleProfile.characteristics.map((characteristic) => (
+                      <span key={`${styleProfile.id}-${characteristic}`} className="rounded-full border border-ink/10 bg-mist/60 px-3 py-1">{characteristic}</span>
+                    ))}
+                  </div>
+                  <div className="mt-4 text-xs uppercase tracking-[0.18em] text-slate">
+                    {styleProfile.duration_seconds}s • {styleProfile.resolution} • {styleProfile.continuity_priority} continuity
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => loadApprovedVisualStyle(styleProfile)}
+                      className="rounded-full border border-ink/10 bg-white px-4 py-2 text-xs font-semibold text-ink transition hover:-translate-y-0.5"
+                    >
+                      Load Style
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRunVisualStyle(styleProfile.id)}
+                      disabled={isPending}
+                      className="rounded-full border border-ocean/20 bg-ocean px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Run Approved Style
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </article>
+
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <p className="section-label">Style Harness State</p>
+            <h2 className="mt-3 text-2xl font-semibold text-ink">Visual Style Compatibility</h2>
+            {selectedVisualStyle ? (
+              <div className="mt-5 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill label={selectedVisualStyle.label.toLowerCase().replaceAll("_", "-")} tone="default" />
+                  <StatusPill label={selectedVisualStyle.category.toLowerCase().replaceAll("_", "-")} tone="default" />
+                </div>
+                <p className="mt-3"><strong className="text-ink">Style description:</strong> {selectedVisualStyle.description}</p>
+                <p><strong className="text-ink">Governed preview style field:</strong> {selectedVisualStyle.style}</p>
+                <p><strong className="text-ink">Baseline prompt:</strong> {selectedVisualStyle.prompt}</p>
+              </div>
+            ) : null}
+            {visualStyleHarnessState ? (
+              <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <p><strong className="text-ink">Active style:</strong> {visualStyleHarnessState.activeStyleLabel}</p>
+                <p><strong className="text-ink">Style category:</strong> {visualStyleHarnessState.styleCategory}</p>
+                <p><strong className="text-ink">Approved styles run:</strong> {visualStyleReports.length}</p>
+                <p><strong className="text-ink">Style compatibility:</strong> {visualStyleHarnessState.styleCompatibilityScore}/100</p>
+                <p><strong className="text-ink">Style readability:</strong> {visualStyleHarnessState.styleReadabilityScore}/100</p>
+                <p><strong className="text-ink">Rejected styles:</strong> {visualStyleHarnessState.rejectedStyleCount}</p>
+                <p><strong className="text-ink">Rollback restored latest style:</strong> {visualStyleHarnessState.rollbackRestoredStyle ? "yes" : "no"}</p>
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Run approved styles manually to build the bounded style report.</p>
+            )}
+          </article>
+        </section>
+
+        <section className="mb-6">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">Style Profile Report</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Cross-Style Diagnostic Summary</h2>
+              </div>
+              {visualStyleSummary ? <StatusPill label={visualStyleSummary.recommendedNextAction.toLowerCase().replaceAll("_", "-")} tone={visualStyleSummary.recommendedNextAction === "CONTINUE_STYLE_EXPANSION" ? "ok" : visualStyleSummary.recommendedNextAction === "TUNE_VISUAL_LAYERS" ? "warn" : "blocked"} /> : null}
+            </div>
+            {visualStyleSummary ? (
+              <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                <div className="rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                  <p><strong className="text-ink">Styles run:</strong> {visualStyleSummary.testedStyleCount}</p>
+                  <p><strong className="text-ink">Passed:</strong> {visualStyleSummary.passedStyleCount}</p>
+                  <p><strong className="text-ink">Rejected:</strong> {visualStyleSummary.rejectedStyleCount}</p>
+                  {visualStyleSummary.strongestStyle ? <p><strong className="text-ink">Strongest style:</strong> {visualStyleSummary.strongestStyle}</p> : null}
+                  {visualStyleSummary.weakestStyle ? <p><strong className="text-ink">Weakest style:</strong> {visualStyleSummary.weakestStyle}</p> : null}
+                  <p><strong className="text-ink">Average scene cohesion:</strong> {visualStyleSummary.averageSceneCohesion}/100</p>
+                  <p><strong className="text-ink">Average transition smoothness:</strong> {visualStyleSummary.averageTransitionSmoothness}/100</p>
+                  <p><strong className="text-ink">Average lighting stability:</strong> {visualStyleSummary.averageLightingStability}/100</p>
+                  <p><strong className="text-ink">Average reflection continuity:</strong> {visualStyleSummary.averageReflectionContinuity}/100</p>
+                  <p><strong className="text-ink">Average silhouette readability:</strong> {visualStyleSummary.averageSilhouetteReadability}/100</p>
+                  <p><strong className="text-ink">Average preview readability:</strong> {visualStyleSummary.averagePreviewReadability}/100</p>
+                  <p><strong className="text-ink">Rollback pass rate:</strong> {Math.round(visualStyleSummary.rollbackPassRate * 100)}%</p>
+                  {visualStyleSummary.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect runtime layer:</strong> {visualStyleSummary.recommendedRuntimeLayer}</p> : null}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {visualStyleReports.map((report) => (
+                    <article key={report.styleId} className="rounded-[1.25rem] border border-ink/10 bg-white/90 p-4 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-ink">{report.styleLabel}</p>
+                        <StatusPill label={report.executionStatus.toLowerCase()} tone={visualStyleStatusTone(report)} />
+                      </div>
+                      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate">{report.styleCategory.toLowerCase().replaceAll("_", "-")}</p>
+                      <p className="mt-3 text-sm leading-7 body-muted">{report.styleDescription}</p>
+                      <div className="mt-3 space-y-1 text-sm leading-7 body-muted">
+                        <p><strong className="text-ink">Safety:</strong> {report.safetyStatus}</p>
+                        {report.metrics ? <p><strong className="text-ink">Scene cohesion:</strong> {report.metrics.sceneCohesion}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Lighting stability:</strong> {report.metrics.lightingStability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Reflection continuity:</strong> {report.metrics.reflectionContinuity}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Silhouette readability:</strong> {report.metrics.silhouetteReadability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Preview readability:</strong> {report.metrics.previewReadability}/100</p> : null}
+                        {report.strongestMetric ? <p><strong className="text-ink">Strongest metric:</strong> {report.strongestMetric}</p> : null}
+                        {report.weakestMetric ? <p><strong className="text-ink">Weakest metric:</strong> {report.weakestMetric}</p> : null}
+                        <p><strong className="text-ink">Rollback visible:</strong> {report.rollbackVisible ? "yes" : "no"}</p>
+                        <p><strong className="text-ink">Rollback restored style:</strong> {report.rollbackRestoredStyle ? "yes" : "no"}</p>
+                        {report.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect layer:</strong> {report.recommendedRuntimeLayer}</p> : null}
+                        {report.failureReason ? <p><strong className="text-ink">Failure reason:</strong> {report.failureReason}</p> : null}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-slate">
+                        {report.styleCharacteristics.map((characteristic) => (
+                          <span key={`${report.styleId}-${characteristic}`} className="rounded-full border border-ink/10 bg-mist/60 px-3 py-1">{characteristic}</span>
+                        ))}
+                      </div>
+                      {report.failedThresholds.length ? (
+                        <ul className="mt-3 space-y-2 text-sm leading-7 body-muted">
+                          {report.failedThresholds.map((failure) => (
+                            <li key={`${report.styleId}-${failure.metric}`} className="rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+                              {failure.metric}: {String(failure.actual)} required {failure.required} ({failure.recommendedRuntimeLayer})
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Run approved visual styles manually to build the bounded cross-style operator report.</p>
             )}
           </article>
         </section>
