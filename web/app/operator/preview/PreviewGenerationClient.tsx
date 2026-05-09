@@ -57,6 +57,13 @@ import type {
   StyleIntensityPreset,
   StyleIntensityReport,
 } from "@/lib/aie/styleIntensity/governedStyleIntensityState";
+import type {
+  GovernedHighIntensityState,
+  HighIntensityDiagnosticSummary,
+  HighIntensityExecutionPlan,
+  HighIntensityProbeCell,
+  HighIntensityReport,
+} from "@/lib/aie/highIntensity/governedHighIntensityState";
 
 const DEFAULT_FORM: GovernedPreviewFormInput = {
   prompt: "",
@@ -112,6 +119,11 @@ type StyleIntensityPayload = {
   executionPlan: StyleIntensityExecutionPlan;
 };
 
+type HighIntensityPayload = {
+  probes: HighIntensityProbeCell[];
+  executionPlan: HighIntensityExecutionPlan;
+};
+
 type PreviewGenerationBootstrapPayload = {
   error?: string;
   prerequisiteState?: GovernedPreviewPrerequisiteState;
@@ -120,6 +132,7 @@ type PreviewGenerationBootstrapPayload = {
   visualStyle?: VisualStylePayload;
   styleStress?: StyleStressPayload;
   styleIntensity?: StyleIntensityPayload;
+  highIntensity?: HighIntensityPayload;
 };
 
 type PromptVariationClassificationPayload = {
@@ -187,6 +200,17 @@ type StyleIntensityRunPayload = {
   harnessState?: GovernedStyleIntensityState | null;
   prerequisiteState?: GovernedPreviewPrerequisiteState | null;
   styleIntensity?: StyleIntensityPayload;
+};
+
+type HighIntensityRunPayload = {
+  error?: string;
+  compiledRequest?: GovernedPreviewRequest;
+  report?: HighIntensityReport;
+  reports?: HighIntensityReport[];
+  reportSummary?: HighIntensityDiagnosticSummary;
+  harnessState?: GovernedHighIntensityState | null;
+  prerequisiteState?: GovernedPreviewPrerequisiteState | null;
+  highIntensity?: HighIntensityPayload;
 };
 
 function buildSandboxAssetUrl(assetPath: string): string {
@@ -458,6 +482,16 @@ function styleIntensityStatusTone(report: StyleIntensityReport): "ok" | "warn" |
   return "warn";
 }
 
+function highIntensityStatusTone(report: HighIntensityReport): "ok" | "warn" | "blocked" {
+  if (report.pass) {
+    return "ok";
+  }
+  if (report.safetyStatus === "REJECTED") {
+    return "blocked";
+  }
+  return "warn";
+}
+
 export function PreviewGenerationClient() {
   const [form, setForm] = useState<GovernedPreviewFormInput>(DEFAULT_FORM);
   const [compiledRequest, setCompiledRequest] = useState<GovernedPreviewRequest | null>(null);
@@ -506,6 +540,13 @@ export function PreviewGenerationClient() {
   const [styleIntensitySummary, setStyleIntensitySummary] = useState<StyleIntensityDiagnosticSummary | null>(null);
   const [styleIntensityHarnessState, setStyleIntensityHarnessState] = useState<GovernedStyleIntensityState | null>(null);
   const [highIntensityApproval, setHighIntensityApproval] = useState<boolean>(false);
+  const [approvedHighIntensityProbes, setApprovedHighIntensityProbes] = useState<HighIntensityProbeCell[]>([]);
+  const [highIntensityPlan, setHighIntensityPlan] = useState<HighIntensityExecutionPlan | null>(null);
+  const [selectedHighIntensityProbeId, setSelectedHighIntensityProbeId] = useState<string>("");
+  const [highIntensityReports, setHighIntensityReports] = useState<HighIntensityReport[]>([]);
+  const [highIntensitySummary, setHighIntensitySummary] = useState<HighIntensityDiagnosticSummary | null>(null);
+  const [highIntensityHarnessState, setHighIntensityHarnessState] = useState<GovernedHighIntensityState | null>(null);
+  const [highProbeApproval, setHighProbeApproval] = useState<boolean>(false);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -549,6 +590,9 @@ export function PreviewGenerationClient() {
         setHighProbeStyleIntensityCells(payload.styleIntensity?.highProbeCells ?? []);
         setStyleIntensityPlan(payload.styleIntensity?.executionPlan ?? null);
         setSelectedStyleIntensityCellId((current) => current || payload.styleIntensity?.starterCells[0]?.cellId || payload.styleIntensity?.cells[0]?.cellId || "");
+        setApprovedHighIntensityProbes(payload.highIntensity?.probes ?? []);
+        setHighIntensityPlan(payload.highIntensity?.executionPlan ?? null);
+        setSelectedHighIntensityProbeId((current) => current || payload.highIntensity?.probes[0]?.probeId || "");
         setMessage(payload.prerequisiteState.motion_preview_ready
           ? "Governed micro-sequence prerequisite satisfied. Motion preview generation is available."
           : "Governed motion preview is blocked until the micro-sequence continuity prerequisite is satisfied.");
@@ -673,6 +717,35 @@ export function PreviewGenerationClient() {
       package_gif_preview: styleProfile.package_gif_preview || domain.package_gif_preview,
     }));
     setMessage(`Loaded style intensity cell ${cell.styleLabel} × ${cell.domainLabel} × ${cell.intensityLevel} into the governed preview form.`);
+  }
+
+  function loadApprovedHighIntensityProbe(probe: HighIntensityProbeCell) {
+    const styleProfile = approvedVisualStyles.find((entry) => entry.id === probe.styleId);
+    const domain = approvedPromptDomains.find((entry) => entry.id === probe.domainId);
+    if (!styleProfile || !domain) {
+      setError("We couldn't resolve the selected HIGH probe resources.");
+      return;
+    }
+
+    setSelectedHighIntensityProbeId(probe.probeId);
+    setSelectedVisualStyleId(styleProfile.id);
+    setSelectedPromptDomainId(domain.id);
+    setForm((current) => ({
+      ...current,
+      prompt: domain.prompt,
+      subject: domain.subject,
+      motion_intent: domain.motion_intent,
+      style: `${styleProfile.style}; ${styleProfile.characteristics.join(", ")}; governed high intensity probe (${probe.probeId})`,
+      duration_seconds: Math.min(styleProfile.duration_seconds, domain.duration_seconds),
+      resolution: styleProfile.resolution,
+      continuity_priority: styleProfile.continuity_priority === "high" || domain.continuity_priority === "high"
+        ? "high"
+        : styleProfile.continuity_priority === "medium" || domain.continuity_priority === "medium"
+          ? "medium"
+          : "low",
+      package_gif_preview: styleProfile.package_gif_preview || domain.package_gif_preview,
+    }));
+    setMessage(`Loaded HIGH probe ${probe.styleLabel} × ${probe.domainLabel} into the governed preview form.`);
   }
 
   function handleClassifyPromptVariation() {
@@ -959,6 +1032,52 @@ export function PreviewGenerationClient() {
     });
   }
 
+  function handleRunHighIntensityProbe(probeId: string) {
+    setError(null);
+    setRollback(null);
+    startTransition(() => {
+      void fetch("/api/operator/preview-generation", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          action: "run-high-intensity-probe",
+          probeId,
+          governanceApproval: form.governance_approval,
+          highProbeApproval,
+          priorReports: highIntensityReports,
+        }),
+      })
+        .then(async (response) => {
+          const payload = await response.json() as HighIntensityRunPayload;
+          if (!response.ok || !payload.report) {
+            throw new Error(payload.error ?? "HIGH probe execution failed.");
+          }
+
+          setSelectedHighIntensityProbeId(probeId);
+          setSelectedVisualStyleId(payload.report.styleId);
+          setSelectedPromptDomainId(payload.report.domainId);
+          setCompiledRequest(payload.compiledRequest ?? null);
+          setMicroSequence(payload.report.microSequence);
+          setExecution(payload.report.previewExecution);
+          setRollback(payload.report.rollback);
+          setPrerequisiteState(payload.prerequisiteState ?? payload.report.prerequisiteAfter ?? payload.report.prerequisiteBefore);
+          setHighIntensityReports(payload.reports ?? [payload.report]);
+          setHighIntensitySummary(payload.reportSummary ?? null);
+          setHighIntensityHarnessState(payload.harnessState ?? null);
+          setApprovedHighIntensityProbes(payload.highIntensity?.probes ?? approvedHighIntensityProbes);
+          setHighIntensityPlan(payload.highIntensity?.executionPlan ?? highIntensityPlan);
+          setMessage(payload.report.pass
+            ? `HIGH probe ${payload.report.styleLabel} × ${payload.report.domainLabel} passed governed HIGH thresholds.`
+            : payload.report.failureReason ?? `HIGH probe ${payload.report.styleLabel} × ${payload.report.domainLabel} failed governed HIGH thresholds.`);
+        })
+        .catch((nextError) => {
+          setError(nextError instanceof Error ? nextError.message : "HIGH probe execution failed.");
+        });
+    });
+  }
+
   function handleGenerate() {
     setError(null);
     setRollback(null);
@@ -1097,6 +1216,7 @@ export function PreviewGenerationClient() {
     ?? starterStyleIntensityCells.find((entry) => entry.cellId === selectedStyleIntensityCellId)
     ?? highProbeStyleIntensityCells.find((entry) => entry.cellId === selectedStyleIntensityCellId)
     ?? null;
+  const selectedHighIntensityProbe = approvedHighIntensityProbes.find((entry) => entry.probeId === selectedHighIntensityProbeId) ?? null;
   const styleIntensityDisplayCells = [
     ...starterStyleIntensityCells,
     ...highProbeStyleIntensityCells.filter((probe) => !starterStyleIntensityCells.some((starter) => starter.cellId === probe.cellId)),
@@ -1980,6 +2100,200 @@ export function PreviewGenerationClient() {
               </div>
             ) : (
               <p className="mt-5 text-sm leading-7 body-muted">Run starter style intensity cells manually to build the bounded cross-intensity operator report.</p>
+            )}
+          </article>
+        </section>
+
+        <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">HIGH Probe Harness</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">Approved HIGH-Intensity Visual Probes</h2>
+              </div>
+              {highIntensityPlan ? <StatusPill label={`max-${highIntensityPlan.maxHighProbes}-high-probes`} tone="warn" /> : null}
+            </div>
+            <p className="mt-3 text-sm leading-7 body-muted">
+              Explicit HIGH probes only. Each run applies deterministic visual caps, preserves rollback visibility, and requires manual approval plus separate HIGH approval.
+            </p>
+            {highIntensityPlan ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {highIntensityPlan.stages.map((stage) => (
+                  <StatusPill key={stage} label={stage} tone="default" />
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div className="rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <p><strong className="text-ink">Approved HIGH probes:</strong> {approvedHighIntensityProbes.length}</p>
+                <p><strong className="text-ink">HIGH approval:</strong> {highProbeApproval ? "granted" : "required"}</p>
+                <p><strong className="text-ink">Automatic repeat:</strong> blocked</p>
+                <p><strong className="text-ink">Auto escalation:</strong> blocked</p>
+                <p><strong className="text-ink">Runtime mutation:</strong> blocked</p>
+              </div>
+              <label className="flex gap-3 rounded-[1.25rem] border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-900">
+                <input
+                  type="checkbox"
+                  checked={highProbeApproval}
+                  onChange={(event) => setHighProbeApproval(event.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-amber-300"
+                />
+                <span>
+                  <strong className="block text-ink">HIGH Probe Approval</strong>
+                  I explicitly approve one guarded HIGH probe with visual caps, rollback preservation, and no autonomous follow-up.
+                </span>
+              </label>
+            </div>
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              {approvedHighIntensityProbes.map((probe) => {
+                const latestReport = highIntensityReports.find((entry) => entry.probeId === probe.probeId) ?? null;
+                return (
+                  <article key={probe.probeId} className={`rounded-[1.25rem] border p-4 ${selectedHighIntensityProbeId === probe.probeId ? "border-ocean/30 bg-ocean/5" : "border-amber-200 bg-amber-50/80"}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-ink">{probe.styleLabel} × {probe.domainLabel}</p>
+                      <StatusPill label="high" tone="warn" />
+                    </div>
+                    <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate">{probe.probeId.toLowerCase().replaceAll("_", "-")}</p>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-slate">
+                      <span className="rounded-full border border-amber-200 bg-amber-100 px-3 py-1 text-amber-800">approval-required</span>
+                      <span className="rounded-full border border-ink/10 bg-mist/60 px-3 py-1">value-{probe.intensityValue}</span>
+                      <span className="rounded-full border border-ink/10 bg-mist/60 px-3 py-1">rollback-required</span>
+                    </div>
+                    {latestReport ? (
+                      <div className="mt-3 rounded-[1rem] border border-ink/10 bg-white/80 p-3 text-sm leading-7 body-muted">
+                        <p><strong className="text-ink">Last result:</strong> {latestReport.executionStatus}</p>
+                        <p><strong className="text-ink">Caps:</strong> {latestReport.visualCaps.visibleCaps.join(", ")}</p>
+                        {latestReport.failureAnalysis ? <p><strong className="text-ink">Failure:</strong> {latestReport.failureAnalysis.failureType}</p> : null}
+                      </div>
+                    ) : null}
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => loadApprovedHighIntensityProbe(probe)}
+                        className="rounded-full border border-ink/10 bg-white px-4 py-2 text-xs font-semibold text-ink transition hover:-translate-y-0.5"
+                      >
+                        Load HIGH Probe
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRunHighIntensityProbe(probe.probeId)}
+                        disabled={isPending || !highProbeApproval || !form.governance_approval}
+                        className="rounded-full border border-ocean/20 bg-ocean px-4 py-2 text-xs font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Run HIGH Probe
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </article>
+
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <p className="section-label">HIGH Probe State</p>
+            <h2 className="mt-3 text-2xl font-semibold text-ink">Approval, Caps, Rollback</h2>
+            {selectedHighIntensityProbe ? (
+              <div className="mt-5 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusPill label={selectedHighIntensityProbe.styleLabel.toLowerCase().replaceAll("_", "-")} tone="default" />
+                  <StatusPill label={selectedHighIntensityProbe.domainLabel.toLowerCase().replaceAll("_", "-")} tone="default" />
+                  <StatusPill label="high" tone="warn" />
+                </div>
+                <p className="mt-3"><strong className="text-ink">Probe id:</strong> {selectedHighIntensityProbe.probeId}</p>
+                <p><strong className="text-ink">Cell id:</strong> {selectedHighIntensityProbe.cellId}</p>
+                <p><strong className="text-ink">Approval required:</strong> {selectedHighIntensityProbe.approvalRequired ? "yes" : "no"}</p>
+                <p><strong className="text-ink">Rollback required:</strong> {selectedHighIntensityProbe.rollbackRequired ? "yes" : "no"}</p>
+              </div>
+            ) : null}
+            {highIntensityHarnessState ? (
+              <div className="mt-4 rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                <p><strong className="text-ink">Active style:</strong> {highIntensityHarnessState.activeStyleId}</p>
+                <p><strong className="text-ink">Active domain:</strong> {highIntensityHarnessState.activeDomainId}</p>
+                <p><strong className="text-ink">Approved HIGH execution:</strong> {highIntensityHarnessState.approvedHighExecution ? "yes" : "no"}</p>
+                <p><strong className="text-ink">HIGH probes executed:</strong> {highIntensityHarnessState.highProbeExecutionCount}</p>
+                <p><strong className="text-ink">Failed HIGH probes:</strong> {highIntensityHarnessState.failedHighProbeCount}</p>
+                <p><strong className="text-ink">Rollback restored latest HIGH probe:</strong> {highIntensityHarnessState.rollbackRestoredHighProbe ? "yes" : "no"}</p>
+                {highIntensityHarnessState.lastFailureType ? <p><strong className="text-ink">Last failure:</strong> {highIntensityHarnessState.lastFailureType}</p> : null}
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Run approved HIGH probes manually to compare how far bounded stylization can go before readability or coherence degrades.</p>
+            )}
+          </article>
+        </section>
+
+        <section className="mb-6">
+          <article className="glass-card rounded-[2rem] p-6 shadow-float">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="section-label">HIGH Probe Report</p>
+                <h2 className="mt-3 text-2xl font-semibold text-ink">High-Stylization Diagnostic Summary</h2>
+              </div>
+              {highIntensitySummary ? <StatusPill label={highIntensitySummary.recommendedNextAction.toLowerCase().replaceAll("_", "-")} tone={highIntensitySummary.recommendedNextAction === "CONTINUE_HIGH_PROBES" ? "ok" : highIntensitySummary.recommendedNextAction === "TUNE_VISUAL_CAPS" ? "warn" : "blocked"} /> : null}
+            </div>
+            {highIntensitySummary ? (
+              <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                <div className="rounded-[1.25rem] border border-ink/10 bg-white/85 p-4 text-sm leading-7 body-muted">
+                  <p><strong className="text-ink">HIGH probes:</strong> {highIntensitySummary.testedHighProbeCount}</p>
+                  <p><strong className="text-ink">Passed:</strong> {highIntensitySummary.passedHighProbeCount}</p>
+                  <p><strong className="text-ink">Failed:</strong> {highIntensitySummary.failedHighProbeCount}</p>
+                  {highIntensitySummary.safestHighStyleId ? <p><strong className="text-ink">Safest HIGH style:</strong> {highIntensitySummary.safestHighStyleId}</p> : null}
+                  {highIntensitySummary.riskiestHighStyleId ? <p><strong className="text-ink">Riskiest HIGH style:</strong> {highIntensitySummary.riskiestHighStyleId}</p> : null}
+                  {highIntensitySummary.strongestProbeId ? <p><strong className="text-ink">Strongest probe:</strong> {highIntensitySummary.strongestProbeId}</p> : null}
+                  {highIntensitySummary.weakestProbeId ? <p><strong className="text-ink">Weakest probe:</strong> {highIntensitySummary.weakestProbeId}</p> : null}
+                  <p><strong className="text-ink">Average HIGH readability:</strong> {highIntensitySummary.averageHighReadability}/100</p>
+                  <p><strong className="text-ink">Average silhouette preservation:</strong> {highIntensitySummary.averageHighSilhouettePreservation}/100</p>
+                  <p><strong className="text-ink">Average lighting stability:</strong> {highIntensitySummary.averageHighLightingStability}/100</p>
+                  <p><strong className="text-ink">Average reflection continuity:</strong> {highIntensitySummary.averageHighReflectionContinuity}/100</p>
+                  <p><strong className="text-ink">Average environmental identity:</strong> {highIntensitySummary.averageHighEnvironmentalIdentity}/100</p>
+                  <p><strong className="text-ink">Average transition continuity:</strong> {highIntensitySummary.averageHighTransitionContinuity}/100</p>
+                  <p><strong className="text-ink">Average composition readability:</strong> {highIntensitySummary.averageHighCompositionReadability}/100</p>
+                  <p><strong className="text-ink">Rollback pass rate:</strong> {Math.round(highIntensitySummary.rollbackPassRate * 100)}%</p>
+                  {highIntensitySummary.recommendedRuntimeLayer ? <p><strong className="text-ink">Inspect runtime layer:</strong> {highIntensitySummary.recommendedRuntimeLayer}</p> : null}
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {highIntensityReports.map((report) => (
+                    <article key={report.probeId} className="rounded-[1.25rem] border border-ink/10 bg-white/90 p-4 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-ink">{report.styleLabel} × {report.domainLabel}</p>
+                        <StatusPill label={report.executionStatus.toLowerCase()} tone={highIntensityStatusTone(report)} />
+                      </div>
+                      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate">{report.probeId.toLowerCase().replaceAll("_", "-")}</p>
+                      <div className="mt-3 space-y-1 text-sm leading-7 body-muted">
+                        <p><strong className="text-ink">HIGH approval:</strong> {report.highProbeApproved ? "approved" : "blocked"}</p>
+                        <p><strong className="text-ink">Safety caps:</strong> {report.visualCaps.visibleCaps.join(", ")}</p>
+                        {report.compatibility ? <p><strong className="text-ink">Compatibility score:</strong> {report.compatibility.compatibilityScore}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">HIGH readability:</strong> {report.metrics.highReadabilityScore}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Scene cohesion:</strong> {report.metrics.sceneCohesion}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Style readability:</strong> {report.metrics.styleReadability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Silhouette readability:</strong> {report.metrics.silhouetteReadability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Lighting stability:</strong> {report.metrics.lightingStability}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Reflection continuity:</strong> {report.metrics.reflectionContinuity}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Transition smoothness:</strong> {report.metrics.transitionSmoothness}/100</p> : null}
+                        {report.metrics ? <p><strong className="text-ink">Preview readability:</strong> {report.metrics.previewReadability}/100</p> : null}
+                        {report.strongestMetric ? <p><strong className="text-ink">Strongest metric:</strong> {report.strongestMetricScore !== null ? `${report.strongestMetric} (${report.strongestMetricScore})` : report.strongestMetric}</p> : null}
+                        {report.weakestMetric ? <p><strong className="text-ink">Weakest metric:</strong> {report.weakestMetricScore !== null ? `${report.weakestMetric} (${report.weakestMetricScore})` : report.weakestMetric}</p> : null}
+                        {report.failureAnalysis ? <p><strong className="text-ink">Failure class:</strong> {report.failureAnalysis.failureType}</p> : null}
+                        {report.failureAnalysis ? <p><strong className="text-ink">Weakest subsystem:</strong> {report.failureAnalysis.weakestSubsystem}</p> : null}
+                        {report.recoveryRecommendation ? <p><strong className="text-ink">Recovery:</strong> {report.recoveryRecommendation.recommendation}</p> : null}
+                        <p><strong className="text-ink">Rollback visible:</strong> {report.rollbackVisible ? "yes" : "no"}</p>
+                        <p><strong className="text-ink">Rollback restored HIGH probe:</strong> {report.rollbackRestoredHighProbe ? "yes" : "no"}</p>
+                        {report.failureReason ? <p><strong className="text-ink">Failure reason:</strong> {report.failureReason}</p> : null}
+                      </div>
+                      {report.failedThresholds.length ? (
+                        <ul className="mt-3 space-y-2 text-sm leading-7 body-muted">
+                          {report.failedThresholds.map((failure) => (
+                            <li key={`${report.probeId}-${failure.metric}`} className="rounded-[1rem] border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+                              {failure.metric}: {String(failure.actual)} required {failure.required} ({failure.recommendedRuntimeLayer})
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-5 text-sm leading-7 body-muted">Run guarded HIGH probes manually to build the high-stylization operator report.</p>
             )}
           </article>
         </section>

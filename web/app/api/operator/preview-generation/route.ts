@@ -71,6 +71,15 @@ import {
 import { getStyleDomainIntensityCellResources } from "@/lib/aie/styleIntensity/styleDomainIntensityMatrix";
 import { describeStyleIntensityPreset } from "@/lib/aie/styleIntensity/styleIntensityPresets";
 import type { StyleIntensityReport } from "@/lib/aie/styleIntensity/governedStyleIntensityState";
+import {
+  buildGovernedHighIntensityHarnessState,
+  buildHighIntensityExecutionPlan,
+  getHighIntensityProbeFormInput,
+  listGovernedHighIntensityProbeCells,
+  runGovernedHighIntensityProbeById,
+  summarizeGovernedHighIntensityReports,
+} from "@/lib/aie/highIntensity/governedHighProbeHarness";
+import type { HighIntensityReport } from "@/lib/aie/highIntensity/governedHighIntensityState";
 
 export const runtime = "nodejs";
 
@@ -129,6 +138,10 @@ function normalizeStyleStressHistory(value: unknown): StyleStressReport[] {
 
 function normalizeStyleIntensityHistory(value: unknown): StyleIntensityReport[] {
   return Array.isArray(value) ? value as StyleIntensityReport[] : [];
+}
+
+function normalizeHighIntensityHistory(value: unknown): HighIntensityReport[] {
+  return Array.isArray(value) ? value as HighIntensityReport[] : [];
 }
 
 function buildVariantFormInput(variant: ApprovedPromptVariant, governanceApproval: boolean): GovernedPreviewFormInput {
@@ -267,6 +280,14 @@ function buildStyleIntensityPayload() {
   };
 }
 
+function buildHighIntensityPayload() {
+  const probes = listGovernedHighIntensityProbeCells();
+  return {
+    probes,
+    executionPlan: buildHighIntensityExecutionPlan(probes.map((entry) => entry.probeId)),
+  };
+}
+
 function serializeError(error: unknown) {
   if (error instanceof Error) {
     return {
@@ -289,6 +310,7 @@ export async function GET() {
       visualStyle: buildVisualStylePayload(),
       styleStress: buildStyleStressPayload(),
       styleIntensity: buildStyleIntensityPayload(),
+      highIntensity: buildHighIntensityPayload(),
     });
   } catch (error) {
     console.error("[api/operator/preview-generation] status failed", serializeError(error));
@@ -317,13 +339,15 @@ export async function POST(request: Request) {
                   ? "run-style-stress-cell"
                   : body.action === "run-style-intensity-cell"
                     ? "run-style-intensity-cell"
+                    : body.action === "run-high-intensity-probe"
+                      ? "run-high-intensity-probe"
         : body.action === "status"
           ? "status"
           : "generate";
 
     if (action === "status") {
       const prerequisiteState = await readGovernedPreviewPrerequisiteState();
-      return NextResponse.json({ prerequisiteState, promptVariation: buildPromptVariationPayload(), promptDomain: buildPromptDomainPayload(), visualStyle: buildVisualStylePayload(), styleStress: buildStyleStressPayload(), styleIntensity: buildStyleIntensityPayload() });
+      return NextResponse.json({ prerequisiteState, promptVariation: buildPromptVariationPayload(), promptDomain: buildPromptDomainPayload(), visualStyle: buildVisualStylePayload(), styleStress: buildStyleStressPayload(), styleIntensity: buildStyleIntensityPayload(), highIntensity: buildHighIntensityPayload() });
     }
 
     if (action === "rollback") {
@@ -513,6 +537,44 @@ export async function POST(request: Request) {
         harnessState: buildGovernedStyleIntensityControlsState(reports),
         prerequisiteState: report.prerequisiteAfter ?? report.prerequisiteBefore,
         styleIntensity: buildStyleIntensityPayload(),
+      });
+    }
+
+    if (action === "run-high-intensity-probe") {
+      const probeId = normalizeTextInput(body.probeId).trim().toUpperCase();
+      const governanceApproval = normalizeBoolean(body.governanceApproval);
+      const highProbeApproval = normalizeBoolean(body.highProbeApproval);
+      const approvedProbes = listGovernedHighIntensityProbeCells();
+      const probe = approvedProbes.find((entry) => entry.probeId === probeId);
+      const formInput = getHighIntensityProbeFormInput(probeId, governanceApproval);
+
+      if (!probe || !formInput) {
+        return NextResponse.json({ error: "An approved HIGH-intensity probe is required." }, { status: 400 });
+      }
+
+      const priorReports = normalizeHighIntensityHistory(body.priorReports);
+      const report = await runGovernedHighIntensityProbeById({
+        probeId,
+        governanceApproval,
+        highProbeApproval,
+        probeIndex: Math.max(approvedProbes.findIndex((entry) => entry.probeId === probeId), 0) + 1,
+        totalProbes: approvedProbes.length,
+        failedHighProbeCount: priorReports.filter((entry) => !entry.pass).length,
+        priorReports,
+      });
+      const reports = [
+        ...priorReports.filter((entry) => entry.probeId !== report.probeId),
+        report,
+      ].sort((left, right) => left.probeIndex - right.probeIndex);
+
+      return NextResponse.json({
+        compiledRequest: compileGovernedPreviewRequest(formInput),
+        report,
+        reports,
+        reportSummary: summarizeGovernedHighIntensityReports(reports),
+        harnessState: buildGovernedHighIntensityHarnessState(reports),
+        prerequisiteState: report.prerequisiteAfter ?? report.prerequisiteBefore,
+        highIntensity: buildHighIntensityPayload(),
       });
     }
 

@@ -416,6 +416,65 @@ Remaining blocked cinematic escalations:
 - extreme intensity, arbitrary numeric intensity values, autonomous cinematic storytelling, and long-form rendering remain blocked
 - any failed intensity run that attempts to mutate style/domain registries, persist cross-run intensity settings, or bypass operator review remains blocked
 
+## Governed HIGH-Intensity Probe Harness
+
+AI-E now exposes a separate governed HIGH-intensity probe harness for explicitly approved high-stylization checks. This phase answers how far approved cinematic visual styles can be pushed before readability, cohesion, lighting, reflection continuity, or rollback integrity begins to degrade, while keeping HIGH probing manual, deterministic, bounded, and rollback-protected.
+
+Current Phase 1 progress:
+
+- the operator preview surface now exposes four approved HIGH probes only: `ANIME_INSPIRED_HIGH`, `NEON_DYSTOPIAN_HIGH`, `ATMOSPHERIC_PAINTERLY_HIGH`, and `INDUSTRIAL_REALISM_HIGH`
+- HIGH execution requires both the existing manual preview governance approval and a separate explicit HIGH probe approval before any micro-sequence or preview execution is attempted
+- each HIGH run snapshots prerequisite state, style state, domain state, runtime configuration, diagnostics baseline, and approval state before applying deterministic visual caps
+- HIGH diagnostics evaluate rollback integrity, scene cohesion, style readability, silhouette readability, lighting stability, reflection continuity, transition smoothness, visual continuity, preview readability, final composition, environment identity, material clarity, atmosphere clarity, and rollback pressure
+- the operator report shows selected HIGH style/domain, approval state, pass/fail, strongest and weakest metrics, rollback state, failure classification, applied visual caps, recovery recommendation, safest HIGH style, riskiest HIGH style, and recommended next action
+
+Approved HIGH probes:
+
+- `ANIME_INSPIRED_HIGH`: `ANIME_INSPIRED × MECHANICAL_RITUAL_ALIGNMENT × HIGH`
+- `NEON_DYSTOPIAN_HIGH`: `NEON_DYSTOPIAN × REACTIVE_REFLECTION_SEQUENCE × HIGH`
+- `ATMOSPHERIC_PAINTERLY_HIGH`: `ATMOSPHERIC_PAINTERLY × ATMOSPHERIC_APERTURE_EVENT × HIGH`
+- `INDUSTRIAL_REALISM_HIGH`: `INDUSTRIAL_REALISM × SENTRY_PLATFORM_REVEAL × HIGH`
+
+Visual safety caps:
+
+- anime HIGH preserves silhouette readability, caps glow bloom, caps edge softening, and preserves object separation
+- neon HIGH caps glow stacking, caps reflection amplification, preserves focus readability, and preserves subject visibility
+- painterly HIGH preserves edge clarity, preserves object permanence, prevents over-smearing, and preserves environmental identity
+- realism HIGH caps material detail density, suppresses texture noise, preserves composition readability, and preserves lighting focus
+
+Readability watchpoints:
+
+- silhouette readability
+- glow overload
+- reflection noise
+- fog density
+- material clutter
+- edge clarity
+- lighting focus
+- transition readability
+
+Recovery logic remains advisory only:
+
+- silhouette collapse recommends reducing anime glow and edge softness
+- neon reflection overload recommends reducing reflection amplification
+- industrial material clutter recommends reducing texture density
+- painterly blur recommends restoring edge-preservation weighting
+- recovery recommendations require operator review and never tune styles autonomously
+
+Governance preserved:
+
+- HIGH probes remain operator-triggered only; no automatic repeat, auto-loop, auto-chain, auto-intensify, or auto-expand path is allowed
+- HIGH probes cannot mutate approved style profiles, prompt-domain templates, runtime systems, or visual caps
+- HIGH approval cannot persist across sessions and does not unlock unrestricted HIGH generation, arbitrary intensity values, or EXTREME mode
+- failed HIGH probes preserve diagnostics, expose rollback state, restore rollback snapshots when needed, increment failure visibility, and block auto-escalation
+
+Remaining blocked cinematic escalations:
+
+- humanoid anime characters, faces, facial acting, dialogue scenes, and emotional acting remain blocked
+- unrestricted realism escalation and unrestricted anime generation remain blocked
+- long-form cinematic rendering, autonomous cinematic storytelling, autonomous continuation, and background HIGH probe loops remain blocked
+- any HIGH probe that attempts to bypass visual caps, operator review, sandbox containment, or rollback visibility remains blocked
+
 ## Autonomous Session Loop
 
 The web surface now includes a bounded autonomous session loop for safe multi-step runs. This keeps the existing AnalysisInput contract intact, reuses the same dry-run action proposal and bounded execution bridge, and only auto-executes safe supported actions.
