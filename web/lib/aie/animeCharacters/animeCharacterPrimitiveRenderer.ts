@@ -13,6 +13,7 @@ import { buildAnimeLowerBodyPlan, type AnimeLowerBodyLegPlan, type AnimeLowerBod
 import { buildAnimeMotionContinuityPlan, buildAnimeMotionContinuitySequence, summarizeAnimeMotionContinuity, type AnimeMotionContinuityPlan } from "./animeMotionContinuity";
 import { buildAnimeExpressionSequence, buildAnimeExpressionState, summarizeAnimeExpressionDiagnostics, type AnimeExpressionState } from "./animeExpressionRenderer";
 import { buildAnimeSecondaryMotionSequence, buildAnimeSecondaryMotionState, summarizeAnimeSecondaryMotionDiagnostics, type AnimeSecondaryMotionState } from "./animeSecondaryMotion";
+import { buildAnimeCameraFramingSequence, buildAnimeCameraFramingState, summarizeAnimeCameraFramingDiagnostics, type AnimeCameraFramingState } from "./animeCameraFraming";
 import { resolveAnimePoseLanguagePreset, type AnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, type AnimeVisualFidelityDiagnostics } from "./animeVisualFidelityDiagnostics";
 import type {
@@ -58,6 +59,7 @@ type MutableImage = {
   height: number;
   data: Buffer;
   characterMask: Uint8Array;
+  cameraFramingState?: AnimeCameraFramingState;
 };
 
 function slugify(value: string): string {
@@ -77,9 +79,18 @@ function createImage(width: number, height: number): MutableImage {
   };
 }
 
-function setPixel(image: MutableImage, x: number, y: number, color: RgbaColor, markCharacter = false) {
-  const px = Math.round(x);
-  const py = Math.round(y);
+function transformCharacterPoint(image: MutableImage, x: number, y: number): { x: number; y: number } {
+  const camera = image.cameraFramingState;
+  if (!camera) {
+    return { x, y };
+  }
+  return {
+    x: camera.characterAnchorX + (x - camera.characterAnchorX) * camera.cameraZoom + camera.cameraOffsetX,
+    y: camera.characterAnchorY + (y - camera.characterAnchorY) * camera.cameraZoom + camera.cameraOffsetY,
+  };
+}
+
+function writePixel(image: MutableImage, px: number, py: number, color: RgbaColor, markCharacter = false) {
   if (px < 0 || py < 0 || px >= image.width || py >= image.height) {
     return;
   }
@@ -95,32 +106,50 @@ function setPixel(image: MutableImage, x: number, y: number, color: RgbaColor, m
   }
 }
 
+function setPixel(image: MutableImage, x: number, y: number, color: RgbaColor, markCharacter = false) {
+  const transformed = markCharacter ? transformCharacterPoint(image, x, y) : { x, y };
+  const px = Math.round(transformed.x);
+  const py = Math.round(transformed.y);
+  writePixel(image, px, py, color, markCharacter);
+  if (markCharacter && (image.cameraFramingState?.cameraZoom ?? 1) > 1.012) {
+    writePixel(image, px + 1, py, color, true);
+    writePixel(image, px, py + 1, color, true);
+  }
+}
+
 function rgba(color: RgbColor, alpha = 255): RgbaColor {
   return [color[0], color[1], color[2], alpha];
 }
 
-function fillBackground(image: MutableImage, frameIndex: number) {
+function fillBackground(image: MutableImage, frameIndex: number, cameraFramingState?: AnimeCameraFramingState) {
+  const parallaxX = cameraFramingState?.backgroundParallaxX ?? 0;
+  const parallaxY = cameraFramingState?.backgroundParallaxY ?? 0;
   for (let y = 0; y < image.height; y += 1) {
     for (let x = 0; x < image.width; x += 1) {
       const vertical = y / image.height;
       const vignette = Math.abs(x - image.width / 2) / (image.width / 2);
-      setPixel(image, x, y, [18 + vertical * 18, 23 + vertical * 12, 43 + vignette * 18, 255]);
+      const faceHalo = Math.max(0, 1 - Math.hypot(x - 118, y - 94) / 120);
+      setPixel(image, x, y, [14 + vertical * 15 + faceHalo * 11, 18 + vertical * 10 + faceHalo * 9, 34 + vignette * 14 + faceHalo * 18, 255]);
     }
   }
 
-  for (let x = 18; x < image.width; x += 30) {
-    drawRect(image, x, 0, 2, image.height, [43, 60, 91, 80]);
+  for (let x = -20 + parallaxX; x < image.width + 30; x += 34) {
+    drawLine(image, x, 0, x - 18 + parallaxX * 0.35, image.height, [43, 66, 98, 26], 0.7);
   }
-  for (let y = 34; y < image.height; y += 38) {
-    drawRect(image, 0, y, image.width, 1, [45, 74, 108, 64]);
+  for (let y = 38 + parallaxY; y < image.height; y += 44) {
+    drawLine(image, 0, y, image.width, y + parallaxY * 0.25, [49, 82, 116, 28], 0.7);
   }
 
   const pulse = frameIndex % 2 === 0 ? 1 : 0.82;
-  drawEllipse(image, 196, 111, 22, 28, [25, 211 * pulse, 233 * pulse, 48]);
-  drawEllipse(image, 196, 111, 10, 14, [82, 232, 238, 128]);
-  drawEllipse(image, 196, 111, 3, 6, [216, 255, 255, 186]);
-  drawRect(image, 181, 141, 29, 2, [115, 225, 232, 82]);
-  drawEllipse(image, 118, 124, 76, 102, [56, 214, 236, 28]);
+  const beaconX = 199 + parallaxX * 0.55;
+  const beaconY = 108 + parallaxY * 0.4;
+  drawEllipse(image, beaconX, beaconY, 24, 31, [14, 127 * pulse, 154 * pulse, 34]);
+  drawEllipse(image, beaconX, beaconY, 11, 16, [56, 199, 216, 96]);
+  drawEllipse(image, beaconX, beaconY, 3, 6, [200, 255, 255, 152]);
+  drawRect(image, beaconX - 15, beaconY + 31, 29, 2, [90, 195, 212, 62]);
+  drawEllipse(image, 118, 116, 80, 104, [50, 196, 220, 24]);
+  drawEllipse(image, 118, 101, 54, 68, [210, 237, 255, 18]);
+  drawEllipse(image, 128, 128, 120, 118, [0, 0, 0, 36]);
 }
 
 function drawRect(image: MutableImage, x: number, y: number, width: number, height: number, color: RgbaColor, markCharacter = false) {
@@ -512,7 +541,10 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
 
 function buildFrame(profile: AnimeCharacterProfile, poseTemplate: AnimeCharacterPoseTemplate, expressionTemplate: AnimeCharacterExpressionTemplate, frameIndex: number): MutableImage {
   const image = createImage(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-  fillBackground(image, frameIndex);
+  const expressionState = buildAnimeExpressionState({ profile, expression: expressionTemplate, frameIndex, frameCount: 5 });
+  const cameraFramingState = buildAnimeCameraFramingState({ profile, frameIndex, frameCount: 5, expressionState });
+  image.cameraFramingState = cameraFramingState;
+  fillBackground(image, frameIndex, cameraFramingState);
   drawAnimeCharacter(image, profile, poseTemplate, expressionTemplate, frameIndex);
   return image;
 }
@@ -709,6 +741,16 @@ function buildFrameDiagnostic(frameIndex: number, truthCheck: AnimeCharacterTrut
     lower_fabric_motion_score: visualFidelityDiagnostics.lower_fabric_motion_score,
     secondary_motion_continuity: visualFidelityDiagnostics.secondary_motion_continuity,
     motion_jitter_risk: visualFidelityDiagnostics.motion_jitter_risk,
+    shot_preset: visualFidelityDiagnostics.shot_preset,
+    camera_framing_score: visualFidelityDiagnostics.camera_framing_score,
+    face_framing_priority: visualFidelityDiagnostics.face_framing_priority,
+    eye_visibility_score: visualFidelityDiagnostics.eye_visibility_score,
+    character_dominance_score: visualFidelityDiagnostics.character_dominance_score,
+    background_depth_score: visualFidelityDiagnostics.background_depth_score,
+    parallax_continuity_score: visualFidelityDiagnostics.parallax_continuity_score,
+    cinematic_composition_score: visualFidelityDiagnostics.cinematic_composition_score,
+    camera_motion_smoothness: visualFidelityDiagnostics.camera_motion_smoothness,
+    framing_jitter_risk: visualFidelityDiagnostics.framing_jitter_risk,
     lighting_stability_score: 96,
     lighting_consistency_score: 96,
     coherence_anchor_strength: 98,
@@ -732,7 +774,7 @@ function buildDiagnostics(
     object_relationship_summary: "Anime character is the primary rendered subject; beacon and chamber remain secondary support.",
     environment_profile: "softened sci-fi chamber supporting a character-centered anime render",
     lighting_profile: "bounded teal beacon rim light plus character face readability lighting",
-    camera_profile: "medium shot locked to anime character face and silhouette",
+    camera_profile: `${visualFidelityDiagnostics.shot_preset} with bounded face-priority anime framing and subtle parallax`,
     continuity_anchor_visualization: "anime character face, bright teal eyes, long hair mass, and jacket silhouette",
     scene_readability_overlay: "character-first frame; no cube, beacon, or drone primary fallback dominance",
     beacon_influence_summary: "beacon appears only as supporting side/back light",
@@ -830,6 +872,16 @@ function buildDiagnostics(
     lower_fabric_motion_score: visualFidelityDiagnostics.lower_fabric_motion_score,
     secondary_motion_continuity: visualFidelityDiagnostics.secondary_motion_continuity,
     motion_jitter_risk: visualFidelityDiagnostics.motion_jitter_risk,
+    shot_preset: visualFidelityDiagnostics.shot_preset,
+    camera_framing_score: visualFidelityDiagnostics.camera_framing_score,
+    face_framing_priority: visualFidelityDiagnostics.face_framing_priority,
+    eye_visibility_score: visualFidelityDiagnostics.eye_visibility_score,
+    character_dominance_score: visualFidelityDiagnostics.character_dominance_score,
+    background_depth_score: visualFidelityDiagnostics.background_depth_score,
+    parallax_continuity_score: visualFidelityDiagnostics.parallax_continuity_score,
+    cinematic_composition_score: visualFidelityDiagnostics.cinematic_composition_score,
+    camera_motion_smoothness: visualFidelityDiagnostics.camera_motion_smoothness,
+    framing_jitter_risk: visualFidelityDiagnostics.framing_jitter_risk,
     phrase_continuity_score: 96,
     transition_smoothness_score: 96,
     visual_continuity_score: 97,
@@ -853,6 +905,10 @@ function buildDiagnostics(
       { id: "cloth-motion", label: "Cloth secondary motion", score: visualFidelityDiagnostics.cloth_motion_score, status: "stable", summary: "Jacket panels, sleeves, cuffs, and lower fabric accents use coordinated cloth sway." },
       { id: "secondary-motion-continuity", label: "Secondary motion continuity", score: visualFidelityDiagnostics.secondary_motion_continuity, status: "stable", summary: "Hair and cloth motion share a smooth deterministic phase with no random jitter." },
       { id: "motion-jitter-risk", label: "Motion jitter risk", score: visualFidelityDiagnostics.motion_jitter_risk === "LOW" ? 96 : visualFidelityDiagnostics.motion_jitter_risk === "MEDIUM" ? 76 : 48, status: visualFidelityDiagnostics.motion_jitter_risk === "LOW" ? "stable" : "watch", summary: `Secondary motion jitter risk: ${visualFidelityDiagnostics.motion_jitter_risk}.` },
+      { id: "camera-framing", label: "Anime camera framing", score: visualFidelityDiagnostics.camera_framing_score, status: "stable", summary: `${visualFidelityDiagnostics.shot_preset} applies bounded camera offset and subtle push-in.` },
+      { id: "face-framing-priority", label: "Face framing priority", score: visualFidelityDiagnostics.face_framing_priority, status: "stable", summary: "Camera framing favors the face and eyes while preserving readable hair and body silhouette." },
+      { id: "background-depth", label: "Background depth", score: visualFidelityDiagnostics.background_depth_score, status: "stable", summary: "Parallax chamber lines and subdued beacon depth cues support the character instead of dominating." },
+      { id: "cinematic-composition", label: "Cinematic composition", score: visualFidelityDiagnostics.cinematic_composition_score, status: "stable", summary: "Composition moves away from debug-centered sprite framing with low camera jitter risk." },
       { id: "scene-cohesion", label: "Anime character scene cohesion", score: visualFidelityDiagnostics.background_separation, status: "stable", summary: "Background supports the character instead of dominating." },
     ],
     artifact_diagnostics: [
@@ -898,6 +954,16 @@ function buildDiagnostics(
       `lower_fabric_motion_score=${visualFidelityDiagnostics.lower_fabric_motion_score}`,
       `secondary_motion_continuity=${visualFidelityDiagnostics.secondary_motion_continuity}`,
       `motion_jitter_risk=${visualFidelityDiagnostics.motion_jitter_risk}`,
+      `shot_preset=${visualFidelityDiagnostics.shot_preset}`,
+      `camera_framing_score=${visualFidelityDiagnostics.camera_framing_score}`,
+      `face_framing_priority=${visualFidelityDiagnostics.face_framing_priority}`,
+      `eye_visibility_score=${visualFidelityDiagnostics.eye_visibility_score}`,
+      `character_dominance_score=${visualFidelityDiagnostics.character_dominance_score}`,
+      `background_depth_score=${visualFidelityDiagnostics.background_depth_score}`,
+      `parallax_continuity_score=${visualFidelityDiagnostics.parallax_continuity_score}`,
+      `cinematic_composition_score=${visualFidelityDiagnostics.cinematic_composition_score}`,
+      `camera_motion_smoothness=${visualFidelityDiagnostics.camera_motion_smoothness}`,
+      `framing_jitter_risk=${visualFidelityDiagnostics.framing_jitter_risk}`,
       `visual_fidelity_score=${visualFidelityDiagnostics.visual_fidelity_score}`,
       `fidelity_tier=${visualFidelityDiagnostics.fidelity_tier}`,
     ],
@@ -984,6 +1050,9 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
   const secondaryMotionSequence = buildAnimeSecondaryMotionSequence({ profile: input.profile, frameCount, expressionStates: expressionSequence, motionPlans: motionSequence });
   const secondaryMotionSummary = summarizeAnimeSecondaryMotionDiagnostics(secondaryMotionSequence);
   const diagnosticSecondaryMotionState = buildAnimeSecondaryMotionState({ profile: input.profile, frameIndex: 2, frameCount, expressionState: expressionSequence[2], motionPlan: motionSequence[2] });
+  const cameraFramingSequence = buildAnimeCameraFramingSequence({ profile: input.profile, frameCount, expressionStates: expressionSequence });
+  const cameraFramingSummary = summarizeAnimeCameraFramingDiagnostics(cameraFramingSequence);
+  const diagnosticCameraFramingState = cameraFramingSequence[2] ?? buildAnimeCameraFramingState({ profile: input.profile, frameIndex: 2, frameCount, expressionState: expressionSequence[2] });
   const visualFidelityDiagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
     eyePlan: buildAnimeEyeRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
@@ -1013,6 +1082,8 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
       secondaryMotionContinuity: secondaryMotionSummary.secondary_motion_continuity,
       motionJitterRisk: secondaryMotionSummary.motion_jitter_risk,
     },
+    cameraFramingState: diagnosticCameraFramingState,
+    cameraFramingDiagnostics: cameraFramingSummary,
     truthCheck,
     outfitReadability: diagnosticBodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
@@ -1055,8 +1126,8 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     visualReviewNotes: [
       "A deterministic 2D anime character render is the primary subject with early anime fidelity active.",
       "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, expression-driven eyebrows and mouth, planned shoulders, tapered torso, segmented arms, simplified palms, cuffs, separated lower legs, grounded boots, and jacket silhouette for the selected profile.",
-      "The GIF should preserve stance identity with bounded fabric sway, deterministic partial blink, subtle gaze settle, coordinated hair sway, bang/side-lock motion, sleeve/cuff sway, lower fabric motion, and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
-      "Body/pose/motion/expression/secondary-motion polish is early deterministic raster art, not cinematic anime quality, detailed hand anatomy, dialogue, lip-sync, physics simulation, or neural motion synthesis.",
+      "The GIF should preserve stance identity with bounded fabric sway, deterministic partial blink, subtle gaze settle, coordinated hair sway, bang/side-lock motion, sleeve/cuff sway, lower fabric motion, face-priority framing, a small push-in/drift, and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
+      "Body/pose/motion/expression/secondary-motion/camera-framing polish is early deterministic raster art, not cinematic anime quality, detailed hand anatomy, dialogue, lip-sync, multi-shot sequencing, physics simulation, or neural motion synthesis.",
       "The beacon/chamber is rendered as supporting background only.",
       `Visual fidelity tier: ${visualFidelityDiagnostics.fidelity_tier} (${visualFidelityDiagnostics.visual_fidelity_score}/100).`,
       truthCheck.fallback_primitive_dominance ? "Fallback primitive dominance detected; do not claim success." : "Cube/beacon/drone fallback dominance is absent for this character render package.",
@@ -1136,6 +1207,16 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     `Lower fabric motion score: ${visualFidelityDiagnostics.lower_fabric_motion_score}/100`,
     `Secondary motion continuity: ${visualFidelityDiagnostics.secondary_motion_continuity}/100`,
     `Motion jitter risk: ${visualFidelityDiagnostics.motion_jitter_risk}`,
+    `Shot preset: ${visualFidelityDiagnostics.shot_preset}`,
+    `Camera framing score: ${visualFidelityDiagnostics.camera_framing_score}/100`,
+    `Face framing priority: ${visualFidelityDiagnostics.face_framing_priority}/100`,
+    `Eye visibility score: ${visualFidelityDiagnostics.eye_visibility_score}/100`,
+    `Character dominance score: ${visualFidelityDiagnostics.character_dominance_score}/100`,
+    `Background depth score: ${visualFidelityDiagnostics.background_depth_score}/100`,
+    `Parallax continuity score: ${visualFidelityDiagnostics.parallax_continuity_score}/100`,
+    `Cinematic composition score: ${visualFidelityDiagnostics.cinematic_composition_score}/100`,
+    `Camera motion smoothness: ${visualFidelityDiagnostics.camera_motion_smoothness}/100`,
+    `Framing jitter risk: ${visualFidelityDiagnostics.framing_jitter_risk}`,
     "",
     `First PNG to inspect: ${visualReviewPackage.firstPngToInspect ?? "none"}`,
     `GIF to inspect: ${visualReviewPackage.gifToInspect ?? "none"}`,

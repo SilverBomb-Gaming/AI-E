@@ -7,6 +7,7 @@ import type { AnimeLowerBodyPlan } from "./animeLowerBodyRenderer";
 import type { AnimeMotionContinuityPlan } from "./animeMotionContinuity";
 import type { AnimeExpressionState } from "./animeExpressionRenderer";
 import type { AnimeSecondaryMotionState } from "./animeSecondaryMotion";
+import type { AnimeCameraFramingDiagnostics, AnimeCameraFramingState, AnimeShotPreset } from "./animeCameraFraming";
 
 export type AnimeVisualFidelityTier = "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
 
@@ -53,6 +54,16 @@ export type AnimeVisualFidelityDiagnostics = {
   lower_fabric_motion_score: number;
   secondary_motion_continuity: number;
   motion_jitter_risk: "LOW" | "MEDIUM" | "HIGH";
+  shot_preset: AnimeShotPreset;
+  camera_framing_score: number;
+  face_framing_priority: number;
+  eye_visibility_score: number;
+  character_dominance_score: number;
+  background_depth_score: number;
+  parallax_continuity_score: number;
+  cinematic_composition_score: number;
+  camera_motion_smoothness: number;
+  framing_jitter_risk: "LOW" | "MEDIUM" | "HIGH";
   visual_fidelity_score: number;
   fidelity_tier: AnimeVisualFidelityTier;
 };
@@ -77,6 +88,8 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   motionPlan?: AnimeMotionContinuityPlan;
   expressionState?: AnimeExpressionState;
   secondaryMotionState?: AnimeSecondaryMotionState;
+  cameraFramingState?: AnimeCameraFramingState;
+  cameraFramingDiagnostics?: AnimeCameraFramingDiagnostics;
   truthCheck: AnimeCharacterTruthCheck;
   outfitReadability?: number;
   backgroundSeparation?: number;
@@ -135,6 +148,16 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   const lower_fabric_motion_score = input.secondaryMotionState?.lowerFabricMotionScore ?? 84;
   const secondary_motion_continuity = input.secondaryMotionState?.secondaryMotionContinuity ?? 88;
   const motion_jitter_risk = input.secondaryMotionState?.motionJitterRisk ?? "LOW";
+  const shot_preset = input.cameraFramingDiagnostics?.shot_preset ?? input.cameraFramingState?.shotPreset ?? "CENTERED_HERO_SHOT";
+  const camera_framing_score = input.cameraFramingDiagnostics?.camera_framing_score ?? 84;
+  const face_framing_priority = input.cameraFramingDiagnostics?.face_framing_priority ?? input.cameraFramingState?.facePriority ?? 86;
+  const eye_visibility_score = input.cameraFramingDiagnostics?.eye_visibility_score ?? 88;
+  const character_dominance_score = input.cameraFramingDiagnostics?.character_dominance_score ?? 90;
+  const background_depth_score = input.cameraFramingDiagnostics?.background_depth_score ?? 84;
+  const parallax_continuity_score = input.cameraFramingDiagnostics?.parallax_continuity_score ?? input.cameraFramingState?.framingContinuityScore ?? 86;
+  const cinematic_composition_score = input.cameraFramingDiagnostics?.cinematic_composition_score ?? 84;
+  const camera_motion_smoothness = input.cameraFramingDiagnostics?.camera_motion_smoothness ?? input.cameraFramingState?.framingContinuityScore ?? 86;
+  const framing_jitter_risk = input.cameraFramingDiagnostics?.framing_jitter_risk ?? "LOW";
   const pose_readability = input.poseReadability ?? average([pose_language_score, stance_balance_score, arm_readability_score]);
   const visual_fidelity_score = average([
     anime_face_readability,
@@ -178,6 +201,14 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     jacket_sway_readability,
     lower_fabric_motion_score,
     secondary_motion_continuity,
+    camera_framing_score,
+    face_framing_priority,
+    eye_visibility_score,
+    character_dominance_score,
+    background_depth_score,
+    parallax_continuity_score,
+    cinematic_composition_score,
+    camera_motion_smoothness,
   ]);
 
   return {
@@ -223,6 +254,16 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     lower_fabric_motion_score,
     secondary_motion_continuity,
     motion_jitter_risk,
+    shot_preset,
+    camera_framing_score,
+    face_framing_priority,
+    eye_visibility_score,
+    character_dominance_score,
+    background_depth_score,
+    parallax_continuity_score,
+    cinematic_composition_score,
+    camera_motion_smoothness,
+    framing_jitter_risk,
     visual_fidelity_score,
     fidelity_tier: classifyAnimeVisualFidelity(visual_fidelity_score, input.truthCheck),
   };

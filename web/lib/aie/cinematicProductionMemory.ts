@@ -1794,6 +1794,10 @@ export type CinematicGovernedPreviewQualityIndicatorId =
   | "cloth-motion"
   | "secondary-motion-continuity"
   | "motion-jitter-risk"
+  | "camera-framing"
+  | "face-framing-priority"
+  | "background-depth"
+  | "cinematic-composition"
   | "reveal-focus-preservation"
   | "drone-response-focus"
   | "aftermath-focus-balance"
@@ -2019,6 +2023,16 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   lower_fabric_motion_score?: number;
   secondary_motion_continuity?: number;
   motion_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
+  shot_preset?: "CENTERED_HERO_SHOT" | "SLIGHT_LOW_ANGLE_HERO" | "FACE_PRIORITY_MEDIUM_SHOT" | "THREE_QUARTER_ANIME_REVEAL" | "SUBTLE_PUSH_IN";
+  camera_framing_score?: number;
+  face_framing_priority?: number;
+  eye_visibility_score?: number;
+  character_dominance_score?: number;
+  background_depth_score?: number;
+  parallax_continuity_score?: number;
+  cinematic_composition_score?: number;
+  camera_motion_smoothness?: number;
+  framing_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
   lighting_stability_score: number;
   lighting_consistency_score: number;
   coherence_anchor_strength: number;
@@ -2077,6 +2091,16 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
     lower_fabric_motion_score?: number;
     secondary_motion_continuity?: number;
     motion_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
+    shot_preset?: "CENTERED_HERO_SHOT" | "SLIGHT_LOW_ANGLE_HERO" | "FACE_PRIORITY_MEDIUM_SHOT" | "THREE_QUARTER_ANIME_REVEAL" | "SUBTLE_PUSH_IN";
+    camera_framing_score?: number;
+    face_framing_priority?: number;
+    eye_visibility_score?: number;
+    character_dominance_score?: number;
+    background_depth_score?: number;
+    parallax_continuity_score?: number;
+    cinematic_composition_score?: number;
+    camera_motion_smoothness?: number;
+    framing_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };
@@ -2261,6 +2285,16 @@ export type CinematicGovernedPreviewDiagnostics = {
   lower_fabric_motion_score?: number;
   secondary_motion_continuity?: number;
   motion_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
+  shot_preset?: "CENTERED_HERO_SHOT" | "SLIGHT_LOW_ANGLE_HERO" | "FACE_PRIORITY_MEDIUM_SHOT" | "THREE_QUARTER_ANIME_REVEAL" | "SUBTLE_PUSH_IN";
+  camera_framing_score?: number;
+  face_framing_priority?: number;
+  eye_visibility_score?: number;
+  character_dominance_score?: number;
+  background_depth_score?: number;
+  parallax_continuity_score?: number;
+  cinematic_composition_score?: number;
+  camera_motion_smoothness?: number;
+  framing_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
   continuity_quality_indicators: CinematicGovernedPreviewQualityIndicator[];
   artifact_diagnostics: string[];
   frame_diagnostics: CinematicGovernedPreviewFrameDiagnostic[];
@@ -2315,6 +2349,16 @@ export type CinematicGovernedPreviewDiagnostics = {
     lower_fabric_motion_score?: number;
     secondary_motion_continuity?: number;
     motion_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
+    shot_preset?: "CENTERED_HERO_SHOT" | "SLIGHT_LOW_ANGLE_HERO" | "FACE_PRIORITY_MEDIUM_SHOT" | "THREE_QUARTER_ANIME_REVEAL" | "SUBTLE_PUSH_IN";
+    camera_framing_score?: number;
+    face_framing_priority?: number;
+    eye_visibility_score?: number;
+    character_dominance_score?: number;
+    background_depth_score?: number;
+    parallax_continuity_score?: number;
+    cinematic_composition_score?: number;
+    camera_motion_smoothness?: number;
+    framing_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };

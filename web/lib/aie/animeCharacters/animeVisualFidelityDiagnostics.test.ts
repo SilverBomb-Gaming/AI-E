@@ -11,6 +11,7 @@ import { buildAnimeLowerBodyPlan } from "./animeLowerBodyRenderer";
 import { buildAnimeMotionContinuityPlan } from "./animeMotionContinuity";
 import { buildAnimeExpressionState } from "./animeExpressionRenderer";
 import { buildAnimeSecondaryMotionState } from "./animeSecondaryMotion";
+import { buildAnimeCameraFramingSequence, buildAnimeCameraFramingState, summarizeAnimeCameraFramingDiagnostics } from "./animeCameraFraming";
 import { resolveAnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, classifyAnimeVisualFidelity } from "./animeVisualFidelityDiagnostics";
 import type { AnimeCharacterTruthCheck } from "./governedAnimeCharacterState";
@@ -42,6 +43,8 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
   const lowerBodyPlan = buildAnimeLowerBodyPlan({ profile, bodyPlan, posePreset, motionPlan });
   const expressionState = buildAnimeExpressionState({ profile, expression, frameIndex: 1, frameCount: 5 });
   const secondaryMotionState = buildAnimeSecondaryMotionState({ profile, frameIndex: 2, frameCount: 5, expressionState, motionPlan });
+  const cameraFramingState = buildAnimeCameraFramingState({ profile, frameIndex: 2, frameCount: 5, expressionState });
+  const cameraFramingDiagnostics = summarizeAnimeCameraFramingDiagnostics(buildAnimeCameraFramingSequence({ profile, frameCount: 5, expressionStates: [expressionState, expressionState, expressionState, expressionState, expressionState] }));
 
   const diagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile, expression }),
@@ -52,6 +55,8 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
     motionPlan,
     expressionState,
     secondaryMotionState,
+    cameraFramingState,
+    cameraFramingDiagnostics,
     truthCheck: truthCheck(),
     outfitReadability: bodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
@@ -99,6 +104,16 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
   assert.equal(diagnostics.lower_fabric_motion_score >= 88, true);
   assert.equal(diagnostics.secondary_motion_continuity >= 90, true);
   assert.equal(diagnostics.motion_jitter_risk, "LOW");
+  assert.equal(diagnostics.shot_preset, "SUBTLE_PUSH_IN");
+  assert.equal(diagnostics.camera_framing_score >= 88, true);
+  assert.equal(diagnostics.face_framing_priority >= 90, true);
+  assert.equal(diagnostics.eye_visibility_score >= 92, true);
+  assert.equal(diagnostics.character_dominance_score >= 92, true);
+  assert.equal(diagnostics.background_depth_score >= 88, true);
+  assert.equal(diagnostics.parallax_continuity_score >= 90, true);
+  assert.equal(diagnostics.cinematic_composition_score >= 88, true);
+  assert.equal(diagnostics.camera_motion_smoothness >= 90, true);
+  assert.equal(diagnostics.framing_jitter_risk, "LOW");
 });
 
 test("anime visual fidelity diagnostics block fallback dominance", () => {
