@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 const ALLOWED_SANDBOX_ROOTS = [
   path.join(".aie", "governed_micro_sequence_sandbox"),
   path.join(".aie", "governed_motion_preview_sandbox"),
+  path.join(".aie", "governed_anime_character_preview_sandbox"),
 ];
 
 function resolveAllowedAssetPath(repoRoot: string, requestedPath: string | null): string | null {
