@@ -192,6 +192,9 @@ test("approved character render executes bounded preview and reports anime diagn
   assert.equal(report.truthCheck.diagnostics_match_rendered_output, true);
   assert.notEqual(report.diagnostics?.active_beat_type, "BEACON_REVEAL");
   assert.equal(report.diagnostics?.active_focus_subject, "CHARACTER_FACE");
+  assert.equal(report.diagnostics?.anime_visual_fidelity_diagnostics?.fidelity_tier, "EARLY_ANIME");
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.visual_fidelity_score ?? 0) >= 90, true);
+  assert.equal(report.diagnostics?.artifact_diagnostics.some((entry) => entry === "fidelity_tier=EARLY_ANIME"), true);
   assert.equal(report.visualReviewPackage?.reviewLabel, "USER_VISUAL_CHECK_READY");
   assert.equal(report.characterApproved, true);
   assert.equal(report.poseTemplateId, "NEUTRAL_HERO_STANCE");
@@ -241,6 +244,8 @@ test("character-first renderer writes inspectable PNG GIF manifest diagnostics a
   assert.equal(manifest.focus_subject, "CHARACTER_FACE");
   assert.equal(manifest.anime_character_truth_check.renderer_path, "CHARACTER_FIRST");
   assert.equal(manifest.anime_character_truth_check.fallback_primitive_dominance, false);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.fidelity_tier, "EARLY_ANIME");
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.visual_fidelity_score >= 90, true);
   assert.equal(manifest.first_png_to_inspect.endsWith("anime_character_frame_001.png"), true);
 });
 

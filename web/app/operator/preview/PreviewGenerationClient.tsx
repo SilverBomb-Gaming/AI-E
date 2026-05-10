@@ -489,6 +489,8 @@ function DiagnosticsOverview({ diagnostics }: { diagnostics: CinematicGovernedPr
 }
 
 function CharacterDiagnosticsOverview({ report }: { report: AnimeCharacterReport }) {
+  const visualFidelity = report.diagnostics?.anime_visual_fidelity_diagnostics;
+
   return (
     <div className="mb-4 rounded-[1.25rem] border border-ocean/20 bg-ocean/5 p-4 text-sm leading-7 body-muted">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -508,6 +510,10 @@ function CharacterDiagnosticsOverview({ report }: { report: AnimeCharacterReport
         <p><strong className="text-ink">Character Primary Subject:</strong> {report.truthCheck.character_primary_subject ? "yes" : "no"}</p>
         <p><strong className="text-ink">Scaffold Status:</strong> {report.scaffoldStatus}</p>
         <p><strong className="text-ink">Visual Review:</strong> {report.visualReviewPackage?.reviewLabel ?? "not ready"}</p>
+        {visualFidelity ? <p><strong className="text-ink">Visual Fidelity Tier:</strong> {visualFidelity.fidelity_tier}</p> : null}
+        {visualFidelity ? <p><strong className="text-ink">Visual Fidelity Score:</strong> {visualFidelity.visual_fidelity_score}/100</p> : null}
+        {visualFidelity ? <p><strong className="text-ink">Anime Eye Quality:</strong> {visualFidelity.anime_eye_quality}/100</p> : null}
+        {visualFidelity ? <p><strong className="text-ink">Layered Hair Quality:</strong> {visualFidelity.layered_hair_quality}/100</p> : null}
       </div>
     </div>
   );

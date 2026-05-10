@@ -1986,6 +1986,18 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
     diagnostics_match_rendered_output: boolean;
     scaffold_status: "SCAFFOLD_ACTIVE" | "PARTIAL_REAL_OUTPUT" | "REAL_OUTPUT_ACTIVE";
   };
+  anime_visual_fidelity_diagnostics?: {
+    anime_face_readability: number;
+    anime_eye_quality: number;
+    layered_hair_quality: number;
+    silhouette_readability: number;
+    anime_style_strength: number;
+    outfit_readability: number;
+    background_separation: number;
+    pose_readability: number;
+    visual_fidelity_score: number;
+    fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
+  };
 };
 
 export type CinematicGovernedPreviewDiagnostics = {
@@ -2143,6 +2155,18 @@ export type CinematicGovernedPreviewDiagnostics = {
     fallback_primitive_dominance: boolean;
     diagnostics_match_rendered_output: boolean;
     scaffold_status: "SCAFFOLD_ACTIVE" | "PARTIAL_REAL_OUTPUT" | "REAL_OUTPUT_ACTIVE";
+  };
+  anime_visual_fidelity_diagnostics?: {
+    anime_face_readability: number;
+    anime_eye_quality: number;
+    layered_hair_quality: number;
+    silhouette_readability: number;
+    anime_style_strength: number;
+    outfit_readability: number;
+    background_separation: number;
+    pose_readability: number;
+    visual_fidelity_score: number;
+    fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };
 };
 

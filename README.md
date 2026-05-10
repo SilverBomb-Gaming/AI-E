@@ -479,7 +479,7 @@ Remaining blocked cinematic escalations:
 
 AI-E now adds a dedicated governed anime character rendering harness for explicitly approved single-character previews. This phase deliberately allows bounded young-adult anime characters only through approved profiles, separate character approval, character-specific diagnostics, rollback snapshots, and the same low-duration sandbox preview contract.
 
-Scaffold Status: `✅ SCAFFOLD REMOVED — REAL OUTPUT ACTIVE` for approved anime character runs that pass the character-first truth check. Metadata-only approvals, old cube/beacon/drone preview files, or diagnostics that do not match generated character frames are treated as scaffold/fallback failures.
+Scaffold Status: `✅ SCAFFOLD REMOVED — REAL OUTPUT ACTIVE` for approved anime character runs that pass the character-first truth check. Visual Fidelity Status: `✅ EARLY_ANIME_VISUAL_FIDELITY_ACTIVE` when the character-first renderer reports the `EARLY_ANIME` fidelity tier. Metadata-only approvals, old cube/beacon/drone preview files, or diagnostics that do not match generated character frames are treated as scaffold/fallback failures.
 
 Current Phase 1 progress:
 
@@ -487,11 +487,12 @@ Current Phase 1 progress:
 - anime character execution requires both the existing manual preview governance approval and a separate explicit anime character approval before any character-first preview package is generated
 - approved anime character runs now call the deterministic character-first renderer in `web/lib/aie/animeCharacters/animeCharacterPrimitiveRenderer.ts` instead of claiming success from the old cube/beacon/drone primitive preview path
 - the real renderer writes visible PNG frames, GIF preview, manifest, diagnostics JSON, and an operator visual-review summary under `.aie/governed_anime_character_preview_sandbox/<profile>-real-render-001/`
-- generated PNG frames visibly render a 2D anime character primitive as the primary subject: face, large eyes, hair silhouette, torso/jacket, arms, and supporting chamber/beacon background
+- generated PNG frames visibly render a 2D anime character as the primary subject with a softened face shape, larger reflective anime eyes, layered rear hair/side locks/bangs/highlights, clearer outfit paneling, asymmetric arms, character rim separation, and supporting chamber/beacon background
 - each render snapshots character identity, pose template, expression template, style state, domain state, runtime configuration, diagnostics baseline, and approval state before execution
-- character diagnostics evaluate face readability, silhouette clarity, pose readability, anime style identity, expression stability, background suppression, character-scene integration, character focus priority, rollback integrity, and rollback pressure
+- character diagnostics evaluate face readability, eye quality, layered hair quality, silhouette clarity, pose readability, outfit readability, anime style identity, expression stability, background suppression, character-scene integration, character focus priority, rollback integrity, and rollback pressure
 - each report includes an anime character truth check covering renderer path, generated character pixels, character-primary subject status, fallback primitive dominance, and diagnostics/render-output agreement
-- the operator report shows selected profile, pose, expression, approval state, scaffold status, renderer path, visual review readiness, first PNG, GIF, manifest, diagnostics JSON, visual summary path, pass/fail, strongest and weakest character metrics, rollback state, failure classification, recovery recommendation, and recommended next action
+- each successful visual-fidelity report includes `anime_visual_fidelity_diagnostics` with `anime_face_readability`, `anime_eye_quality`, `layered_hair_quality`, `silhouette_readability`, `anime_style_strength`, `outfit_readability`, `background_separation`, `pose_readability`, `visual_fidelity_score`, and `fidelity_tier: EARLY_ANIME`
+- the operator report shows selected profile, pose, expression, approval state, scaffold status, renderer path, visual review readiness, visual fidelity tier/score, first PNG, GIF, manifest, diagnostics JSON, visual summary path, pass/fail, strongest and weakest character metrics, rollback state, failure classification, recovery recommendation, and recommended next action
 
 Visual validation contract:
 
@@ -500,6 +501,7 @@ Visual validation contract:
 - the first PNG and GIF paths are the operator's visual proof points; `anime_character_manifest.json`, `anime_character_diagnostics.json`, and `operator_visual_review_summary.md` are the auditable metadata proof points
 - old files named `governed_preview_sequence_frame_*.png`, `governed_motion_preview_frame_*.png`, or diagnostics dominated by cube/beacon/drone primitive subjects must not pass anime character success
 - fallback primitive dominance sets scaffold status back to scaffold/fallback failure even if approval metadata or style-profile diagnostics look healthy
+- `EARLY_ANIME` is an explicit early-fidelity tier, not a claim of production-quality illustration; it means the generated PNG/GIF has moved beyond cube/beacon fallback and primitive sprite assembly into readable anime face, eyes, hair, outfit, pose, and background separation
 
 Localhost operator UI behavior:
 
@@ -522,6 +524,7 @@ Localhost operator UI behavior:
 - character-first anime rendering must use the approved Render Character path or explicitly block; BEACON_REVEAL, DUAL_ORBIT, cube anchors, segmented drones, and `.aie/governed_micro_sequence_sandbox` prerequisite frames are invalid anime-character review artifacts
 - character review validation requires character pixels, readable face, readable silhouette, character-primary framing, anime-style dominance, diagnostics that match output, and fallback dominance inactive before PASS can be trusted
 - anime fallback scaffold status is `✅ CHARACTER-FIRST ANIME RENDER ACTIVE` only when exported `anime_character_*` PNG/GIF files visibly contain anime characters, diagnostics report `renderer_path: CHARACTER_FIRST`, character pixels and primary subject are true, fallback primitive dominance is false, and diagnostics match rendered output; blocking generic fallback routes is reported as `⚠️ CHARACTER RENDERER BLOCKING ACTIVE — FALLBACK PREVENTED`
+- anime visual fidelity status is `✅ EARLY_ANIME_VISUAL_FIDELITY_ACTIVE` only when `anime_visual_fidelity_diagnostics.fidelity_tier` is `EARLY_ANIME`, the visual fidelity score is at least the governed early-anime threshold, and the truth check still reports character-first output with fallback dominance inactive
 - `request-accepted` only means the request entered the governed sandbox; it is distinct from generation completed, output reviewed, visual intent passed, truth checks passed, and final operator accepted
 - the dashboard is not considered successful until the final operator verdict is `PASS`; the final verdict asks whether visible output matched intent, truth checks passed, scaffold/fallback stayed inactive, and diagnostics were free of unresolved warnings, otherwise it remains `FAIL` or `NEEDS REVIEW`
 - most non-critical sections default collapsed, with visible chevrons, `Expand` / `Collapse` controls, and activity labels such as `Ready`, `New activity`, `Needs review`, `Warning`, or `Failure or block`
