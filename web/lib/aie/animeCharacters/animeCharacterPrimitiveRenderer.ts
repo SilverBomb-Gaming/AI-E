@@ -9,6 +9,8 @@ import { buildAnimeEyeRenderPlan, type AnimeEyeRenderPlan } from "./animeEyeRend
 import { buildAnimeFaceRenderPlan, type AnimeFaceRenderPlan } from "./animeFaceRenderer";
 import { buildAnimeHairRenderPlan, type AnimeHairLayer, type AnimeHairRenderPlan } from "./animeHairRenderer";
 import { buildAnimeBodyPlan, type AnimeBodyPlan } from "./animeBodyRenderer";
+import { buildAnimeLowerBodyPlan, type AnimeLowerBodyLegPlan, type AnimeLowerBodyPlan } from "./animeLowerBodyRenderer";
+import { buildAnimeMotionContinuityPlan, buildAnimeMotionContinuitySequence, summarizeAnimeMotionContinuity, type AnimeMotionContinuityPlan } from "./animeMotionContinuity";
 import { resolveAnimePoseLanguagePreset, type AnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, type AnimeVisualFidelityDiagnostics } from "./animeVisualFidelityDiagnostics";
 import type {
@@ -239,12 +241,110 @@ function drawPlannedArm(input: {
   drawLine(input.image, handX - input.side * 1.5, handY + 3.2, handX + input.side * 3.8, handY + 4, [116, 73, 76, 118], 0.7, true);
 }
 
+function drawPlannedLeg(input: {
+  image: MutableImage;
+  centerX: number;
+  baseY: number;
+  leg: AnimeLowerBodyLegPlan;
+  bootAccent: RgbaColor;
+  legColor: RgbaColor;
+  legShadow: RgbaColor;
+  legHighlight: RgbaColor;
+  outline: RgbaColor;
+}) {
+  const hipX = input.centerX + input.leg.hipX;
+  const hipY = input.baseY + input.leg.hipY;
+  const kneeX = input.centerX + input.leg.kneeX;
+  const kneeY = input.baseY + input.leg.kneeY;
+  const ankleX = input.centerX + input.leg.ankleX;
+  const ankleY = input.baseY + input.leg.ankleY;
+
+  drawLine(input.image, hipX, hipY, kneeX, kneeY, input.outline, input.leg.thighWidth + 2, true);
+  drawLine(input.image, kneeX, kneeY, ankleX, ankleY, input.outline, input.leg.calfWidth + 2, true);
+  drawLine(input.image, hipX, hipY, kneeX, kneeY, input.legColor, input.leg.thighWidth, true);
+  drawLine(input.image, kneeX, kneeY, ankleX, ankleY, input.legShadow, input.leg.calfWidth, true);
+  drawLine(input.image, hipX + (kneeX > hipX ? 1.6 : -1.6), hipY + 4, kneeX + (ankleX > kneeX ? 1.2 : -1.2), kneeY - 2, input.legHighlight, 1.1, true);
+  drawLine(input.image, kneeX, kneeY + 3, ankleX, ankleY - 4, input.legHighlight, 0.95, true);
+  drawEllipse(input.image, kneeX, kneeY, input.leg.kneeWidth, input.leg.kneeWidth * 0.58, input.outline, true);
+  drawEllipse(input.image, kneeX, kneeY, input.leg.kneeWidth - 1.5, input.leg.kneeWidth * 0.38, input.legColor, true);
+  drawLine(input.image, kneeX - 4, kneeY + 1, kneeX + 4, kneeY + 1, input.bootAccent, 1, true);
+}
+
+function drawPlannedFoot(input: {
+  image: MutableImage;
+  centerX: number;
+  baseY: number;
+  foot: AnimeLowerBodyPlan["leftFoot"];
+  bootColor: RgbaColor;
+  bootAccent: RgbaColor;
+  outline: RgbaColor;
+}) {
+  const footX = input.centerX + input.foot.anchorX;
+  const footY = input.baseY + input.foot.anchorY;
+  drawEllipse(input.image, footX, footY + 2.1, input.foot.contactShadowWidth + 2, 3.4, [5, 8, 16, 152]);
+  drawEllipse(input.image, footX, footY, input.foot.width * 0.62, input.foot.height + 0.8, input.outline, true);
+  drawEllipse(input.image, footX + input.foot.toeDirection * 4, footY - 0.2, input.foot.width * 0.55, input.foot.height * 0.82, input.bootColor, true);
+  drawLine(input.image, footX - input.foot.toeDirection * 4, footY + 1.4, footX + input.foot.toeDirection * 10, footY + 1.2, input.outline, 1.2, true);
+  drawLine(input.image, footX - input.foot.toeDirection * 3, footY - 1.4, footX + input.foot.toeDirection * 10, footY - 1.6, input.bootAccent, 1.3, true);
+}
+
+function drawPlannedLowerBody(input: {
+  image: MutableImage;
+  centerX: number;
+  baseY: number;
+  lowerBodyPlan: AnimeLowerBodyPlan;
+  jacket: RgbaColor;
+  accent: RgbaColor;
+  outline: RgbaColor;
+}) {
+  const legColor: RgbaColor = [37, 43, 62, 255];
+  const legShadow: RgbaColor = [25, 29, 45, 255];
+  const legHighlight: RgbaColor = [74, 83, 108, 210];
+  const bootColor: RgbaColor = [18, 20, 32, 255];
+  const hipY = input.baseY + 1;
+  drawQuad(
+    input.image,
+    input.centerX - input.lowerBodyPlan.hipWidth / 2,
+    hipY - 3,
+    input.centerX + input.lowerBodyPlan.hipWidth / 2,
+    hipY - 3,
+    input.centerX + input.lowerBodyPlan.waistTransitionWidth / 2,
+    hipY + input.lowerBodyPlan.lowerJacketOverlap,
+    input.centerX - input.lowerBodyPlan.waistTransitionWidth / 2,
+    hipY + input.lowerBodyPlan.lowerJacketOverlap,
+    input.outline,
+    true,
+  );
+  drawQuad(
+    input.image,
+    input.centerX - input.lowerBodyPlan.hipWidth / 2 + 3,
+    hipY - 2,
+    input.centerX + input.lowerBodyPlan.hipWidth / 2 - 3,
+    hipY - 2,
+    input.centerX + input.lowerBodyPlan.waistTransitionWidth / 2 - 4,
+    hipY + input.lowerBodyPlan.lowerJacketOverlap - 2,
+    input.centerX - input.lowerBodyPlan.waistTransitionWidth / 2 + 4,
+    hipY + input.lowerBodyPlan.lowerJacketOverlap - 2,
+    input.jacket,
+    true,
+  );
+  drawLine(input.image, input.centerX - 21, hipY + 8, input.centerX + 20, hipY + 8, input.accent, 1.2, true);
+  drawLine(input.image, input.centerX, hipY + 6, input.centerX, hipY + input.lowerBodyPlan.lowerJacketOverlap + 9, [8, 10, 18, 178], 1.1, true);
+
+  drawPlannedLeg({ image: input.image, centerX: input.centerX, baseY: input.baseY, leg: input.lowerBodyPlan.leftLeg, bootAccent: input.accent, legColor, legShadow, legHighlight, outline: input.outline });
+  drawPlannedLeg({ image: input.image, centerX: input.centerX, baseY: input.baseY, leg: input.lowerBodyPlan.rightLeg, bootAccent: input.accent, legColor, legShadow, legHighlight, outline: input.outline });
+  drawPlannedFoot({ image: input.image, centerX: input.centerX, baseY: input.baseY, foot: input.lowerBodyPlan.leftFoot, bootColor, bootAccent: input.accent, outline: input.outline });
+  drawPlannedFoot({ image: input.image, centerX: input.centerX, baseY: input.baseY, foot: input.lowerBodyPlan.rightFoot, bootColor, bootAccent: input.accent, outline: input.outline });
+}
+
 function drawPlannedAnimeBody(input: {
   image: MutableImage;
   centerX: number;
   neckY: number;
   profile: AnimeCharacterProfile;
   bodyPlan: AnimeBodyPlan;
+  lowerBodyPlan: AnimeLowerBodyPlan;
+  motionPlan: AnimeMotionContinuityPlan;
   skinShadow: RgbaColor;
   jacket: RgbaColor;
   jacketLight: RgbaColor;
@@ -262,7 +362,7 @@ function drawPlannedAnimeBody(input: {
   const leftWaistX = centerX - bodyPlan.waistWidth / 2 + torsoLean;
   const rightWaistX = centerX + bodyPlan.waistWidth / 2 + torsoLean;
   const hemY = waistY + bodyPlan.lowerGarmentLength;
-  const fabricSway = bodyPlan.fabricFlow;
+  const fabricSway = bodyPlan.fabricFlow + input.motionPlan.fabricSway;
   const centerPanel = [235, 241, 248, 255] as const;
   const shadowPanel: RgbaColor = input.profile.id === "CHARACTER_005" ? [14, 15, 24, 255] : [26, 43, 83, 255];
 
@@ -283,15 +383,15 @@ function drawPlannedAnimeBody(input: {
   drawLine(image, centerX - 17, waistY + 4, centerX - 23 + fabricSway, hemY - 4, accent, 1.4, true);
   drawLine(image, centerX + 19, waistY + 3, centerX + 26 + fabricSway, hemY - 6, accent, 1.4, true);
 
-  const footY = Math.min(244, hemY + 7);
-  drawLine(image, centerX - bodyPlan.stanceWidth / 2, hemY - 2, centerX - bodyPlan.stanceWidth / 2 - 6, footY, outline, 4.2, true);
-  drawLine(image, centerX + bodyPlan.stanceWidth / 2, hemY - 5, centerX + bodyPlan.stanceWidth / 2 + 6, footY, outline, 4.2, true);
-  drawLine(image, centerX - bodyPlan.stanceWidth / 2, hemY + 4, centerX - bodyPlan.stanceWidth / 2 - 5, footY - 2, [31, 35, 49, 255], 2.4, true);
-  drawLine(image, centerX + bodyPlan.stanceWidth / 2, hemY + 1, centerX + bodyPlan.stanceWidth / 2 + 5, footY - 2, [31, 35, 49, 255], 2.4, true);
-  drawEllipse(image, centerX - bodyPlan.stanceWidth / 2 - 8, footY + 1, 10, 3.6, outline, true);
-  drawEllipse(image, centerX + bodyPlan.stanceWidth / 2 + 8, footY + 1, 10, 3.6, outline, true);
-  drawLine(image, centerX - bodyPlan.stanceWidth / 2 - 15, footY, centerX - bodyPlan.stanceWidth / 2 - 3, footY, accent, 0.9, true);
-  drawLine(image, centerX + bodyPlan.stanceWidth / 2 + 3, footY, centerX + bodyPlan.stanceWidth / 2 + 15, footY, accent, 0.9, true);
+  drawPlannedLowerBody({
+    image,
+    centerX: centerX + input.lowerBodyPlan.bodyBalanceCenter * 0.2,
+    baseY: waistY - input.lowerBodyPlan.lowerJacketOverlap + input.motionPlan.verticalSettle,
+    lowerBodyPlan: input.lowerBodyPlan,
+    jacket,
+    accent,
+    outline,
+  });
 
   drawPlannedArm({ image, shoulderX: leftShoulderX + 2, shoulderY: leftShoulderY + 7, bodyPlan, side: -1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline });
   drawPlannedArm({ image, shoulderX: rightShoulderX - 2, shoulderY: rightShoulderY + 7, bodyPlan, side: 1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline });
@@ -303,7 +403,9 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
   const eyePlan = buildAnimeEyeRenderPlan({ profile, expression: expressionTemplate });
   const hairPlan = buildAnimeHairRenderPlan({ profile, frameIndex });
   const posePreset = resolveAnimePoseLanguagePreset({ profile, poseTemplate });
+  const motionPlan = buildAnimeMotionContinuityPlan({ frameIndex, frameCount: 5, posePreset });
   const bodyPlan = buildAnimeBodyPlan({ profile, posePreset, frameIndex });
+  const lowerBodyPlan = buildAnimeLowerBodyPlan({ profile, bodyPlan, posePreset, motionPlan });
   const centerX = facePlan.centerX + (profile.id === "CHARACTER_002" ? 3 : 0);
   const outline: RgbaColor = [17, 22, 42, 255];
   const skin = rgba(facePlan.skinBase);
@@ -348,6 +450,8 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
     neckY: 121,
     profile,
     bodyPlan,
+    lowerBodyPlan,
+    motionPlan,
     skinShadow,
     jacket,
     jacketLight,
@@ -531,6 +635,14 @@ function buildFrameDiagnostic(frameIndex: number, truthCheck: AnimeCharacterTrut
     limb_continuity_score: visualFidelityDiagnostics.limb_continuity_score,
     hand_position_stability: visualFidelityDiagnostics.hand_position_stability,
     pose_frame_consistency: visualFidelityDiagnostics.pose_frame_consistency,
+    lower_body_readability: visualFidelityDiagnostics.lower_body_readability,
+    foot_grounding_score: visualFidelityDiagnostics.foot_grounding_score,
+    stance_grounding_score: visualFidelityDiagnostics.stance_grounding_score,
+    waist_transition_score: visualFidelityDiagnostics.waist_transition_score,
+    motion_continuity_score: visualFidelityDiagnostics.motion_continuity_score,
+    frame_interpolation_score: visualFidelityDiagnostics.frame_interpolation_score,
+    fabric_motion_score: visualFidelityDiagnostics.fabric_motion_score,
+    animation_smoothness_score: visualFidelityDiagnostics.animation_smoothness_score,
     lighting_stability_score: 96,
     lighting_consistency_score: 96,
     coherence_anchor_strength: 98,
@@ -628,6 +740,14 @@ function buildDiagnostics(
     limb_continuity_score: visualFidelityDiagnostics.limb_continuity_score,
     hand_position_stability: visualFidelityDiagnostics.hand_position_stability,
     pose_frame_consistency: visualFidelityDiagnostics.pose_frame_consistency,
+    lower_body_readability: visualFidelityDiagnostics.lower_body_readability,
+    foot_grounding_score: visualFidelityDiagnostics.foot_grounding_score,
+    stance_grounding_score: visualFidelityDiagnostics.stance_grounding_score,
+    waist_transition_score: visualFidelityDiagnostics.waist_transition_score,
+    motion_continuity_score: visualFidelityDiagnostics.motion_continuity_score,
+    frame_interpolation_score: visualFidelityDiagnostics.frame_interpolation_score,
+    fabric_motion_score: visualFidelityDiagnostics.fabric_motion_score,
+    animation_smoothness_score: visualFidelityDiagnostics.animation_smoothness_score,
     phrase_continuity_score: 96,
     transition_smoothness_score: 96,
     visual_continuity_score: 97,
@@ -639,6 +759,10 @@ function buildDiagnostics(
       { id: "multi-entity-silhouette", label: "Layered anime hair", score: visualFidelityDiagnostics.layered_hair_quality, status: "stable", summary: "Hair uses rear volume, side locks, bangs, and highlight streaks." },
       { id: "body-silhouette", label: "Anime body silhouette", score: visualFidelityDiagnostics.body_silhouette_score, status: "stable", summary: "Shoulders, tapered torso, arms, palms, cuffs, and stance are generated from a deterministic body plan." },
       { id: "outfit-flow", label: "Outfit flow", score: visualFidelityDiagnostics.outfit_flow_score, status: "stable", summary: "Jacket panels, collar, trim, sleeve cuffs, and lower fabric accents are separated from the face focus." },
+      { id: "lower-body-readability", label: "Lower body readability", score: visualFidelityDiagnostics.lower_body_readability, status: "stable", summary: "Hip transition, separated legs, knee zones, and tapered lower legs support the torso." },
+      { id: "foot-grounding", label: "Foot grounding", score: visualFidelityDiagnostics.foot_grounding_score, status: "stable", summary: "Boot shapes and contact shadows anchor the stance to the chamber floor." },
+      { id: "motion-continuity", label: "Motion continuity", score: visualFidelityDiagnostics.motion_continuity_score, status: "stable", summary: "Frame-to-frame pose easing preserves stance and reduces sprite-like popping." },
+      { id: "fabric-motion", label: "Fabric motion", score: visualFidelityDiagnostics.fabric_motion_score, status: "stable", summary: "Lower jacket flaps use bounded continuity with hair/fabric synchronization." },
       { id: "scene-cohesion", label: "Anime character scene cohesion", score: visualFidelityDiagnostics.background_separation, status: "stable", summary: "Background supports the character instead of dominating." },
     ],
     artifact_diagnostics: [
@@ -660,6 +784,14 @@ function buildDiagnostics(
       `limb_continuity_score=${visualFidelityDiagnostics.limb_continuity_score}`,
       `hand_position_stability=${visualFidelityDiagnostics.hand_position_stability}`,
       `pose_frame_consistency=${visualFidelityDiagnostics.pose_frame_consistency}`,
+      `lower_body_readability=${visualFidelityDiagnostics.lower_body_readability}`,
+      `foot_grounding_score=${visualFidelityDiagnostics.foot_grounding_score}`,
+      `stance_grounding_score=${visualFidelityDiagnostics.stance_grounding_score}`,
+      `waist_transition_score=${visualFidelityDiagnostics.waist_transition_score}`,
+      `motion_continuity_score=${visualFidelityDiagnostics.motion_continuity_score}`,
+      `frame_interpolation_score=${visualFidelityDiagnostics.frame_interpolation_score}`,
+      `fabric_motion_score=${visualFidelityDiagnostics.fabric_motion_score}`,
+      `animation_smoothness_score=${visualFidelityDiagnostics.animation_smoothness_score}`,
       `visual_fidelity_score=${visualFidelityDiagnostics.visual_fidelity_score}`,
       `fidelity_tier=${visualFidelityDiagnostics.fidelity_tier}`,
     ],
@@ -736,18 +868,23 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
   });
   const diagnosticPosePreset = resolveAnimePoseLanguagePreset({ profile: input.profile, poseTemplate: input.poseTemplate });
   const diagnosticBodyPlan = buildAnimeBodyPlan({ profile: input.profile, posePreset: diagnosticPosePreset, frameIndex: 2 });
+  const diagnosticMotionPlan = buildAnimeMotionContinuityPlan({ frameIndex: 2, frameCount, posePreset: diagnosticPosePreset });
+  const diagnosticLowerBodyPlan = buildAnimeLowerBodyPlan({ profile: input.profile, bodyPlan: diagnosticBodyPlan, posePreset: diagnosticPosePreset, motionPlan: diagnosticMotionPlan });
+  const motionContinuitySummary = summarizeAnimeMotionContinuity(buildAnimeMotionContinuitySequence({ frameCount, posePreset: diagnosticPosePreset }));
   const visualFidelityDiagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
     eyePlan: buildAnimeEyeRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
     hairPlan: buildAnimeHairRenderPlan({ profile: input.profile, frameIndex: 2 }),
     bodyPlan: diagnosticBodyPlan,
+    lowerBodyPlan: diagnosticLowerBodyPlan,
+    motionPlan: diagnosticMotionPlan,
     truthCheck,
     outfitReadability: diagnosticBodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
     poseReadability: diagnosticBodyPlan.stanceBalanceScore,
-    limbContinuityScore: 94,
+    limbContinuityScore: motionContinuitySummary.motion_continuity_score,
     handPositionStability: 93,
-    poseFrameConsistency: 95,
+    poseFrameConsistency: motionContinuitySummary.stance_preservation_score,
   });
   const frameDiagnostics = frames.map((_, index) => buildFrameDiagnostic(index, truthCheck, visualFidelityDiagnostics));
   const diagnostics = buildDiagnostics(input.profile, frameDiagnostics, truthCheck, visualFidelityDiagnostics);
@@ -782,8 +919,9 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     shouldUserInspect: true,
     visualReviewNotes: [
       "A deterministic 2D anime character render is the primary subject with early anime fidelity active.",
-      "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, planned shoulders, tapered torso, segmented arms, simplified palms, cuffs, and jacket silhouette for the selected profile.",
-      "Body/pose polish is early deterministic raster art, not cinematic anime quality or detailed hand anatomy.",
+      "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, planned shoulders, tapered torso, segmented arms, simplified palms, cuffs, separated lower legs, grounded boots, and jacket silhouette for the selected profile.",
+      "The GIF should preserve stance identity with bounded fabric sway and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
+      "Body/pose/motion polish is early deterministic raster art, not cinematic anime quality, detailed hand anatomy, or neural motion synthesis.",
       "The beacon/chamber is rendered as supporting background only.",
       `Visual fidelity tier: ${visualFidelityDiagnostics.fidelity_tier} (${visualFidelityDiagnostics.visual_fidelity_score}/100).`,
       truthCheck.fallback_primitive_dominance ? "Fallback primitive dominance detected; do not claim success." : "Cube/beacon/drone fallback dominance is absent for this character render package.",
@@ -839,6 +977,14 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     `Pose language score: ${visualFidelityDiagnostics.pose_language_score}/100`,
     `Outfit flow score: ${visualFidelityDiagnostics.outfit_flow_score}/100`,
     `Pose frame consistency: ${visualFidelityDiagnostics.pose_frame_consistency}/100`,
+    `Lower body readability: ${visualFidelityDiagnostics.lower_body_readability}/100`,
+    `Foot grounding score: ${visualFidelityDiagnostics.foot_grounding_score}/100`,
+    `Stance grounding score: ${visualFidelityDiagnostics.stance_grounding_score}/100`,
+    `Waist transition score: ${visualFidelityDiagnostics.waist_transition_score}/100`,
+    `Motion continuity score: ${visualFidelityDiagnostics.motion_continuity_score}/100`,
+    `Frame interpolation score: ${visualFidelityDiagnostics.frame_interpolation_score}/100`,
+    `Fabric motion score: ${visualFidelityDiagnostics.fabric_motion_score}/100`,
+    `Animation smoothness score: ${visualFidelityDiagnostics.animation_smoothness_score}/100`,
     "",
     `First PNG to inspect: ${visualReviewPackage.firstPngToInspect ?? "none"}`,
     `GIF to inspect: ${visualReviewPackage.gifToInspect ?? "none"}`,

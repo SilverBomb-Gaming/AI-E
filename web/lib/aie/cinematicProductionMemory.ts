@@ -1782,6 +1782,10 @@ export type CinematicGovernedPreviewQualityIndicatorId =
   | "subject-readability"
   | "body-silhouette"
   | "outfit-flow"
+  | "lower-body-readability"
+  | "foot-grounding"
+  | "motion-continuity"
+  | "fabric-motion"
   | "reveal-focus-preservation"
   | "drone-response-focus"
   | "aftermath-focus-balance"
@@ -1983,6 +1987,14 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   limb_continuity_score?: number;
   hand_position_stability?: number;
   pose_frame_consistency?: number;
+  lower_body_readability?: number;
+  foot_grounding_score?: number;
+  stance_grounding_score?: number;
+  waist_transition_score?: number;
+  motion_continuity_score?: number;
+  frame_interpolation_score?: number;
+  fabric_motion_score?: number;
+  animation_smoothness_score?: number;
   lighting_stability_score: number;
   lighting_consistency_score: number;
   coherence_anchor_strength: number;
@@ -2017,6 +2029,14 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
     limb_continuity_score?: number;
     hand_position_stability?: number;
     pose_frame_consistency?: number;
+    lower_body_readability?: number;
+    foot_grounding_score?: number;
+    stance_grounding_score?: number;
+    waist_transition_score?: number;
+    motion_continuity_score?: number;
+    frame_interpolation_score?: number;
+    fabric_motion_score?: number;
+    animation_smoothness_score?: number;
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };
@@ -2177,6 +2197,14 @@ export type CinematicGovernedPreviewDiagnostics = {
   limb_continuity_score?: number;
   hand_position_stability?: number;
   pose_frame_consistency?: number;
+  lower_body_readability?: number;
+  foot_grounding_score?: number;
+  stance_grounding_score?: number;
+  waist_transition_score?: number;
+  motion_continuity_score?: number;
+  frame_interpolation_score?: number;
+  fabric_motion_score?: number;
+  animation_smoothness_score?: number;
   continuity_quality_indicators: CinematicGovernedPreviewQualityIndicator[];
   artifact_diagnostics: string[];
   frame_diagnostics: CinematicGovernedPreviewFrameDiagnostic[];
@@ -2207,6 +2235,14 @@ export type CinematicGovernedPreviewDiagnostics = {
     limb_continuity_score?: number;
     hand_position_stability?: number;
     pose_frame_consistency?: number;
+    lower_body_readability?: number;
+    foot_grounding_score?: number;
+    stance_grounding_score?: number;
+    waist_transition_score?: number;
+    motion_continuity_score?: number;
+    frame_interpolation_score?: number;
+    fabric_motion_score?: number;
+    animation_smoothness_score?: number;
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };

@@ -3,6 +3,8 @@ import type { AnimeEyeRenderPlan } from "./animeEyeRenderer";
 import type { AnimeFaceRenderPlan } from "./animeFaceRenderer";
 import type { AnimeHairRenderPlan } from "./animeHairRenderer";
 import type { AnimeBodyPlan } from "./animeBodyRenderer";
+import type { AnimeLowerBodyPlan } from "./animeLowerBodyRenderer";
+import type { AnimeMotionContinuityPlan } from "./animeMotionContinuity";
 
 export type AnimeVisualFidelityTier = "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
 
@@ -25,6 +27,14 @@ export type AnimeVisualFidelityDiagnostics = {
   limb_continuity_score: number;
   hand_position_stability: number;
   pose_frame_consistency: number;
+  lower_body_readability: number;
+  foot_grounding_score: number;
+  stance_grounding_score: number;
+  waist_transition_score: number;
+  motion_continuity_score: number;
+  frame_interpolation_score: number;
+  fabric_motion_score: number;
+  animation_smoothness_score: number;
   visual_fidelity_score: number;
   fidelity_tier: AnimeVisualFidelityTier;
 };
@@ -45,6 +55,8 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   eyePlan: AnimeEyeRenderPlan;
   hairPlan: AnimeHairRenderPlan;
   bodyPlan?: AnimeBodyPlan;
+  lowerBodyPlan?: AnimeLowerBodyPlan;
+  motionPlan?: AnimeMotionContinuityPlan;
   truthCheck: AnimeCharacterTruthCheck;
   outfitReadability?: number;
   backgroundSeparation?: number;
@@ -79,6 +91,14 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   const limb_continuity_score = input.limbContinuityScore ?? 93;
   const hand_position_stability = input.handPositionStability ?? 92;
   const pose_frame_consistency = input.poseFrameConsistency ?? 94;
+  const lower_body_readability = input.lowerBodyPlan?.lowerBodyReadability ?? 82;
+  const foot_grounding_score = input.lowerBodyPlan?.footGroundingScore ?? 78;
+  const stance_grounding_score = input.lowerBodyPlan?.stanceGroundingScore ?? stance_balance_score;
+  const waist_transition_score = input.lowerBodyPlan?.waistTransitionScore ?? torso_readability_score;
+  const motion_continuity_score = input.motionPlan?.limbContinuityScore ?? limb_continuity_score;
+  const frame_interpolation_score = input.motionPlan?.frameInterpolationScore ?? 88;
+  const fabric_motion_score = input.lowerBodyPlan?.fabricMotionScore ?? input.motionPlan?.fabricContinuityScore ?? outfit_flow_score;
+  const animation_smoothness_score = input.motionPlan?.animationSmoothnessScore ?? 88;
   const pose_readability = input.poseReadability ?? average([pose_language_score, stance_balance_score, arm_readability_score]);
   const visual_fidelity_score = average([
     anime_face_readability,
@@ -99,6 +119,14 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     limb_continuity_score,
     hand_position_stability,
     pose_frame_consistency,
+    lower_body_readability,
+    foot_grounding_score,
+    stance_grounding_score,
+    waist_transition_score,
+    motion_continuity_score,
+    frame_interpolation_score,
+    fabric_motion_score,
+    animation_smoothness_score,
   ]);
 
   return {
@@ -120,6 +148,14 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     limb_continuity_score,
     hand_position_stability,
     pose_frame_consistency,
+    lower_body_readability,
+    foot_grounding_score,
+    stance_grounding_score,
+    waist_transition_score,
+    motion_continuity_score,
+    frame_interpolation_score,
+    fabric_motion_score,
+    animation_smoothness_score,
     visual_fidelity_score,
     fidelity_tier: classifyAnimeVisualFidelity(visual_fidelity_score, input.truthCheck),
   };
