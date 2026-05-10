@@ -11,6 +11,7 @@ import { buildAnimeHairRenderPlan, type AnimeHairLayer, type AnimeHairRenderPlan
 import { buildAnimeBodyPlan, type AnimeBodyPlan } from "./animeBodyRenderer";
 import { buildAnimeLowerBodyPlan, type AnimeLowerBodyLegPlan, type AnimeLowerBodyPlan } from "./animeLowerBodyRenderer";
 import { buildAnimeMotionContinuityPlan, buildAnimeMotionContinuitySequence, summarizeAnimeMotionContinuity, type AnimeMotionContinuityPlan } from "./animeMotionContinuity";
+import { buildAnimeExpressionSequence, buildAnimeExpressionState, summarizeAnimeExpressionDiagnostics, type AnimeExpressionState } from "./animeExpressionRenderer";
 import { resolveAnimePoseLanguagePreset, type AnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, type AnimeVisualFidelityDiagnostics } from "./animeVisualFidelityDiagnostics";
 import type {
@@ -192,17 +193,53 @@ function drawHairLayer(image: MutableImage, centerX: number, layer: AnimeHairLay
   );
 }
 
-function drawAnimeEye(image: MutableImage, centerX: number, centerY: number, eyePlan: AnimeEyeRenderPlan, side: -1 | 1, outline: RgbaColor) {
+function drawAnimeEye(image: MutableImage, centerX: number, centerY: number, eyePlan: AnimeEyeRenderPlan, expressionState: AnimeExpressionState, side: -1 | 1, outline: RgbaColor, skin: RgbaColor) {
   const eyeCenterX = centerX + side * 14 + side * eyePlan.symmetryCorrection;
-  drawEllipse(image, eyeCenterX, centerY, eyePlan.irisRadiusX + 3.2, eyePlan.irisRadiusY + 2.8, outline, true);
-  drawEllipse(image, eyeCenterX, centerY, eyePlan.irisRadiusX + 1.4, eyePlan.irisRadiusY + 1.2, [248, 254, 255, 255], true);
-  drawEllipse(image, eyeCenterX, centerY + 1, eyePlan.irisRadiusX, eyePlan.irisRadiusY, rgba(eyePlan.irisColor), true);
-  drawEllipse(image, eyeCenterX, centerY + 5, eyePlan.irisRadiusX - 1.5, 4.1, rgba(eyePlan.irisColor, 116), true);
-  drawEllipse(image, eyeCenterX, centerY + 1, eyePlan.pupilRadius, eyePlan.pupilRadius + 1.6, [16, 24, 42, 235], true);
-  drawEllipse(image, eyeCenterX + eyePlan.highlightOffsetX, centerY + eyePlan.highlightOffsetY, eyePlan.highlightRadius, eyePlan.highlightRadius + 0.8, [242, 255, 255, 255], true);
-  drawEllipse(image, eyeCenterX + 2.5, centerY + 4, 1.2, 1.6, [208, 255, 255, 210], true);
+  const visibleEyeRadiusY = Math.max(2.6, eyePlan.irisRadiusY * expressionState.eyeOpenAmount);
+  const gazeX = expressionState.gazeOffsetX * side;
+  const gazeY = expressionState.gazeOffsetY;
+  drawEllipse(image, eyeCenterX, centerY, eyePlan.irisRadiusX + 3.2, visibleEyeRadiusY + 2.8, outline, true);
+  drawEllipse(image, eyeCenterX, centerY, eyePlan.irisRadiusX + 1.4, visibleEyeRadiusY + 1.2, [248, 254, 255, 255], true);
+  drawEllipse(image, eyeCenterX + gazeX, centerY + 1 + gazeY, eyePlan.irisRadiusX, visibleEyeRadiusY, rgba(eyePlan.irisColor), true);
+  drawEllipse(image, eyeCenterX + gazeX, centerY + 4 + gazeY, eyePlan.irisRadiusX - 1.5, Math.max(1.4, 4.1 * expressionState.eyeOpenAmount), rgba(eyePlan.irisColor, 116), true);
+  drawEllipse(image, eyeCenterX + gazeX, centerY + 1 + gazeY, eyePlan.pupilRadius, Math.max(1.6, (eyePlan.pupilRadius + 1.6) * expressionState.eyeOpenAmount), [16, 24, 42, 235], true);
+  if (expressionState.eyeOpenAmount > 0.55) {
+    drawEllipse(image, eyeCenterX + gazeX + eyePlan.highlightOffsetX, centerY + gazeY + eyePlan.highlightOffsetY, eyePlan.highlightRadius, eyePlan.highlightRadius + 0.8, [242, 255, 255, 255], true);
+    drawEllipse(image, eyeCenterX + gazeX + 2.5, centerY + gazeY + 4, 1.2, 1.6, [208, 255, 255, 210], true);
+  }
   drawLine(image, eyeCenterX - side * -8, centerY - 11, eyeCenterX + side * 10, centerY - 10, outline, eyePlan.outlineThickness, true);
   drawLine(image, eyeCenterX + side * 9, centerY - 10, eyeCenterX + side * (10 + eyePlan.eyelashLength), centerY - 15, outline, 1.2, true);
+  if (expressionState.eyeOpenAmount < 0.65) {
+    drawEllipse(image, eyeCenterX, centerY - 1, eyePlan.irisRadiusX + 2.4, 3.1, skin, true);
+    drawLine(image, eyeCenterX - 9, centerY, eyeCenterX + 9, centerY - 0.4, outline, 1.9, true);
+  }
+}
+
+function drawAnimeEyebrow(image: MutableImage, centerX: number, centerY: number, expressionState: AnimeExpressionState, side: -1 | 1, outline: RgbaColor) {
+  const browCenterX = centerX + side * 14;
+  const outerY = centerY - 20 + side * expressionState.eyebrowTilt * 0.25;
+  const innerY = centerY - 18 - side * expressionState.eyebrowTilt * 0.25;
+  drawLine(image, browCenterX - side * 8, outerY, browCenterX + side * 8, innerY, outline, expressionState.eyebrowEmotion === "intense" ? 1.8 : 1.4, true);
+  drawLine(image, browCenterX - side * 4, outerY + 1.6, browCenterX + side * 5, innerY + 1.3, [78, 54, 44, 150], 0.8, true);
+}
+
+function drawAnimeMouth(image: MutableImage, centerX: number, mouthY: number, expressionState: AnimeExpressionState) {
+  const mouthColor: RgbaColor = [94, 42, 62, 255];
+  if (expressionState.mouthShape === "small-smile") {
+    drawLine(image, centerX - 7, mouthY, centerX - 1, mouthY + 1.2, mouthColor, 1.1, true);
+    drawLine(image, centerX - 1, mouthY + 1.2, centerX + 8, mouthY - 0.4, mouthColor, 1.1, true);
+    drawEllipse(image, centerX + 2, mouthY + 2.2, 2.1, 0.8, [255, 216, 216, 110], true);
+    return;
+  }
+  if (expressionState.mouthShape === "soft-concern") {
+    drawLine(image, centerX - 6, mouthY + 1, centerX + 7, mouthY + 2.1, mouthColor, 1.1, true);
+    return;
+  }
+  if (expressionState.mouthShape === "focused-line") {
+    drawLine(image, centerX - 7, mouthY, centerX + 7, mouthY - 0.2, mouthColor, 1.2, true);
+    return;
+  }
+  drawLine(image, centerX - 5, mouthY, centerX + 6, mouthY + 0.2, mouthColor, 1, true);
 }
 
 function drawPlannedArm(input: {
@@ -402,6 +439,7 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
   const facePlan = buildAnimeFaceRenderPlan({ profile, expression: expressionTemplate });
   const eyePlan = buildAnimeEyeRenderPlan({ profile, expression: expressionTemplate });
   const hairPlan = buildAnimeHairRenderPlan({ profile, frameIndex });
+  const expressionState = buildAnimeExpressionState({ profile, expression: expressionTemplate, frameIndex, frameCount: 5 });
   const posePreset = resolveAnimePoseLanguagePreset({ profile, poseTemplate });
   const motionPlan = buildAnimeMotionContinuityPlan({ frameIndex, frameCount: 5, posePreset });
   const bodyPlan = buildAnimeBodyPlan({ profile, posePreset, frameIndex });
@@ -437,12 +475,14 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
   }
   drawLine(image, centerX - 28, 46, centerX + 16, 38, rgba(hairPlan.highlightColor, 166), 1.1, true);
 
-  drawAnimeEye(image, centerX, facePlan.eyeLineY, eyePlan, -1, outline);
-  drawAnimeEye(image, centerX, facePlan.eyeLineY, eyePlan, 1, outline);
+  drawAnimeEyebrow(image, centerX, facePlan.eyeLineY, expressionState, -1, outline);
+  drawAnimeEyebrow(image, centerX, facePlan.eyeLineY, expressionState, 1, outline);
+  drawAnimeEye(image, centerX, facePlan.eyeLineY, eyePlan, expressionState, -1, outline, skin);
+  drawAnimeEye(image, centerX, facePlan.eyeLineY, eyePlan, expressionState, 1, outline, skin);
   drawLine(image, centerX - 3, facePlan.noseY - 2, centerX - 1, facePlan.noseY + 4, [128, 91, 88, 135], 0.8, true);
-  drawEllipse(image, centerX - 21, 96, 6, 3, cheek, true);
-  drawEllipse(image, centerX + 21, 96, 6, 3, cheek, true);
-  drawLine(image, centerX - 6, facePlan.mouthY, centerX + 7, facePlan.mouthY + (expressionTemplate.id === "SLIGHT_CONCERN" ? 1 : 0), [94, 42, 62, 255], 1.1, true);
+  drawEllipse(image, centerX - 21, 96, 6, 3, [cheek[0], cheek[1], cheek[2], expressionState.cheekTone + 35], true);
+  drawEllipse(image, centerX + 21, 96, 6, 3, [cheek[0], cheek[1], cheek[2], expressionState.cheekTone + 35], true);
+  drawAnimeMouth(image, centerX, facePlan.mouthY, expressionState);
 
   drawPlannedAnimeBody({
     image,
@@ -643,6 +683,13 @@ function buildFrameDiagnostic(frameIndex: number, truthCheck: AnimeCharacterTrut
     frame_interpolation_score: visualFidelityDiagnostics.frame_interpolation_score,
     fabric_motion_score: visualFidelityDiagnostics.fabric_motion_score,
     animation_smoothness_score: visualFidelityDiagnostics.animation_smoothness_score,
+    expression_readability_score: visualFidelityDiagnostics.expression_readability_score,
+    blink_readability_score: visualFidelityDiagnostics.blink_readability_score,
+    gaze_stability_score: visualFidelityDiagnostics.gaze_stability_score,
+    mouth_readability_score: visualFidelityDiagnostics.mouth_readability_score,
+    eyebrow_readability_score: visualFidelityDiagnostics.eyebrow_readability_score,
+    expression_frame_consistency: visualFidelityDiagnostics.expression_frame_consistency,
+    face_liveliness_score: visualFidelityDiagnostics.face_liveliness_score,
     lighting_stability_score: 96,
     lighting_consistency_score: 96,
     coherence_anchor_strength: 98,
@@ -748,6 +795,13 @@ function buildDiagnostics(
     frame_interpolation_score: visualFidelityDiagnostics.frame_interpolation_score,
     fabric_motion_score: visualFidelityDiagnostics.fabric_motion_score,
     animation_smoothness_score: visualFidelityDiagnostics.animation_smoothness_score,
+    expression_readability_score: visualFidelityDiagnostics.expression_readability_score,
+    blink_readability_score: visualFidelityDiagnostics.blink_readability_score,
+    gaze_stability_score: visualFidelityDiagnostics.gaze_stability_score,
+    mouth_readability_score: visualFidelityDiagnostics.mouth_readability_score,
+    eyebrow_readability_score: visualFidelityDiagnostics.eyebrow_readability_score,
+    expression_frame_consistency: visualFidelityDiagnostics.expression_frame_consistency,
+    face_liveliness_score: visualFidelityDiagnostics.face_liveliness_score,
     phrase_continuity_score: 96,
     transition_smoothness_score: 96,
     visual_continuity_score: 97,
@@ -763,6 +817,10 @@ function buildDiagnostics(
       { id: "foot-grounding", label: "Foot grounding", score: visualFidelityDiagnostics.foot_grounding_score, status: "stable", summary: "Boot shapes and contact shadows anchor the stance to the chamber floor." },
       { id: "motion-continuity", label: "Motion continuity", score: visualFidelityDiagnostics.motion_continuity_score, status: "stable", summary: "Frame-to-frame pose easing preserves stance and reduces sprite-like popping." },
       { id: "fabric-motion", label: "Fabric motion", score: visualFidelityDiagnostics.fabric_motion_score, status: "stable", summary: "Lower jacket flaps use bounded continuity with hair/fabric synchronization." },
+      { id: "expression-readability", label: "Expression readability", score: visualFidelityDiagnostics.expression_readability_score, status: "stable", summary: "Expression state drives bounded eyebrows, mouth shape, cheek tone, and eye openness." },
+      { id: "blink-readability", label: "Blink readability", score: visualFidelityDiagnostics.blink_readability_score, status: "stable", summary: "The GIF includes a deterministic partial blink without removing anime eye identity." },
+      { id: "gaze-stability", label: "Gaze stability", score: visualFidelityDiagnostics.gaze_stability_score, status: "stable", summary: "Small gaze offsets keep highlights and pupils forward-facing and readable." },
+      { id: "face-liveliness", label: "Face liveliness", score: visualFidelityDiagnostics.face_liveliness_score, status: "stable", summary: "Blink, gaze, eyebrow, cheek, and mouth changes add bounded facial life." },
       { id: "scene-cohesion", label: "Anime character scene cohesion", score: visualFidelityDiagnostics.background_separation, status: "stable", summary: "Background supports the character instead of dominating." },
     ],
     artifact_diagnostics: [
@@ -792,6 +850,13 @@ function buildDiagnostics(
       `frame_interpolation_score=${visualFidelityDiagnostics.frame_interpolation_score}`,
       `fabric_motion_score=${visualFidelityDiagnostics.fabric_motion_score}`,
       `animation_smoothness_score=${visualFidelityDiagnostics.animation_smoothness_score}`,
+      `expression_readability_score=${visualFidelityDiagnostics.expression_readability_score}`,
+      `blink_readability_score=${visualFidelityDiagnostics.blink_readability_score}`,
+      `gaze_stability_score=${visualFidelityDiagnostics.gaze_stability_score}`,
+      `mouth_readability_score=${visualFidelityDiagnostics.mouth_readability_score}`,
+      `eyebrow_readability_score=${visualFidelityDiagnostics.eyebrow_readability_score}`,
+      `expression_frame_consistency=${visualFidelityDiagnostics.expression_frame_consistency}`,
+      `face_liveliness_score=${visualFidelityDiagnostics.face_liveliness_score}`,
       `visual_fidelity_score=${visualFidelityDiagnostics.visual_fidelity_score}`,
       `fidelity_tier=${visualFidelityDiagnostics.fidelity_tier}`,
     ],
@@ -871,6 +936,9 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
   const diagnosticMotionPlan = buildAnimeMotionContinuityPlan({ frameIndex: 2, frameCount, posePreset: diagnosticPosePreset });
   const diagnosticLowerBodyPlan = buildAnimeLowerBodyPlan({ profile: input.profile, bodyPlan: diagnosticBodyPlan, posePreset: diagnosticPosePreset, motionPlan: diagnosticMotionPlan });
   const motionContinuitySummary = summarizeAnimeMotionContinuity(buildAnimeMotionContinuitySequence({ frameCount, posePreset: diagnosticPosePreset }));
+  const expressionSequence = buildAnimeExpressionSequence({ profile: input.profile, expression: input.expressionTemplate, frameCount });
+  const expressionSummary = summarizeAnimeExpressionDiagnostics(expressionSequence);
+  const diagnosticExpressionState = buildAnimeExpressionState({ profile: input.profile, expression: input.expressionTemplate, frameIndex: 1, frameCount });
   const visualFidelityDiagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
     eyePlan: buildAnimeEyeRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
@@ -878,6 +946,16 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     bodyPlan: diagnosticBodyPlan,
     lowerBodyPlan: diagnosticLowerBodyPlan,
     motionPlan: diagnosticMotionPlan,
+    expressionState: {
+      ...diagnosticExpressionState,
+      expressionContinuityScore: expressionSummary.expression_readability_score,
+      blinkReadabilityScore: expressionSummary.blink_readability_score,
+      eyeFrameConsistency: expressionSummary.expression_frame_consistency,
+      gazeStabilityScore: expressionSummary.gaze_stability_score,
+      mouthReadabilityScore: expressionSummary.mouth_readability_score,
+      eyebrowReadabilityScore: expressionSummary.eyebrow_readability_score,
+      faceLivelinessScore: expressionSummary.face_liveliness_score,
+    },
     truthCheck,
     outfitReadability: diagnosticBodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
@@ -919,9 +997,9 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     shouldUserInspect: true,
     visualReviewNotes: [
       "A deterministic 2D anime character render is the primary subject with early anime fidelity active.",
-      "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, planned shoulders, tapered torso, segmented arms, simplified palms, cuffs, separated lower legs, grounded boots, and jacket silhouette for the selected profile.",
-      "The GIF should preserve stance identity with bounded fabric sway and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
-      "Body/pose/motion polish is early deterministic raster art, not cinematic anime quality, detailed hand anatomy, or neural motion synthesis.",
+      "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, expression-driven eyebrows and mouth, planned shoulders, tapered torso, segmented arms, simplified palms, cuffs, separated lower legs, grounded boots, and jacket silhouette for the selected profile.",
+      "The GIF should preserve stance identity with bounded fabric sway, a deterministic partial blink, subtle gaze settle, and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
+      "Body/pose/motion/expression polish is early deterministic raster art, not cinematic anime quality, detailed hand anatomy, dialogue, lip-sync, or neural motion synthesis.",
       "The beacon/chamber is rendered as supporting background only.",
       `Visual fidelity tier: ${visualFidelityDiagnostics.fidelity_tier} (${visualFidelityDiagnostics.visual_fidelity_score}/100).`,
       truthCheck.fallback_primitive_dominance ? "Fallback primitive dominance detected; do not claim success." : "Cube/beacon/drone fallback dominance is absent for this character render package.",
@@ -985,6 +1063,13 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     `Frame interpolation score: ${visualFidelityDiagnostics.frame_interpolation_score}/100`,
     `Fabric motion score: ${visualFidelityDiagnostics.fabric_motion_score}/100`,
     `Animation smoothness score: ${visualFidelityDiagnostics.animation_smoothness_score}/100`,
+    `Expression readability score: ${visualFidelityDiagnostics.expression_readability_score}/100`,
+    `Blink readability score: ${visualFidelityDiagnostics.blink_readability_score}/100`,
+    `Gaze stability score: ${visualFidelityDiagnostics.gaze_stability_score}/100`,
+    `Mouth readability score: ${visualFidelityDiagnostics.mouth_readability_score}/100`,
+    `Eyebrow readability score: ${visualFidelityDiagnostics.eyebrow_readability_score}/100`,
+    `Expression frame consistency: ${visualFidelityDiagnostics.expression_frame_consistency}/100`,
+    `Face liveliness score: ${visualFidelityDiagnostics.face_liveliness_score}/100`,
     "",
     `First PNG to inspect: ${visualReviewPackage.firstPngToInspect ?? "none"}`,
     `GIF to inspect: ${visualReviewPackage.gifToInspect ?? "none"}`,

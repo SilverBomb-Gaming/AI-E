@@ -5,6 +5,7 @@ import type { AnimeHairRenderPlan } from "./animeHairRenderer";
 import type { AnimeBodyPlan } from "./animeBodyRenderer";
 import type { AnimeLowerBodyPlan } from "./animeLowerBodyRenderer";
 import type { AnimeMotionContinuityPlan } from "./animeMotionContinuity";
+import type { AnimeExpressionState } from "./animeExpressionRenderer";
 
 export type AnimeVisualFidelityTier = "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
 
@@ -35,6 +36,13 @@ export type AnimeVisualFidelityDiagnostics = {
   frame_interpolation_score: number;
   fabric_motion_score: number;
   animation_smoothness_score: number;
+  expression_readability_score: number;
+  blink_readability_score: number;
+  gaze_stability_score: number;
+  mouth_readability_score: number;
+  eyebrow_readability_score: number;
+  expression_frame_consistency: number;
+  face_liveliness_score: number;
   visual_fidelity_score: number;
   fidelity_tier: AnimeVisualFidelityTier;
 };
@@ -57,6 +65,7 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   bodyPlan?: AnimeBodyPlan;
   lowerBodyPlan?: AnimeLowerBodyPlan;
   motionPlan?: AnimeMotionContinuityPlan;
+  expressionState?: AnimeExpressionState;
   truthCheck: AnimeCharacterTruthCheck;
   outfitReadability?: number;
   backgroundSeparation?: number;
@@ -99,6 +108,13 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   const frame_interpolation_score = input.motionPlan?.frameInterpolationScore ?? 88;
   const fabric_motion_score = input.lowerBodyPlan?.fabricMotionScore ?? input.motionPlan?.fabricContinuityScore ?? outfit_flow_score;
   const animation_smoothness_score = input.motionPlan?.animationSmoothnessScore ?? 88;
+  const expression_readability_score = input.expressionState?.expressionContinuityScore ?? 86;
+  const blink_readability_score = input.expressionState?.blinkReadabilityScore ?? 82;
+  const gaze_stability_score = input.expressionState?.gazeStabilityScore ?? 88;
+  const mouth_readability_score = input.expressionState?.mouthReadabilityScore ?? 84;
+  const eyebrow_readability_score = input.expressionState?.eyebrowReadabilityScore ?? 84;
+  const expression_frame_consistency = input.expressionState?.eyeFrameConsistency ?? 86;
+  const face_liveliness_score = input.expressionState?.faceLivelinessScore ?? 84;
   const pose_readability = input.poseReadability ?? average([pose_language_score, stance_balance_score, arm_readability_score]);
   const visual_fidelity_score = average([
     anime_face_readability,
@@ -127,6 +143,13 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     frame_interpolation_score,
     fabric_motion_score,
     animation_smoothness_score,
+    expression_readability_score,
+    blink_readability_score,
+    gaze_stability_score,
+    mouth_readability_score,
+    eyebrow_readability_score,
+    expression_frame_consistency,
+    face_liveliness_score,
   ]);
 
   return {
@@ -156,6 +179,13 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     frame_interpolation_score,
     fabric_motion_score,
     animation_smoothness_score,
+    expression_readability_score,
+    blink_readability_score,
+    gaze_stability_score,
+    mouth_readability_score,
+    eyebrow_readability_score,
+    expression_frame_consistency,
+    face_liveliness_score,
     visual_fidelity_score,
     fidelity_tier: classifyAnimeVisualFidelity(visual_fidelity_score, input.truthCheck),
   };

@@ -205,6 +205,10 @@ test("approved character render executes bounded preview and reports anime diagn
   assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.stance_grounding_score ?? 0) >= 90, true);
   assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.motion_continuity_score ?? 0) >= 90, true);
   assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.animation_smoothness_score ?? 0) >= 90, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.expression_readability_score ?? 0) >= 88, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.blink_readability_score ?? 0) >= 85, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.gaze_stability_score ?? 0) >= 90, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.face_liveliness_score ?? 0) >= 85, true);
   assert.equal(report.diagnostics?.artifact_diagnostics.some((entry) => entry === "fidelity_tier=EARLY_ANIME"), true);
   assert.equal(report.visualReviewPackage?.reviewLabel, "USER_VISUAL_CHECK_READY");
   assert.equal(report.characterApproved, true);
@@ -274,6 +278,13 @@ test("character-first renderer writes inspectable PNG GIF manifest diagnostics a
   assert.equal(manifest.anime_visual_fidelity_diagnostics.frame_interpolation_score >= 90, true);
   assert.equal(manifest.anime_visual_fidelity_diagnostics.fabric_motion_score >= 90, true);
   assert.equal(manifest.anime_visual_fidelity_diagnostics.animation_smoothness_score >= 90, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.expression_readability_score >= 88, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.blink_readability_score >= 85, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.gaze_stability_score >= 90, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.mouth_readability_score >= 85, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.eyebrow_readability_score >= 85, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.expression_frame_consistency >= 90, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.face_liveliness_score >= 85, true);
   assert.equal(manifest.first_png_to_inspect.endsWith("anime_character_frame_001.png"), true);
 });
 
@@ -302,11 +313,17 @@ test("solar crimson render exports confident body pose polish diagnostics", asyn
   assert.equal(manifest.anime_visual_fidelity_diagnostics.foot_grounding_score >= 82, true);
   assert.equal(manifest.anime_visual_fidelity_diagnostics.motion_continuity_score >= 90, true);
   assert.equal(manifest.anime_visual_fidelity_diagnostics.animation_smoothness_score >= 90, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.expression_readability_score >= 88, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.blink_readability_score >= 85, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.face_liveliness_score >= 85, true);
   assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.pose_frame_consistency ?? 0) >= 90), true);
   assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.foot_grounding_score ?? 0) >= 82), true);
   assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.animation_smoothness_score ?? 0) >= 90), true);
+  assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.blink_readability_score ?? 0) >= 85), true);
+  assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.face_liveliness_score ?? 0) >= 85), true);
   assert.equal(result.visualReviewPackage.visualReviewNotes.some((entry) => entry.includes("planned shoulders")), true);
   assert.equal(result.visualReviewPackage.visualReviewNotes.some((entry) => entry.includes("grounded boots")), true);
+  assert.equal(result.visualReviewPackage.visualReviewNotes.some((entry) => entry.includes("partial blink")), true);
 });
 
 test("fallback primitive truth check cannot pass anime character compatibility", () => {

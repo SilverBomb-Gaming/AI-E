@@ -1786,6 +1786,10 @@ export type CinematicGovernedPreviewQualityIndicatorId =
   | "foot-grounding"
   | "motion-continuity"
   | "fabric-motion"
+  | "expression-readability"
+  | "blink-readability"
+  | "gaze-stability"
+  | "face-liveliness"
   | "reveal-focus-preservation"
   | "drone-response-focus"
   | "aftermath-focus-balance"
@@ -1995,6 +1999,13 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   frame_interpolation_score?: number;
   fabric_motion_score?: number;
   animation_smoothness_score?: number;
+  expression_readability_score?: number;
+  blink_readability_score?: number;
+  gaze_stability_score?: number;
+  mouth_readability_score?: number;
+  eyebrow_readability_score?: number;
+  expression_frame_consistency?: number;
+  face_liveliness_score?: number;
   lighting_stability_score: number;
   lighting_consistency_score: number;
   coherence_anchor_strength: number;
@@ -2037,6 +2048,13 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
     frame_interpolation_score?: number;
     fabric_motion_score?: number;
     animation_smoothness_score?: number;
+    expression_readability_score?: number;
+    blink_readability_score?: number;
+    gaze_stability_score?: number;
+    mouth_readability_score?: number;
+    eyebrow_readability_score?: number;
+    expression_frame_consistency?: number;
+    face_liveliness_score?: number;
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };
@@ -2205,6 +2223,13 @@ export type CinematicGovernedPreviewDiagnostics = {
   frame_interpolation_score?: number;
   fabric_motion_score?: number;
   animation_smoothness_score?: number;
+  expression_readability_score?: number;
+  blink_readability_score?: number;
+  gaze_stability_score?: number;
+  mouth_readability_score?: number;
+  eyebrow_readability_score?: number;
+  expression_frame_consistency?: number;
+  face_liveliness_score?: number;
   continuity_quality_indicators: CinematicGovernedPreviewQualityIndicator[];
   artifact_diagnostics: string[];
   frame_diagnostics: CinematicGovernedPreviewFrameDiagnostic[];
@@ -2243,6 +2268,13 @@ export type CinematicGovernedPreviewDiagnostics = {
     frame_interpolation_score?: number;
     fabric_motion_score?: number;
     animation_smoothness_score?: number;
+    expression_readability_score?: number;
+    blink_readability_score?: number;
+    gaze_stability_score?: number;
+    mouth_readability_score?: number;
+    eyebrow_readability_score?: number;
+    expression_frame_consistency?: number;
+    face_liveliness_score?: number;
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };
