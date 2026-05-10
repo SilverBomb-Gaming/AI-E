@@ -12,6 +12,7 @@ import { buildAnimeMotionContinuityPlan } from "./animeMotionContinuity";
 import { buildAnimeExpressionState } from "./animeExpressionRenderer";
 import { buildAnimeSecondaryMotionState } from "./animeSecondaryMotion";
 import { buildAnimeCameraFramingSequence, buildAnimeCameraFramingState, summarizeAnimeCameraFramingDiagnostics } from "./animeCameraFraming";
+import { buildAnimeCinematicLightingSequence, buildAnimeCinematicLightingState, summarizeAnimeCinematicLightingDiagnostics } from "./animeCinematicLighting";
 import { resolveAnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, classifyAnimeVisualFidelity } from "./animeVisualFidelityDiagnostics";
 import type { AnimeCharacterTruthCheck } from "./governedAnimeCharacterState";
@@ -45,6 +46,8 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
   const secondaryMotionState = buildAnimeSecondaryMotionState({ profile, frameIndex: 2, frameCount: 5, expressionState, motionPlan });
   const cameraFramingState = buildAnimeCameraFramingState({ profile, frameIndex: 2, frameCount: 5, expressionState });
   const cameraFramingDiagnostics = summarizeAnimeCameraFramingDiagnostics(buildAnimeCameraFramingSequence({ profile, frameCount: 5, expressionStates: [expressionState, expressionState, expressionState, expressionState, expressionState] }));
+  const cinematicLightingState = buildAnimeCinematicLightingState({ profile, frameIndex: 2, frameCount: 5 });
+  const cinematicLightingDiagnostics = summarizeAnimeCinematicLightingDiagnostics(buildAnimeCinematicLightingSequence({ profile, frameCount: 5 }));
 
   const diagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile, expression }),
@@ -57,6 +60,8 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
     secondaryMotionState,
     cameraFramingState,
     cameraFramingDiagnostics,
+    cinematicLightingState,
+    cinematicLightingDiagnostics,
     truthCheck: truthCheck(),
     outfitReadability: bodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
@@ -114,6 +119,16 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
   assert.equal(diagnostics.cinematic_composition_score >= 88, true);
   assert.equal(diagnostics.camera_motion_smoothness >= 90, true);
   assert.equal(diagnostics.framing_jitter_risk, "LOW");
+  assert.equal(diagnostics.lighting_mood, "CRIMSON_HERO_CONTRAST");
+  assert.equal(diagnostics.rim_light_score >= 92, true);
+  assert.equal(diagnostics.eye_highlight_score >= 94, true);
+  assert.equal(diagnostics.face_lighting_score >= 94, true);
+  assert.equal(diagnostics.character_background_contrast >= 94, true);
+  assert.equal(diagnostics.beacon_glow_control >= 90, true);
+  assert.equal(diagnostics.atmosphere_depth_score >= 92, true);
+  assert.equal(diagnostics.color_mood_score >= 93, true);
+  assert.equal(diagnostics.lighting_continuity_score >= 94, true);
+  assert.equal(diagnostics.lighting_flicker_risk, "LOW");
 });
 
 test("anime visual fidelity diagnostics block fallback dominance", () => {

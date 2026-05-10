@@ -1798,6 +1798,10 @@ export type CinematicGovernedPreviewQualityIndicatorId =
   | "face-framing-priority"
   | "background-depth"
   | "cinematic-composition"
+  | "rim-light"
+  | "eye-highlight"
+  | "color-mood"
+  | "lighting-continuity"
   | "reveal-focus-preservation"
   | "drone-response-focus"
   | "aftermath-focus-balance"
@@ -2033,6 +2037,16 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   cinematic_composition_score?: number;
   camera_motion_smoothness?: number;
   framing_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
+  lighting_mood?: "NEON_CHAMBER_DRAMA" | "SOFT_BEACON_GLOW" | "CRIMSON_HERO_CONTRAST" | "COOL_SCI_FI_BACKLIGHT" | "GOLDEN_ANIME_RIM";
+  rim_light_score?: number;
+  eye_highlight_score?: number;
+  face_lighting_score?: number;
+  character_background_contrast?: number;
+  beacon_glow_control?: number;
+  atmosphere_depth_score?: number;
+  color_mood_score?: number;
+  lighting_continuity_score?: number;
+  lighting_flicker_risk?: "LOW" | "MEDIUM" | "HIGH";
   lighting_stability_score: number;
   lighting_consistency_score: number;
   coherence_anchor_strength: number;
@@ -2101,6 +2115,16 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
     cinematic_composition_score?: number;
     camera_motion_smoothness?: number;
     framing_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
+    lighting_mood?: "NEON_CHAMBER_DRAMA" | "SOFT_BEACON_GLOW" | "CRIMSON_HERO_CONTRAST" | "COOL_SCI_FI_BACKLIGHT" | "GOLDEN_ANIME_RIM";
+    rim_light_score?: number;
+    eye_highlight_score?: number;
+    face_lighting_score?: number;
+    character_background_contrast?: number;
+    beacon_glow_control?: number;
+    atmosphere_depth_score?: number;
+    color_mood_score?: number;
+    lighting_continuity_score?: number;
+    lighting_flicker_risk?: "LOW" | "MEDIUM" | "HIGH";
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };
@@ -2295,6 +2319,16 @@ export type CinematicGovernedPreviewDiagnostics = {
   cinematic_composition_score?: number;
   camera_motion_smoothness?: number;
   framing_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
+  lighting_mood?: "NEON_CHAMBER_DRAMA" | "SOFT_BEACON_GLOW" | "CRIMSON_HERO_CONTRAST" | "COOL_SCI_FI_BACKLIGHT" | "GOLDEN_ANIME_RIM";
+  rim_light_score?: number;
+  eye_highlight_score?: number;
+  face_lighting_score?: number;
+  character_background_contrast?: number;
+  beacon_glow_control?: number;
+  atmosphere_depth_score?: number;
+  color_mood_score?: number;
+  lighting_continuity_score?: number;
+  lighting_flicker_risk?: "LOW" | "MEDIUM" | "HIGH";
   continuity_quality_indicators: CinematicGovernedPreviewQualityIndicator[];
   artifact_diagnostics: string[];
   frame_diagnostics: CinematicGovernedPreviewFrameDiagnostic[];
@@ -2359,6 +2393,16 @@ export type CinematicGovernedPreviewDiagnostics = {
     cinematic_composition_score?: number;
     camera_motion_smoothness?: number;
     framing_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
+    lighting_mood?: "NEON_CHAMBER_DRAMA" | "SOFT_BEACON_GLOW" | "CRIMSON_HERO_CONTRAST" | "COOL_SCI_FI_BACKLIGHT" | "GOLDEN_ANIME_RIM";
+    rim_light_score?: number;
+    eye_highlight_score?: number;
+    face_lighting_score?: number;
+    character_background_contrast?: number;
+    beacon_glow_control?: number;
+    atmosphere_depth_score?: number;
+    color_mood_score?: number;
+    lighting_continuity_score?: number;
+    lighting_flicker_risk?: "LOW" | "MEDIUM" | "HIGH";
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };

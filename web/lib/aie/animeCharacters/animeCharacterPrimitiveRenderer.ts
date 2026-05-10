@@ -14,6 +14,7 @@ import { buildAnimeMotionContinuityPlan, buildAnimeMotionContinuitySequence, sum
 import { buildAnimeExpressionSequence, buildAnimeExpressionState, summarizeAnimeExpressionDiagnostics, type AnimeExpressionState } from "./animeExpressionRenderer";
 import { buildAnimeSecondaryMotionSequence, buildAnimeSecondaryMotionState, summarizeAnimeSecondaryMotionDiagnostics, type AnimeSecondaryMotionState } from "./animeSecondaryMotion";
 import { buildAnimeCameraFramingSequence, buildAnimeCameraFramingState, summarizeAnimeCameraFramingDiagnostics, type AnimeCameraFramingState } from "./animeCameraFraming";
+import { buildAnimeCinematicLightingSequence, buildAnimeCinematicLightingState, buildAnimeMoodPalette, summarizeAnimeCinematicLightingDiagnostics, type AnimeCinematicLightingState, type AnimeMoodPalette } from "./animeCinematicLighting";
 import { resolveAnimePoseLanguagePreset, type AnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, type AnimeVisualFidelityDiagnostics } from "./animeVisualFidelityDiagnostics";
 import type {
@@ -60,6 +61,7 @@ type MutableImage = {
   data: Buffer;
   characterMask: Uint8Array;
   cameraFramingState?: AnimeCameraFramingState;
+  cinematicLightingState?: AnimeCinematicLightingState;
 };
 
 function slugify(value: string): string {
@@ -121,15 +123,34 @@ function rgba(color: RgbColor, alpha = 255): RgbaColor {
   return [color[0], color[1], color[2], alpha];
 }
 
-function fillBackground(image: MutableImage, frameIndex: number, cameraFramingState?: AnimeCameraFramingState) {
+function mixRgb(base: RgbColor, overlay: RgbColor, amount: number): RgbColor {
+  const clamped = Math.max(0, Math.min(1, amount));
+  return [
+    Math.round(base[0] * (1 - clamped) + overlay[0] * clamped),
+    Math.round(base[1] * (1 - clamped) + overlay[1] * clamped),
+    Math.round(base[2] * (1 - clamped) + overlay[2] * clamped),
+  ];
+}
+
+function lightingPalette(image: MutableImage): AnimeMoodPalette {
+  return buildAnimeMoodPalette(image.cinematicLightingState?.mood ?? "SOFT_BEACON_GLOW");
+}
+
+function fillBackground(image: MutableImage, frameIndex: number, cameraFramingState?: AnimeCameraFramingState, lightingState?: AnimeCinematicLightingState) {
   const parallaxX = cameraFramingState?.backgroundParallaxX ?? 0;
   const parallaxY = cameraFramingState?.backgroundParallaxY ?? 0;
+  const palette = buildAnimeMoodPalette(lightingState?.mood ?? "SOFT_BEACON_GLOW");
+  const atmosphere = lightingState?.backgroundAtmosphereStrength ?? 0.48;
+  const shadow = lightingState?.shadowStrength ?? 0.38;
   for (let y = 0; y < image.height; y += 1) {
     for (let x = 0; x < image.width; x += 1) {
       const vertical = y / image.height;
       const vignette = Math.abs(x - image.width / 2) / (image.width / 2);
       const faceHalo = Math.max(0, 1 - Math.hypot(x - 118, y - 94) / 120);
-      setPixel(image, x, y, [14 + vertical * 15 + faceHalo * 11, 18 + vertical * 10 + faceHalo * 9, 34 + vignette * 14 + faceHalo * 18, 255]);
+      const base = mixRgb([13 + vertical * 12, 16 + vertical * 8, 32 + vignette * 12], palette.atmosphereColor, atmosphere * 0.62);
+      const toned = mixRgb(base, palette.keyLightColor, faceHalo * 0.12);
+      const darkened = mixRgb(toned, palette.shadowColor, vignette * shadow * 0.45);
+      setPixel(image, x, y, [darkened[0], darkened[1], darkened[2], 255]);
     }
   }
 
@@ -140,16 +161,17 @@ function fillBackground(image: MutableImage, frameIndex: number, cameraFramingSt
     drawLine(image, 0, y, image.width, y + parallaxY * 0.25, [49, 82, 116, 28], 0.7);
   }
 
-  const pulse = frameIndex % 2 === 0 ? 1 : 0.82;
+  const pulse = frameIndex % 2 === 0 ? 1 : 0.86;
+  const beaconGlow = lightingState?.beaconGlowStrength ?? 0.44;
   const beaconX = 199 + parallaxX * 0.55;
   const beaconY = 108 + parallaxY * 0.4;
-  drawEllipse(image, beaconX, beaconY, 24, 31, [14, 127 * pulse, 154 * pulse, 34]);
-  drawEllipse(image, beaconX, beaconY, 11, 16, [56, 199, 216, 96]);
-  drawEllipse(image, beaconX, beaconY, 3, 6, [200, 255, 255, 152]);
-  drawRect(image, beaconX - 15, beaconY + 31, 29, 2, [90, 195, 212, 62]);
-  drawEllipse(image, 118, 116, 80, 104, [50, 196, 220, 24]);
-  drawEllipse(image, 118, 101, 54, 68, [210, 237, 255, 18]);
-  drawEllipse(image, 128, 128, 120, 118, [0, 0, 0, 36]);
+  drawEllipse(image, beaconX, beaconY, 30, 38, [palette.beaconGlowColor[0], palette.beaconGlowColor[1] * pulse, palette.beaconGlowColor[2] * pulse, 36 + beaconGlow * 22]);
+  drawEllipse(image, beaconX, beaconY, 13, 18, [palette.beaconGlowColor[0], palette.beaconGlowColor[1], palette.beaconGlowColor[2], 82 + beaconGlow * 34]);
+  drawEllipse(image, beaconX, beaconY, 3, 6, [220, 255, 255, 142]);
+  drawRect(image, beaconX - 15, beaconY + 31, 29, 2, [palette.beaconGlowColor[0], palette.beaconGlowColor[1], palette.beaconGlowColor[2], 48]);
+  drawEllipse(image, 118, 116, 82, 106, [palette.beaconGlowColor[0], palette.beaconGlowColor[1], palette.beaconGlowColor[2], 16 + atmosphere * 12]);
+  drawEllipse(image, 117, 98, 56, 70, [palette.keyLightColor[0], palette.keyLightColor[1], palette.keyLightColor[2], 14 + (lightingState?.keyLightStrength ?? 0.52) * 12]);
+  drawEllipse(image, 128, 128, 120, 118, [palette.shadowColor[0], palette.shadowColor[1], palette.shadowColor[2], 36 + shadow * 26]);
 }
 
 function drawRect(image: MutableImage, x: number, y: number, width: number, height: number, color: RgbaColor, markCharacter = false) {
@@ -227,18 +249,21 @@ function drawHairLayer(image: MutableImage, centerX: number, layer: AnimeHairLay
 }
 
 function drawAnimeEye(image: MutableImage, centerX: number, centerY: number, eyePlan: AnimeEyeRenderPlan, expressionState: AnimeExpressionState, side: -1 | 1, outline: RgbaColor, skin: RgbaColor) {
+  const palette = lightingPalette(image);
+  const eyeHighlightStrength = image.cinematicLightingState?.eyeHighlightStrength ?? 0.68;
   const eyeCenterX = centerX + side * 14 + side * eyePlan.symmetryCorrection;
   const visibleEyeRadiusY = Math.max(2.6, eyePlan.irisRadiusY * expressionState.eyeOpenAmount);
   const gazeX = expressionState.gazeOffsetX * side;
   const gazeY = expressionState.gazeOffsetY;
+  drawEllipse(image, eyeCenterX + gazeX, centerY + 1 + gazeY, eyePlan.irisRadiusX + 5.6, visibleEyeRadiusY + 5.2, rgba(palette.eyeGlowColor, 22 + eyeHighlightStrength * 26), true);
   drawEllipse(image, eyeCenterX, centerY, eyePlan.irisRadiusX + 3.2, visibleEyeRadiusY + 2.8, outline, true);
   drawEllipse(image, eyeCenterX, centerY, eyePlan.irisRadiusX + 1.4, visibleEyeRadiusY + 1.2, [248, 254, 255, 255], true);
   drawEllipse(image, eyeCenterX + gazeX, centerY + 1 + gazeY, eyePlan.irisRadiusX, visibleEyeRadiusY, rgba(eyePlan.irisColor), true);
   drawEllipse(image, eyeCenterX + gazeX, centerY + 4 + gazeY, eyePlan.irisRadiusX - 1.5, Math.max(1.4, 4.1 * expressionState.eyeOpenAmount), rgba(eyePlan.irisColor, 116), true);
   drawEllipse(image, eyeCenterX + gazeX, centerY + 1 + gazeY, eyePlan.pupilRadius, Math.max(1.6, (eyePlan.pupilRadius + 1.6) * expressionState.eyeOpenAmount), [16, 24, 42, 235], true);
   if (expressionState.eyeOpenAmount > 0.55) {
-    drawEllipse(image, eyeCenterX + gazeX + eyePlan.highlightOffsetX, centerY + gazeY + eyePlan.highlightOffsetY, eyePlan.highlightRadius, eyePlan.highlightRadius + 0.8, [242, 255, 255, 255], true);
-    drawEllipse(image, eyeCenterX + gazeX + 2.5, centerY + gazeY + 4, 1.2, 1.6, [208, 255, 255, 210], true);
+    drawEllipse(image, eyeCenterX + gazeX + eyePlan.highlightOffsetX, centerY + gazeY + eyePlan.highlightOffsetY, eyePlan.highlightRadius + eyeHighlightStrength * 0.7, eyePlan.highlightRadius + 1.1, [250, 255, 255, 255], true);
+    drawEllipse(image, eyeCenterX + gazeX + 2.5, centerY + gazeY + 4, 1.2 + eyeHighlightStrength * 0.25, 1.6, rgba(palette.eyeGlowColor, 190), true);
   }
   drawLine(image, eyeCenterX - side * -8, centerY - 11, eyeCenterX + side * 10, centerY - 10, outline, eyePlan.outlineThickness, true);
   drawLine(image, eyeCenterX + side * 9, centerY - 10, eyeCenterX + side * (10 + eyePlan.eyelashLength), centerY - 15, outline, 1.2, true);
@@ -471,6 +496,41 @@ function drawPlannedAnimeBody(input: {
   drawPlannedArm({ image, shoulderX: rightShoulderX - 2, shoulderY: rightShoulderY + 7, bodyPlan, side: 1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline, sleeveSway: input.secondaryMotionState.sleeveSway });
 }
 
+function drawCinematicLightingPass(input: {
+  image: MutableImage;
+  centerX: number;
+  faceY: number;
+  waistY: number;
+  hemY: number;
+  footY: number;
+  hairPlan: AnimeHairRenderPlan;
+  facePlan: AnimeFaceRenderPlan;
+}) {
+  const lighting = input.image.cinematicLightingState;
+  if (!lighting) {
+    return;
+  }
+  const palette = lightingPalette(input.image);
+  const rim: RgbaColor = rgba(palette.rimLightColor, 82 + lighting.rimLightStrength * 88);
+  const softRim: RgbaColor = rgba(palette.rimLightColor, 42 + lighting.rimLightStrength * 54);
+  const eyeGlow: RgbaColor = rgba(palette.eyeGlowColor, 34 + lighting.eyeHighlightStrength * 42);
+  const key: RgbaColor = rgba(palette.keyLightColor, 26 + lighting.keyLightStrength * 32);
+  const shadow: RgbaColor = rgba(palette.shadowColor, 24 + lighting.shadowStrength * 36);
+
+  drawEllipse(input.image, input.centerX, input.faceY + 2, input.facePlan.faceRadiusX + 8, input.facePlan.faceRadiusY + 8, key, true);
+  drawEllipse(input.image, input.centerX - 7, input.faceY - 2, input.facePlan.faceRadiusX + 2, input.facePlan.faceRadiusY + 2, shadow, true);
+  drawLine(input.image, input.centerX - 44, 54, input.centerX - 55, 176, rim, 1.6, true);
+  drawLine(input.image, input.centerX + 42, 54, input.centerX + 52, 171, softRim, 1.4, true);
+  drawLine(input.image, input.centerX - 38, 48, input.centerX + 17, 38, rgba(input.hairPlan.highlightColor, 190), 1.4, true);
+  drawLine(input.image, input.centerX - 36, input.waistY - 9, input.centerX - 24, input.hemY + 8, rim, 1.4, true);
+  drawLine(input.image, input.centerX + 35, input.waistY - 11, input.centerX + 28, input.hemY + 5, softRim, 1.2, true);
+  drawLine(input.image, input.centerX - 30, input.waistY + 2, input.centerX + 28, input.waistY + 4, rgba(palette.rimLightColor, 92), 1.1, true);
+  drawLine(input.image, input.centerX - 34, input.footY - 6, input.centerX - 15, input.footY - 7, rim, 1.1, true);
+  drawLine(input.image, input.centerX + 14, input.footY - 6, input.centerX + 35, input.footY - 7, softRim, 1.1, true);
+  drawEllipse(input.image, input.centerX - 14, input.faceY + 1, 24, 17, eyeGlow, true);
+  drawEllipse(input.image, input.centerX + 14, input.faceY + 1, 24, 17, eyeGlow, true);
+}
+
 function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile, poseTemplate: AnimeCharacterPoseTemplate, expressionTemplate: AnimeCharacterExpressionTemplate, frameIndex: number) {
   const sway = Math.sin(frameIndex * 0.7) * 2;
   const facePlan = buildAnimeFaceRenderPlan({ profile, expression: expressionTemplate });
@@ -537,14 +597,29 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
     accent,
     outline,
   });
+  const shoulderY = 121 + bodyPlan.neckHeight;
+  const waistY = shoulderY + bodyPlan.torsoHeight;
+  const footY = waistY - lowerBodyPlan.lowerJacketOverlap + Math.max(lowerBodyPlan.leftFoot.anchorY, lowerBodyPlan.rightFoot.anchorY);
+  drawCinematicLightingPass({
+    image,
+    centerX,
+    faceY: facePlan.eyeLineY,
+    waistY,
+    hemY: waistY + bodyPlan.lowerGarmentLength,
+    footY,
+    hairPlan,
+    facePlan,
+  });
 }
 
 function buildFrame(profile: AnimeCharacterProfile, poseTemplate: AnimeCharacterPoseTemplate, expressionTemplate: AnimeCharacterExpressionTemplate, frameIndex: number): MutableImage {
   const image = createImage(DISPLAY_WIDTH, DISPLAY_HEIGHT);
   const expressionState = buildAnimeExpressionState({ profile, expression: expressionTemplate, frameIndex, frameCount: 5 });
   const cameraFramingState = buildAnimeCameraFramingState({ profile, frameIndex, frameCount: 5, expressionState });
+  const cinematicLightingState = buildAnimeCinematicLightingState({ profile, frameIndex, frameCount: 5 });
   image.cameraFramingState = cameraFramingState;
-  fillBackground(image, frameIndex, cameraFramingState);
+  image.cinematicLightingState = cinematicLightingState;
+  fillBackground(image, frameIndex, cameraFramingState, cinematicLightingState);
   drawAnimeCharacter(image, profile, poseTemplate, expressionTemplate, frameIndex);
   return image;
 }
@@ -751,8 +826,18 @@ function buildFrameDiagnostic(frameIndex: number, truthCheck: AnimeCharacterTrut
     cinematic_composition_score: visualFidelityDiagnostics.cinematic_composition_score,
     camera_motion_smoothness: visualFidelityDiagnostics.camera_motion_smoothness,
     framing_jitter_risk: visualFidelityDiagnostics.framing_jitter_risk,
-    lighting_stability_score: 96,
-    lighting_consistency_score: 96,
+    lighting_mood: visualFidelityDiagnostics.lighting_mood,
+    rim_light_score: visualFidelityDiagnostics.rim_light_score,
+    eye_highlight_score: visualFidelityDiagnostics.eye_highlight_score,
+    face_lighting_score: visualFidelityDiagnostics.face_lighting_score,
+    character_background_contrast: visualFidelityDiagnostics.character_background_contrast,
+    beacon_glow_control: visualFidelityDiagnostics.beacon_glow_control,
+    atmosphere_depth_score: visualFidelityDiagnostics.atmosphere_depth_score,
+    color_mood_score: visualFidelityDiagnostics.color_mood_score,
+    lighting_continuity_score: visualFidelityDiagnostics.lighting_continuity_score,
+    lighting_flicker_risk: visualFidelityDiagnostics.lighting_flicker_risk,
+    lighting_stability_score: visualFidelityDiagnostics.lighting_continuity_score,
+    lighting_consistency_score: visualFidelityDiagnostics.lighting_continuity_score,
     coherence_anchor_strength: 98,
     fog_density: 0.12,
     environment_profile: "softened sci-fi chamber background supporting a character-first anime render",
@@ -773,7 +858,7 @@ function buildDiagnostics(
     recognizable_object: `approved anime character profile ${profile.label}`,
     object_relationship_summary: "Anime character is the primary rendered subject; beacon and chamber remain secondary support.",
     environment_profile: "softened sci-fi chamber supporting a character-centered anime render",
-    lighting_profile: "bounded teal beacon rim light plus character face readability lighting",
+    lighting_profile: `${visualFidelityDiagnostics.lighting_mood} with bounded rim light, eye highlights, atmosphere depth, and low-flicker continuity`,
     camera_profile: `${visualFidelityDiagnostics.shot_preset} with bounded face-priority anime framing and subtle parallax`,
     continuity_anchor_visualization: "anime character face, bright teal eyes, long hair mass, and jacket silhouette",
     scene_readability_overlay: "character-first frame; no cube, beacon, or drone primary fallback dominance",
@@ -832,8 +917,8 @@ function buildDiagnostics(
     reactive_coherence_score: 96,
     camera_stability_score: 98,
     spatial_continuity_score: 96,
-    lighting_stability_score: 96,
-    lighting_consistency_score: 96,
+    lighting_stability_score: visualFidelityDiagnostics.lighting_continuity_score,
+    lighting_consistency_score: visualFidelityDiagnostics.lighting_continuity_score,
     readability_score: visualFidelityDiagnostics.visual_fidelity_score,
     object_fidelity_score: visualFidelityDiagnostics.visual_fidelity_score,
     scene_composition_score: 97,
@@ -882,6 +967,16 @@ function buildDiagnostics(
     cinematic_composition_score: visualFidelityDiagnostics.cinematic_composition_score,
     camera_motion_smoothness: visualFidelityDiagnostics.camera_motion_smoothness,
     framing_jitter_risk: visualFidelityDiagnostics.framing_jitter_risk,
+    lighting_mood: visualFidelityDiagnostics.lighting_mood,
+    rim_light_score: visualFidelityDiagnostics.rim_light_score,
+    eye_highlight_score: visualFidelityDiagnostics.eye_highlight_score,
+    face_lighting_score: visualFidelityDiagnostics.face_lighting_score,
+    character_background_contrast: visualFidelityDiagnostics.character_background_contrast,
+    beacon_glow_control: visualFidelityDiagnostics.beacon_glow_control,
+    atmosphere_depth_score: visualFidelityDiagnostics.atmosphere_depth_score,
+    color_mood_score: visualFidelityDiagnostics.color_mood_score,
+    lighting_continuity_score: visualFidelityDiagnostics.lighting_continuity_score,
+    lighting_flicker_risk: visualFidelityDiagnostics.lighting_flicker_risk,
     phrase_continuity_score: 96,
     transition_smoothness_score: 96,
     visual_continuity_score: 97,
@@ -909,6 +1004,10 @@ function buildDiagnostics(
       { id: "face-framing-priority", label: "Face framing priority", score: visualFidelityDiagnostics.face_framing_priority, status: "stable", summary: "Camera framing favors the face and eyes while preserving readable hair and body silhouette." },
       { id: "background-depth", label: "Background depth", score: visualFidelityDiagnostics.background_depth_score, status: "stable", summary: "Parallax chamber lines and subdued beacon depth cues support the character instead of dominating." },
       { id: "cinematic-composition", label: "Cinematic composition", score: visualFidelityDiagnostics.cinematic_composition_score, status: "stable", summary: "Composition moves away from debug-centered sprite framing with low camera jitter risk." },
+      { id: "rim-light", label: "Anime rim light", score: visualFidelityDiagnostics.rim_light_score, status: "stable", summary: "Hair, shoulders, outfit edges, and boots receive bounded mood-colored rim highlights." },
+      { id: "eye-highlight", label: "Eye highlight control", score: visualFidelityDiagnostics.eye_highlight_score, status: "stable", summary: "Eye glow and catchlights remain readable through the blink sequence." },
+      { id: "color-mood", label: "Color mood", score: visualFidelityDiagnostics.color_mood_score, status: "stable", summary: `${visualFidelityDiagnostics.lighting_mood} palette adds cinematic contrast without uncontrolled glow.` },
+      { id: "lighting-continuity", label: "Lighting continuity", score: visualFidelityDiagnostics.lighting_continuity_score, status: visualFidelityDiagnostics.lighting_flicker_risk === "LOW" ? "stable" : "watch", summary: `Lighting flicker risk: ${visualFidelityDiagnostics.lighting_flicker_risk}.` },
       { id: "scene-cohesion", label: "Anime character scene cohesion", score: visualFidelityDiagnostics.background_separation, status: "stable", summary: "Background supports the character instead of dominating." },
     ],
     artifact_diagnostics: [
@@ -964,6 +1063,16 @@ function buildDiagnostics(
       `cinematic_composition_score=${visualFidelityDiagnostics.cinematic_composition_score}`,
       `camera_motion_smoothness=${visualFidelityDiagnostics.camera_motion_smoothness}`,
       `framing_jitter_risk=${visualFidelityDiagnostics.framing_jitter_risk}`,
+      `lighting_mood=${visualFidelityDiagnostics.lighting_mood}`,
+      `rim_light_score=${visualFidelityDiagnostics.rim_light_score}`,
+      `eye_highlight_score=${visualFidelityDiagnostics.eye_highlight_score}`,
+      `face_lighting_score=${visualFidelityDiagnostics.face_lighting_score}`,
+      `character_background_contrast=${visualFidelityDiagnostics.character_background_contrast}`,
+      `beacon_glow_control=${visualFidelityDiagnostics.beacon_glow_control}`,
+      `atmosphere_depth_score=${visualFidelityDiagnostics.atmosphere_depth_score}`,
+      `color_mood_score=${visualFidelityDiagnostics.color_mood_score}`,
+      `lighting_continuity_score=${visualFidelityDiagnostics.lighting_continuity_score}`,
+      `lighting_flicker_risk=${visualFidelityDiagnostics.lighting_flicker_risk}`,
       `visual_fidelity_score=${visualFidelityDiagnostics.visual_fidelity_score}`,
       `fidelity_tier=${visualFidelityDiagnostics.fidelity_tier}`,
     ],
@@ -1053,6 +1162,9 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
   const cameraFramingSequence = buildAnimeCameraFramingSequence({ profile: input.profile, frameCount, expressionStates: expressionSequence });
   const cameraFramingSummary = summarizeAnimeCameraFramingDiagnostics(cameraFramingSequence);
   const diagnosticCameraFramingState = cameraFramingSequence[2] ?? buildAnimeCameraFramingState({ profile: input.profile, frameIndex: 2, frameCount, expressionState: expressionSequence[2] });
+  const cinematicLightingSequence = buildAnimeCinematicLightingSequence({ profile: input.profile, frameCount });
+  const cinematicLightingSummary = summarizeAnimeCinematicLightingDiagnostics(cinematicLightingSequence);
+  const diagnosticCinematicLightingState = cinematicLightingSequence[2] ?? buildAnimeCinematicLightingState({ profile: input.profile, frameIndex: 2, frameCount });
   const visualFidelityDiagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
     eyePlan: buildAnimeEyeRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
@@ -1084,6 +1196,8 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     },
     cameraFramingState: diagnosticCameraFramingState,
     cameraFramingDiagnostics: cameraFramingSummary,
+    cinematicLightingState: diagnosticCinematicLightingState,
+    cinematicLightingDiagnostics: cinematicLightingSummary,
     truthCheck,
     outfitReadability: diagnosticBodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
@@ -1127,6 +1241,7 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
       "A deterministic 2D anime character render is the primary subject with early anime fidelity active.",
       "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, expression-driven eyebrows and mouth, planned shoulders, tapered torso, segmented arms, simplified palms, cuffs, separated lower legs, grounded boots, and jacket silhouette for the selected profile.",
       "The GIF should preserve stance identity with bounded fabric sway, deterministic partial blink, subtle gaze settle, coordinated hair sway, bang/side-lock motion, sleeve/cuff sway, lower fabric motion, face-priority framing, a small push-in/drift, and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
+      `The lighting pass uses ${visualFidelityDiagnostics.lighting_mood} with bounded rim light, eye glow, darker atmosphere, and secondary beacon support; it is deterministic raster lighting, not global illumination or neural relighting.`,
       "Body/pose/motion/expression/secondary-motion/camera-framing polish is early deterministic raster art, not cinematic anime quality, detailed hand anatomy, dialogue, lip-sync, multi-shot sequencing, physics simulation, or neural motion synthesis.",
       "The beacon/chamber is rendered as supporting background only.",
       `Visual fidelity tier: ${visualFidelityDiagnostics.fidelity_tier} (${visualFidelityDiagnostics.visual_fidelity_score}/100).`,
@@ -1217,6 +1332,16 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     `Cinematic composition score: ${visualFidelityDiagnostics.cinematic_composition_score}/100`,
     `Camera motion smoothness: ${visualFidelityDiagnostics.camera_motion_smoothness}/100`,
     `Framing jitter risk: ${visualFidelityDiagnostics.framing_jitter_risk}`,
+    `Lighting mood: ${visualFidelityDiagnostics.lighting_mood}`,
+    `Rim light score: ${visualFidelityDiagnostics.rim_light_score}/100`,
+    `Eye highlight score: ${visualFidelityDiagnostics.eye_highlight_score}/100`,
+    `Face lighting score: ${visualFidelityDiagnostics.face_lighting_score}/100`,
+    `Character/background contrast: ${visualFidelityDiagnostics.character_background_contrast}/100`,
+    `Beacon glow control: ${visualFidelityDiagnostics.beacon_glow_control}/100`,
+    `Atmosphere depth score: ${visualFidelityDiagnostics.atmosphere_depth_score}/100`,
+    `Color mood score: ${visualFidelityDiagnostics.color_mood_score}/100`,
+    `Lighting continuity score: ${visualFidelityDiagnostics.lighting_continuity_score}/100`,
+    `Lighting flicker risk: ${visualFidelityDiagnostics.lighting_flicker_risk}`,
     "",
     `First PNG to inspect: ${visualReviewPackage.firstPngToInspect ?? "none"}`,
     `GIF to inspect: ${visualReviewPackage.gifToInspect ?? "none"}`,
