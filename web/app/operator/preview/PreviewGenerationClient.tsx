@@ -74,6 +74,7 @@ import type {
   GovernedAnimeCharacterState,
 } from "@/lib/aie/animeCharacters/governedAnimeCharacterState";
 import { CHARACTER_PROFILE_SELECTION_REQUIRED, resolveAnimeCharacterProfileForRequest } from "@/lib/aie/animeCharacters/characterFirstExecutionRouter";
+import { buildAudioGenerationRoadmap } from "@/lib/aie/audioGenerationRoadmap";
 import {
   activityIconLabel,
   buildAnimeReportActivity,
@@ -113,6 +114,12 @@ import {
   type GovernedExecutionState,
   type GovernedExecutionTimelineItem,
 } from "./governedExecutionState";
+import {
+  buildAnimeCreatorWorkflowState,
+  resolveCreatorIntentRoute,
+  resolvePreferredAnimeCreatorProfileId,
+  type AnimeCreatorWorkflowState,
+} from "./animeCreatorWorkflow";
 
 const DEFAULT_FORM: GovernedPreviewFormInput = {
   prompt: "",
@@ -516,6 +523,152 @@ function CharacterDiagnosticsOverview({ report }: { report: AnimeCharacterReport
         {visualFidelity ? <p><strong className="text-ink">Layered Hair Quality:</strong> {visualFidelity.layered_hair_quality}/100</p> : null}
       </div>
     </div>
+  );
+}
+
+function AnimeCreatorGuidancePanel({ workflow }: { workflow: AnimeCreatorWorkflowState }) {
+  return (
+    <section className="mb-6 rounded-[1.25rem] border border-ocean/20 bg-ocean/5 p-5 shadow-float" aria-label="Anime creator workflow guidance">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="section-label">Anime Creator Mode</p>
+          <h2 className="mt-3 text-2xl font-semibold text-ink">AI-E Understood An Anime Character Request</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-7 body-muted">The operator surface is now focused on character generation, visual review, truthful render-path labeling, and the cinematic roadmap.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <StatusPill label={workflow.scaffoldStatus.toLowerCase().replaceAll("_", "-")} tone={workflow.scaffoldStatus === "ANIME_CREATOR_WORKFLOW_ACTIVE" ? "ok" : "warn"} />
+          <StatusPill label={workflow.activeRenderPath.toLowerCase().replaceAll("_", "-")} tone={workflow.activeRenderPath === "CHARACTER_FIRST_RENDERER" ? "ok" : workflow.activeRenderPath === "PRIMITIVE_FALLBACK" ? "blocked" : "warn"} />
+        </div>
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
+        {workflow.guidanceCards.map((entry) => (
+          <div key={entry} className="rounded-[1rem] border border-ocean/15 bg-white/90 p-4 text-sm font-medium leading-7 text-ink">{entry}</div>
+        ))}
+      </div>
+      <ol className="mt-5 grid gap-3 lg:grid-cols-4">
+        {workflow.stages.map((stage) => (
+          <li key={stage.id} className={`rounded-[1rem] border p-4 ${stage.complete ? "border-emerald-200 bg-emerald-50" : "border-ink/10 bg-white/85"}`}>
+            <p className="text-sm font-semibold text-ink">{stage.label}</p>
+            <p className="mt-2 text-sm leading-6 body-muted">{stage.guidance}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function AnimeWorkflowExecutionHub({
+  workflow,
+  executionLocked,
+  governanceApproved,
+  characterApproved,
+  gifPackagingRequested,
+  onGenerateCharacter,
+  onGenerateGif,
+  onRunMotionPreview,
+  onExportReport,
+}: {
+  workflow: AnimeCreatorWorkflowState;
+  executionLocked: boolean;
+  governanceApproved: boolean;
+  characterApproved: boolean;
+  gifPackagingRequested: boolean;
+  onGenerateCharacter: () => void;
+  onGenerateGif: () => void;
+  onRunMotionPreview: () => void;
+  onExportReport: () => void;
+}) {
+  const generationDisabled = executionLocked || !governanceApproved || !characterApproved || !workflow.profileResolution.resolvedProfileId;
+
+  return (
+    <article className="mb-6 rounded-[1.25rem] border border-ink/10 bg-white/95 p-5 shadow-float" aria-label="Anime character generation hub">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="section-label">Anime Character Generation</p>
+          <h2 className="mt-3 text-2xl font-semibold text-ink">Creator Command Center</h2>
+          <p className="mt-2 text-sm leading-7 body-muted">Use these actions for anime-character requests. The old variant and probe harnesses are hidden while anime creator mode is active.</p>
+        </div>
+        <StatusPill label={`active-render-path-${workflow.activeRenderPath.toLowerCase().replaceAll("_", "-")}`} tone={workflow.activeRenderPath === "CHARACTER_FIRST_RENDERER" ? "ok" : "warn"} />
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+        <button type="button" onClick={onGenerateCharacter} disabled={generationDisabled} className="rounded-[0.75rem] border border-ocean/20 bg-ocean px-4 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50">Generate Character Frame Set</button>
+        <button type="button" onClick={onGenerateGif} disabled={generationDisabled || !gifPackagingRequested} className="rounded-[0.75rem] border border-ocean/20 bg-ocean px-4 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50">Generate Anime GIF Preview</button>
+        <button type="button" onClick={onRunMotionPreview} disabled={executionLocked} className="rounded-[0.75rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50">Run Motion Preview</button>
+        <button type="button" onClick={onExportReport} className="rounded-[0.75rem] border border-ink/10 bg-white px-4 py-3 text-sm font-semibold text-ink transition hover:-translate-y-0.5">Export Review Package</button>
+        <button type="button" onClick={onExportReport} className="rounded-[0.75rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700 transition hover:-translate-y-0.5">Export PDF Report</button>
+      </div>
+    </article>
+  );
+}
+
+function AudioGenerationStatusPanel() {
+  const roadmap = buildAudioGenerationRoadmap();
+
+  return (
+    <article className="rounded-[1.25rem] border border-amber-200 bg-amber-50 p-5 text-sm leading-7 text-amber-900">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="section-label">Audio Generation Status</p>
+          <h2 className="mt-3 text-2xl font-semibold text-ink">Not Yet Implemented</h2>
+        </div>
+        <StatusPill label={roadmap.status.toLowerCase().replaceAll("_", "-")} tone="warn" />
+      </div>
+      <p className="mt-3">No fake audio generation is exposed. This panel is the governed foundation for future soundtrack, ambience, sync, and dialogue routing.</p>
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <div className="rounded-[1rem] border border-amber-200 bg-white/80 p-4">
+          <p className="font-semibold text-ink">Planned capabilities</p>
+          <ul className="mt-2 space-y-1">
+            {roadmap.plannedCapabilities.map((entry) => <li key={entry}>{entry}</li>)}
+          </ul>
+        </div>
+        <div className="rounded-[1rem] border border-amber-200 bg-white/80 p-4">
+          <p className="font-semibold text-ink">Review pipeline planning</p>
+          <ul className="mt-2 space-y-1">
+            {roadmap.audioReviewPipelinePlanning.map((entry) => <li key={entry}>{entry}</li>)}
+          </ul>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function CinematicRoadmapPanel() {
+  const current = ["Character-first anime rendering", "PNG/GIF exports", "Primitive animation", "No audio yet", "Early fidelity stage"];
+  const future = ["cinematic anime rendering", "advanced motion interpolation", "multi-shot continuity", "soundtrack generation", "synchronized audio", "voice acting systems", "full scene sequencing"];
+
+  return (
+    <article className="rounded-[1.25rem] border border-ink/10 bg-white/95 p-5 shadow-float">
+      <p className="section-label">Cinematic Generation Evolution</p>
+      <h2 className="mt-3 text-2xl font-semibold text-ink">Output Roadmap</h2>
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <div className="rounded-[1rem] border border-emerald-200 bg-emerald-50 p-4 text-sm leading-7 text-emerald-800">
+          <p className="font-semibold text-ink">Current</p>
+          <ul className="mt-2 space-y-1">{current.map((entry) => <li key={entry}>{entry}</li>)}</ul>
+        </div>
+        <div className="rounded-[1rem] border border-ocean/15 bg-ocean/5 p-4 text-sm leading-7 body-muted">
+          <p className="font-semibold text-ink">Future</p>
+          <ul className="mt-2 space-y-1">{future.map((entry) => <li key={entry}>{entry}</li>)}</ul>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function CreatorExperienceDiagnosticsPanel({ workflow }: { workflow: AnimeCreatorWorkflowState }) {
+  return (
+    <article className="rounded-[1.25rem] border border-ink/10 bg-white/95 p-5 shadow-float">
+      <p className="section-label">Creator Experience Diagnostics</p>
+      <h2 className="mt-3 text-2xl font-semibold text-ink">Confusion Reduction</h2>
+      <div className="mt-4 grid gap-3 text-sm leading-7 body-muted md:grid-cols-2">
+        <p><strong className="text-ink">creator_workflow_alignment:</strong> {workflow.diagnostics.creator_workflow_alignment}/100</p>
+        <p><strong className="text-ink">workflow_confusion_risk:</strong> {workflow.diagnostics.workflow_confusion_risk}/100</p>
+        <p><strong className="text-ink">irrelevant_panel_exposure:</strong> {workflow.diagnostics.irrelevant_panel_exposure}</p>
+        <p><strong className="text-ink">intent_route_accuracy:</strong> {workflow.diagnostics.intent_route_accuracy}/100</p>
+        <p><strong className="text-ink">creator_mode_activation:</strong> {workflow.diagnostics.creator_mode_activation ? "yes" : "no"}</p>
+        <p><strong className="text-ink">anime_flow_efficiency:</strong> {workflow.diagnostics.anime_flow_efficiency}/100</p>
+        <p><strong className="text-ink">render_path_truthfulness:</strong> {workflow.diagnostics.render_path_truthfulness}/100</p>
+      </div>
+    </article>
   );
 }
 
@@ -1175,11 +1328,30 @@ export function PreviewGenerationClient() {
   }, []);
 
   function updateField<Key extends keyof GovernedPreviewFormInput>(key: Key, value: GovernedPreviewFormInput[Key]) {
-    setForm((current) => ({ ...current, [key]: value }));
+    const nextForm = { ...form, [key]: value };
+    setForm(nextForm);
     if (key === "prompt" || key === "subject" || key === "style") {
       setSubjectStyleConfirmed(false);
       setPreviewOutputReviewed(false);
       setFinalVisualIntentMatched(false);
+    }
+    if (key === "prompt" || key === "subject" || key === "style" || key === "motion_intent") {
+      const route = resolveCreatorIntentRoute({
+        prompt: nextForm.prompt,
+        subject: nextForm.subject,
+        style: nextForm.style,
+        motionIntent: nextForm.motion_intent,
+      });
+      if (route.mode === "ANIME_CREATOR_MODE") {
+        setForceCharacterControlsOpen(true);
+        setSelectedAnimeCharacterProfileId((current) => resolvePreferredAnimeCreatorProfileId({
+          resolvedProfileId: route.profileResolution.resolvedProfileId,
+          currentProfileId: current,
+        }));
+        setGuidedWorkflowNotice(route.profileResolution.resolvedProfileLabel
+          ? `Anime intent detected. ${route.profileResolution.resolvedProfileLabel} selected for character-first rendering.`
+          : "Anime intent detected. Choose an approved anime profile to continue.");
+      }
     }
   }
 
@@ -2162,6 +2334,11 @@ export function PreviewGenerationClient() {
     ?? microSequence?.preview_diagnostics?.anime_character_truth_check
     ?? prerequisiteState?.preview_diagnostics?.anime_character_truth_check
     ?? null;
+  const activeVisualFidelityTier = latestAnimeCharacterReport?.diagnostics?.anime_visual_fidelity_diagnostics?.fidelity_tier
+    ?? execution?.preview_diagnostics?.anime_visual_fidelity_diagnostics?.fidelity_tier
+    ?? microSequence?.preview_diagnostics?.anime_visual_fidelity_diagnostics?.fidelity_tier
+    ?? prerequisiteState?.preview_diagnostics?.anime_visual_fidelity_diagnostics?.fidelity_tier
+    ?? null;
   const truthChecksPassed = Boolean(activeTruthCheck?.character_pixels_generated
     && activeTruthCheck.character_primary_subject
     && activeTruthCheck.diagnostics_match_rendered_output
@@ -2194,6 +2371,30 @@ export function PreviewGenerationClient() {
   const activeGuidedSectionId = activeGuidedTarget.workflowSectionId;
   const guidedWarningSectionIds = new Set(guidedWorkflowSteps.filter((step) => step.hasPersistentWarning || step.status === "warning" || step.status === "failed" || step.status === "blocked").map((step) => step.sectionId));
   const finalOperatorVerdict = evaluateFinalOperatorVerdict(workflowFacts);
+  const animeCreatorWorkflow = buildAnimeCreatorWorkflowState({
+    prompt: form.prompt,
+    subject: form.subject,
+    style: form.style,
+    motionIntent: form.motion_intent,
+    characterApproval: animeCharacterApproval,
+    governanceApproval: form.governance_approval,
+    motionPreviewReady,
+    reviewReady: Boolean(latestAnimeCharacterReport?.visualReviewPackage?.reviewLabel === "USER_VISUAL_CHECK_READY"),
+    previewGenerated: previewGalleryCards.length > 0 || Boolean(latestAnimeCharacterReport?.visualReviewPackage?.gifToInspect),
+    finalReviewReady: finalOperatorVerdict === "PASS",
+    truthCheck: activeTruthCheck,
+    visualFidelityTier: activeVisualFidelityTier,
+    audioImplemented: false,
+  });
+  const animeCreatorModeActive = animeCreatorWorkflow.mode === "ANIME_CREATOR_MODE";
+  const animeCreatorActivity: ActivityIndicator = {
+    label: animeCreatorWorkflow.scaffoldStatus.toLowerCase().replaceAll("_", "-"),
+    tone: animeCreatorWorkflow.scaffoldStatus === "ANIME_CREATOR_WORKFLOW_ACTIVE" ? "ok" : animeCreatorWorkflow.scaffoldStatus === "PARTIAL_CREATOR_ROUTING" ? "warn" : "info",
+    summary: animeCreatorModeActive
+      ? "Anime creator mode is active; irrelevant variant and probe harness panels are hidden."
+      : capabilityHarnessActivity.summary,
+    critical: animeCreatorWorkflow.scaffoldStatus === "PARTIAL_CREATOR_ROUTING",
+  };
   const governedExecutionTimeline = buildGovernedExecutionTimeline(governedExecutionState, {
     outputReviewed: previewOutputReviewed || microSequenceReviewed,
     diagnosticsReviewed,
@@ -2491,13 +2692,44 @@ export function PreviewGenerationClient() {
 
         <CollapsibleActivitySection
           sectionLabel="Dashboard Controls"
-          title="Prompt, Style, Intensity, HIGH Probe, And Character Profile Controls"
-          activity={capabilityHarnessActivity}
-          defaultOpen={capabilityHarnessActivity.critical}
+          title={animeCreatorModeActive ? "Anime Creator Workflow Controls" : "Prompt, Style, Intensity, HIGH Probe, And Character Profile Controls"}
+          activity={animeCreatorModeActive ? animeCreatorActivity : capabilityHarnessActivity}
+          defaultOpen={animeCreatorModeActive || capabilityHarnessActivity.critical}
           className="mb-6"
           {...dashboardGuidedProps}
-          containsActiveStep={dashboardGuidedProps.containsActiveStep || forceCharacterControlsOpen}
+          containsActiveStep={dashboardGuidedProps.containsActiveStep || forceCharacterControlsOpen || animeCreatorModeActive}
         >
+        {animeCreatorModeActive ? (
+          <>
+            <AnimeCreatorGuidancePanel workflow={animeCreatorWorkflow} />
+            <AnimeWorkflowExecutionHub
+              workflow={animeCreatorWorkflow}
+              executionLocked={executionLocked}
+              governanceApproved={form.governance_approval}
+              characterApproved={animeCharacterApproval}
+              gifPackagingRequested={form.package_gif_preview}
+              onGenerateCharacter={() => {
+                if (animeCreatorWorkflow.profileResolution.resolvedProfileId) {
+                  handleRunAnimeCharacter(animeCreatorWorkflow.profileResolution.resolvedProfileId);
+                }
+              }}
+              onGenerateGif={() => {
+                if (animeCreatorWorkflow.profileResolution.resolvedProfileId) {
+                  handleRunAnimeCharacter(animeCreatorWorkflow.profileResolution.resolvedProfileId);
+                }
+              }}
+              onRunMotionPreview={handleGenerate}
+              onExportReport={handleExportRunReportPdf}
+            />
+            <div className="mb-6 grid gap-6 lg:grid-cols-2">
+              <AudioGenerationStatusPanel />
+              <CinematicRoadmapPanel />
+            </div>
+            <CreatorExperienceDiagnosticsPanel workflow={animeCreatorWorkflow} />
+          </>
+        ) : null}
+        {!animeCreatorModeActive ? (
+          <>
         <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
           <article
             id="anime-character-rendering-section"
@@ -3558,6 +3790,9 @@ export function PreviewGenerationClient() {
           </article>
         </section>
 
+          </>
+        ) : null}
+
         <section className="mb-6 grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
           <article className="glass-card rounded-[2rem] p-6 shadow-float">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -3905,6 +4140,13 @@ export function PreviewGenerationClient() {
               <div className="w-full">
                 <GuidedTargetCallout active={isGuidedHighlightActive("execution-controls")} label={activeGuidedTarget.calloutLabel} instruction={activeGuidedTarget.instruction} />
               </div>
+              {animeCreatorModeActive ? (
+                <div className="w-full rounded-[1rem] border border-ocean/20 bg-ocean/5 p-4 text-sm leading-7 body-muted">
+                  <p><strong className="text-ink">Anime creator mode active:</strong> use the Anime Character Generation command center above for frame sets, GIF preview, review package export, and truthful render-path tracking.</p>
+                  <p><strong className="text-ink">Active render path:</strong> {animeCreatorWorkflow.activeRenderPath}</p>
+                </div>
+              ) : (
+                <>
               <button
                 type="button"
                 onClick={handleGenerate}
@@ -3931,8 +4173,10 @@ export function PreviewGenerationClient() {
               >
                 {governedExecutionState.rollbackInProgress ? "Restoring Rollback..." : "Clear Preview Sandbox"}
               </button>
+                </>
+              )}
             </div>
-            {!motionPreviewReady ? (
+            {!animeCreatorModeActive && !motionPreviewReady ? (
               <p className="mt-4 rounded-[1.25rem] border border-amber-200 bg-amber-50 p-4 text-sm leading-7 text-amber-700">
                 Motion preview generation stays disabled until the governed micro-sequence exists and frame-to-frame continuity validation passes.
               </p>
@@ -3953,6 +4197,7 @@ export function PreviewGenerationClient() {
                 <StatusPill label={execution?.status === "accepted" ? "request-accepted" : execution?.status ?? "idle"} tone={statusTone} />
                 <StatusPill label={executionLocked ? "processing-locked" : "ready"} tone={executionLocked ? "warn" : "default"} />
                 <StatusPill label={motionPreviewReady ? "prerequisite-ready" : "prerequisite-required"} tone={motionPreviewReady ? "ok" : "warn"} />
+                <StatusPill label={`active-render-path-${animeCreatorWorkflow.activeRenderPath.toLowerCase().replaceAll("_", "-")}`} tone={animeCreatorWorkflow.activeRenderPath === "CHARACTER_FIRST_RENDERER" ? "ok" : animeCreatorWorkflow.activeRenderPath === "PRIMITIVE_FALLBACK" ? "blocked" : "default"} />
               </div>
               <p className="text-sm leading-7 body-muted">{message}</p>
               {error ? <p className="rounded-[1.25rem] border border-coral/20 bg-coral/10 p-4 text-sm text-ember">{error}</p> : null}
@@ -4099,6 +4344,7 @@ export function PreviewGenerationClient() {
         </div>
 
         <section className="mt-6 grid gap-6 lg:grid-cols-3">
+          {!animeCreatorModeActive ? (
           <CollapsibleActivitySection
             sectionLabel="Micro-Sequence Frames"
             title="Prerequisite Renderer Frames"
@@ -4171,6 +4417,7 @@ export function PreviewGenerationClient() {
               )}
             </div>
           </CollapsibleActivitySection>
+          ) : null}
 
           <CollapsibleActivitySection
             sectionLabel="Preview Outputs"
@@ -4250,6 +4497,7 @@ export function PreviewGenerationClient() {
             </div>
           </CollapsibleActivitySection>
 
+          {!animeCreatorModeActive ? (
           <CollapsibleActivitySection
             sectionLabel="Frame Comparison"
             title="Continuity Comparison"
@@ -4277,6 +4525,7 @@ export function PreviewGenerationClient() {
               )}
             </div>
           </CollapsibleActivitySection>
+          ) : null}
         </section>
 
         <section className="mt-6 grid gap-6 lg:grid-cols-1">

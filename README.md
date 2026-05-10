@@ -483,7 +483,7 @@ Scaffold Status: `✅ SCAFFOLD REMOVED — REAL OUTPUT ACTIVE` for approved anim
 
 Current Phase 1 progress:
 
-- the operator preview surface now exposes four approved character profiles only: `CELESTIAL_APPRENTICE`, `NEON_COURIER`, `RITUAL_TECH_ADEPT`, and `INDUSTRIAL_SENTINEL`
+- the operator preview surface now exposes five approved character profiles only: `CELESTIAL_APPRENTICE`, `NEON_COURIER`, `RITUAL_TECH_ADEPT`, `INDUSTRIAL_SENTINEL`, and `SOLAR_CRIMSON_SENTINEL`
 - anime character execution requires both the existing manual preview governance approval and a separate explicit anime character approval before any character-first preview package is generated
 - approved anime character runs now call the deterministic character-first renderer in `web/lib/aie/animeCharacters/animeCharacterPrimitiveRenderer.ts` instead of claiming success from the old cube/beacon/drone primitive preview path
 - the real renderer writes visible PNG frames, GIF preview, manifest, diagnostics JSON, and an operator visual-review summary under `.aie/governed_anime_character_preview_sandbox/<profile>-real-render-001/`
@@ -503,6 +503,22 @@ Visual validation contract:
 - fallback primitive dominance sets scaffold status back to scaffold/fallback failure even if approval metadata or style-profile diagnostics look healthy
 - `EARLY_ANIME` is an explicit early-fidelity tier, not a claim of production-quality illustration; it means the generated PNG/GIF has moved beyond cube/beacon fallback and primitive sprite assembly into readable anime face, eyes, hair, outfit, pose, and background separation
 
+Anime-first creator workflow:
+
+- anime-character prompts now activate `ANIME_CREATOR_MODE` from creator intent signals such as anime style, heroine/young woman language, hair/eye/outfit traits, primary-subject framing, and futuristic or magical anime wording
+- anime creator mode suppresses irrelevant prompt-variant, prompt-domain, visual-style, style-stress, style-intensity, HIGH-probe, generic micro-sequence, and frame-comparison panels while keeping anime controls, profile cards, diagnostics, render actions, visual review, audio roadmap, and cinematic roadmap visible
+- the anime creator workflow stages are Character Intent Detected, Anime Profile Resolved, Character Visual Path Prepared, Micro-Sequence Ready, Anime Character Review Ready, Motion Preview Ready, and Final Review Ready
+- the anime workflow execution hub exposes creator-facing actions for Generate Character Frame Set, Generate Anime GIF Preview, Run Motion Preview, Export Review Package, and Export PDF Report
+- active render path labels are explicit and use one of `CHARACTER_FIRST_RENDERER`, `PRIMITIVE_FALLBACK`, `GOVERNED_PREVIEW`, `MOTION_PREVIEW`, `PLACEHOLDER`, or `MOCK_OUTPUT`; placeholder and mock labels must not pass character render review
+- creator experience diagnostics track `creator_workflow_alignment`, `workflow_confusion_risk`, `irrelevant_panel_exposure`, `intent_route_accuracy`, `creator_mode_activation`, `anime_flow_efficiency`, and `render_path_truthfulness`
+- blonde hair / crimson-red eyes / black-and-gold futuristic outfit prompts resolve to `SOLAR_CRIMSON_SENTINEL`, keeping the required creator playtest prompt inside the approved profile registry instead of forcing a mismatched manual profile selection
+
+Audio generation foundation:
+
+- `web/lib/aie/audioGenerationRoadmap.ts` records governed audio architecture planning only; current status is `NOT_YET_IMPLEMENTED` and fake audio generation remains disallowed
+- planned audio capabilities include ambient sci-fi audio, cinematic soundtrack layers, anime vocal themes, motion-sync audio timing, and future dialogue routing
+- future audio work must include soundtrack intent schema, ambience categories, cinematic sync targets, voice/dialogue governance, audio manifest export, waveform/timing diagnostics, and explicit operator audio review
+
 Localhost operator UI behavior:
 
 - `/operator/preview` now opens as a compact dashboard of obvious dropdown-style headers instead of one always-open report: Dashboard Controls, Anime Character Report, Execution Controls, Execution Status, Micro-Sequence Frames, Preview Outputs, Frame Comparison, Governed Diagnostics, and Blockers And Rollback
@@ -520,6 +536,7 @@ Localhost operator UI behavior:
 - duplicate execution prevention is UI-visible: Generate Preview, Generate Micro-Sequence First, Render Character, and Clear Preview Sandbox lock while execution is active and show `Execution already in progress.` if a second request collides with the active governed run
 - anime-character prompts are classified deterministically before generic preview execution; if the operator uses Generate Micro-Sequence First or Generate Preview for an anime-character request, the prerequisite cube/beacon renderer is blocked with `character-first-render-required` and no prerequisite PNG/GIF review artifacts are exported
 - approved request-form anime-character prompts now route from Generate Micro-Sequence First or Generate Preview into the character-first renderer when manual approval, anime character approval, and an approved resolved profile are present; silver-blue hair / teal eyes / young woman prompts resolve to `CELESTIAL_APPRENTICE`, while uncertain anime prompts guide the operator to choose an approved anime character profile
+- creator-mode anime prompts now bypass irrelevant developer harness panels and show AI-E guidance cards such as anime intent detected, selected profile, character-first render path active, micro-sequence recommendation, early anime fidelity, and current audio unavailability
 - character-render execution is visible as dedicated anime phases: `CHARACTER_REQUEST_ACCEPTED`, `CHARACTER_RENDER_VALIDATING`, `CHARACTER_RENDER_RUNNING`, `CHARACTER_GIF_PACKAGING`, `CHARACTER_EXPORTING_OUTPUTS`, `CHARACTER_RENDER_COMPLETE`, `CHARACTER_RENDER_REJECTED`, or `CHARACTER_RENDER_FAILED`
 - character-first anime rendering must use the approved Render Character path or explicitly block; BEACON_REVEAL, DUAL_ORBIT, cube anchors, segmented drones, and `.aie/governed_micro_sequence_sandbox` prerequisite frames are invalid anime-character review artifacts
 - character review validation requires character pixels, readable face, readable silhouette, character-primary framing, anime-style dominance, diagnostics that match output, and fallback dominance inactive before PASS can be trusted
@@ -539,6 +556,7 @@ Approved character profiles:
 - `CHARACTER_002` / `NEON_COURIER`: young-adult heroine with short magenta hair, alert focused eyes, and neon urban jacket details
 - `CHARACTER_003` / `RITUAL_TECH_ADEPT`: young-adult heroine with dark violet hair, glowing accessory motifs, and a composed ceremonial stance
 - `CHARACTER_004` / `INDUSTRIAL_SENTINEL`: young-adult hero with dark ash hair, reserved stoic expression, and practical techwear silhouette
+- `CHARACTER_005` / `SOLAR_CRIMSON_SENTINEL`: young-adult heroine with long blonde hair, vivid crimson-red eyes, and black-and-gold futuristic outfit accents
 
 Character readability watchpoints:
 

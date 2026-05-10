@@ -77,6 +77,25 @@ const APPROVED_ANIME_CHARACTER_PROFILES: readonly AnimeCharacterProfile[] = [
     explicitSexualizationAllowed: false,
     unrestrictedCostumeGenerationAllowed: false,
   },
+  {
+    id: "CHARACTER_005",
+    label: "SOLAR_CRIMSON_SENTINEL",
+    archetype: "confident neon chamber heroine",
+    genderPresentation: "young-adult heroine",
+    eyeDescription: "large vivid crimson-red anime eyes with clear catchlights",
+    hairDescription: "long blonde hair with a bright readable anime silhouette",
+    outfitDescription: "black-and-gold futuristic outfit with bounded glowing anime-inspired accents",
+    expressionDefault: "FOCUSED_DETERMINATION",
+    poseDefault: "NEUTRAL_HERO_STANCE",
+    promptSubject: "A clearly anime-style blonde-haired young-adult heroine with vivid crimson-red eyes",
+    visualIdentity: ["vivid crimson-red anime eyes", "long blonde anime hair", "black-and-gold futuristic outfit", "confident neon chamber stance"],
+    safetyNotes: ["single young-adult character", "no dialogue", "no sexualization", "no combat choreography"],
+    maxCastSize: 1,
+    dialogueAllowed: false,
+    combatChoreographyAllowed: false,
+    explicitSexualizationAllowed: false,
+    unrestrictedCostumeGenerationAllowed: false,
+  },
 ] as const;
 
 export function listApprovedAnimeCharacterProfiles(): AnimeCharacterProfile[] {

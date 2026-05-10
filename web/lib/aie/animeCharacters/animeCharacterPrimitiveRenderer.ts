@@ -206,8 +206,8 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
   const skin = rgba(facePlan.skinBase);
   const skinShadow = rgba(facePlan.skinShadow, 185);
   const cheek = rgba(facePlan.blush, 110);
-  const jacket: RgbaColor = profile.id === "CHARACTER_004" ? [38, 51, 65, 255] : [39, 59, 105, 255];
-  const jacketLight: RgbaColor = profile.id === "CHARACTER_002" ? [24, 214, 226, 255] : [100, 210, 246, 255];
+  const jacket: RgbaColor = profile.id === "CHARACTER_004" ? [38, 51, 65, 255] : profile.id === "CHARACTER_005" ? [24, 24, 34, 255] : [39, 59, 105, 255];
+  const jacketLight: RgbaColor = profile.id === "CHARACTER_002" ? [24, 214, 226, 255] : profile.id === "CHARACTER_005" ? [245, 190, 47, 255] : [100, 210, 246, 255];
   const accent: RgbaColor = profile.id === "CHARACTER_003" ? [175, 128, 246, 255] : jacketLight;
 
   drawEllipse(image, centerX, 129 + sway, 58, 92, [8, 13, 28, 188]);

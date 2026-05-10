@@ -114,7 +114,7 @@ async function runPassingCharacter(profileId: string) {
 test("approved anime character profiles load deterministically", () => {
   const profiles = listGovernedAnimeCharacterProfiles();
 
-  assert.deepEqual(profiles.map((entry) => entry.id), ["CHARACTER_001", "CHARACTER_002", "CHARACTER_003", "CHARACTER_004"]);
+  assert.deepEqual(profiles.map((entry) => entry.id), ["CHARACTER_001", "CHARACTER_002", "CHARACTER_003", "CHARACTER_004", "CHARACTER_005"]);
   assert.equal(profiles.every((entry) => entry.maxCastSize === 1 && !entry.dialogueAllowed && !entry.combatChoreographyAllowed), true);
   assert.equal(getApprovedAnimeCharacterProfileById("CHARACTER_001")?.label, "CELESTIAL_APPRENTICE");
 });
@@ -134,7 +134,7 @@ test("pose and expression templates remain bounded and deterministic", () => {
 test("anime character execution plan stays bounded", () => {
   const plan = buildAnimeCharacterExecutionPlan();
 
-  assert.equal(plan.maxProfiles, 4);
+  assert.equal(plan.maxProfiles, 5);
   assert.equal(plan.maxCastSize, 1);
   assert.equal(plan.operatorTriggeredOnly, true);
   assert.equal(plan.characterApprovalRequired, true);

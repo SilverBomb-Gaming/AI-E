@@ -20,7 +20,8 @@ export type AnimeCharacterProfileId =
   | "CHARACTER_001"
   | "CHARACTER_002"
   | "CHARACTER_003"
-  | "CHARACTER_004";
+  | "CHARACTER_004"
+  | "CHARACTER_005";
 
 export type AnimeCharacterPoseId =
   | "NEUTRAL_HERO_STANCE"
@@ -316,7 +317,7 @@ export type AnimeCharacterExecutionPlan = {
   operatorTriggeredOnly: true;
   manualApprovalRequired: true;
   characterApprovalRequired: true;
-  maxProfiles: 4;
+  maxProfiles: 5;
   maxCastSize: 1;
   profileIds: AnimeCharacterProfileId[];
   stages: AnimeCharacterExecutionPlanStage[];

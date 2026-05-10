@@ -56,7 +56,7 @@ export type RunAnimeCharacterRenderInput = {
   priorReports?: AnimeCharacterReport[];
 } & GovernedPreviewExecutionOptions;
 
-export const ANIME_CHARACTER_MAX_PROFILES = 4;
+export const ANIME_CHARACTER_MAX_PROFILES = 5;
 
 export const ANIME_CHARACTER_THRESHOLDS = {
   rollbackIntegrityStatus: "PASS",

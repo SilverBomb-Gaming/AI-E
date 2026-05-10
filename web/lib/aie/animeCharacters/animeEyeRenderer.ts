@@ -41,6 +41,9 @@ function irisColorForProfile(profile: AnimeCharacterProfile): readonly [number, 
   if (profile.id === "CHARACTER_004") {
     return [130, 226, 217];
   }
+  if (profile.id === "CHARACTER_005") {
+    return [229, 34, 66];
+  }
   return [20, 232, 224];
 }
 

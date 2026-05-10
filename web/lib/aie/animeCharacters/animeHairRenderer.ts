@@ -31,6 +31,9 @@ function palette(profile: AnimeCharacterProfile): Pick<AnimeHairRenderPlan, "bas
   if (profile.id === "CHARACTER_004") {
     return { baseColor: [54, 60, 70], shadowColor: [28, 32, 40], highlightColor: [120, 130, 148] };
   }
+  if (profile.id === "CHARACTER_005") {
+    return { baseColor: [235, 195, 74], shadowColor: [155, 103, 35], highlightColor: [255, 239, 145] };
+  }
   return { baseColor: [151, 205, 237], shadowColor: [74, 127, 174], highlightColor: [226, 248, 255] };
 }
 
@@ -39,7 +42,7 @@ export function buildAnimeHairRenderPlan(input: {
   frameIndex?: number;
 }): AnimeHairRenderPlan {
   const sway = Math.sin((input.frameIndex ?? 0) * 0.7) * 2;
-  const longHair = input.profile.id === "CHARACTER_001" || input.profile.id === "CHARACTER_003";
+  const longHair = input.profile.id === "CHARACTER_001" || input.profile.id === "CHARACTER_003" || input.profile.id === "CHARACTER_005";
   const layers: AnimeHairLayer[] = [
     { id: "rear-left-volume", role: "rear-volume", anchorX: 92, anchorY: 45, tipX: 78 - sway, tipY: longHair ? 196 : 134, width: longHair ? 24 : 15, shade: "shadow" },
     { id: "rear-right-volume", role: "rear-volume", anchorX: 148, anchorY: 45, tipX: 161 + sway, tipY: longHair ? 194 : 134, width: longHair ? 24 : 15, shade: "base" },

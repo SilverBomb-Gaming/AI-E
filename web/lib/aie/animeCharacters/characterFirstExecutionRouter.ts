@@ -68,6 +68,11 @@ export function resolveAnimeCharacterProfileForRequest(input: {
   const text = profileResolutionText(input);
   const profileMatches: Array<{ id: AnimeCharacterProfileId; label: string; matched: boolean }> = [
     {
+      id: "CHARACTER_005",
+      label: "SOLAR_CRIMSON_SENTINEL",
+      matched: /(blonde hair|blonde-haired|crimson[- ]red eyes|red eyes|black-and-gold|black and gold)/.test(text),
+    },
+    {
       id: "CHARACTER_001",
       label: "CELESTIAL_APPRENTICE",
       matched: /(silver[- ]blue hair|teal eyes|young woman|anime-style young woman)/.test(text),
