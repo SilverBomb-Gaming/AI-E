@@ -17,6 +17,7 @@ import { buildAnimeCameraFramingSequence, buildAnimeCameraFramingState, summariz
 import { buildAnimeCinematicLightingSequence, buildAnimeCinematicLightingState, buildAnimeMoodPalette, summarizeAnimeCinematicLightingDiagnostics, type AnimeCinematicLightingState, type AnimeMoodPalette } from "./animeCinematicLighting";
 import { buildAnimePoseEnergyState } from "./animePoseEnergy";
 import { buildAnimeArticulationPlan, summarizeAnimeArticulationDiagnostics, type AnimeArticulationPlan } from "./animeArticulationRenderer";
+import { buildAnimeTorsoStructurePlan, summarizeAnimeTorsoStructureDiagnostics, type AnimeTorsoStructurePlan } from "./animeTorsoStructure";
 import { resolveAnimePoseLanguagePreset, type AnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, type AnimeVisualFidelityDiagnostics } from "./animeVisualFidelityDiagnostics";
 import type {
@@ -342,6 +343,7 @@ function drawPlannedArm(input: {
   outline: RgbaColor;
   sleeveSway?: number;
   articulationPlan: AnimeArticulationPlan;
+  torsoStructurePlan: AnimeTorsoStructurePlan;
 }) {
   const arm = input.side === -1 ? input.bodyPlan.leftArm : input.bodyPlan.rightArm;
   const articulationArm = input.side === -1 ? input.articulationPlan.leftArm : input.articulationPlan.rightArm;
@@ -362,6 +364,9 @@ function drawPlannedArm(input: {
   drawEllipse(input.image, elbowX, elbowY, articulationArm.elbowCueRadius, articulationArm.elbowCueRadius * 0.68, input.outline, true);
   drawEllipse(input.image, elbowX, elbowY, articulationArm.elbowCueRadius - 1.1, articulationArm.elbowCueRadius * 0.44, input.sleeveShadow, true);
   drawLine(input.image, elbowX - input.side * 4.5, elbowY + 1, elbowX + input.side * 4.3, elbowY - 0.4, input.cuff, 0.95, true);
+  drawLine(input.image, elbowX - input.side * 5, elbowY + 6, wristX + input.side * 3.5, wristY + 1.5, [232, 246, 255, 54 + input.torsoStructurePlan.sleeveFoldStrength * 34], 0.7, true);
+  drawLine(input.image, elbowX + input.side * 2, elbowY + 9, wristX - input.side * 2.5, wristY + 5.2, [4, 7, 18, 76], 0.75, true);
+  drawLine(input.image, input.shoulderX + input.side * 4, input.shoulderY + 11, elbowX + input.side * input.torsoStructurePlan.sleeveOverlapDepth, elbowY - 5, [255, 213, 88, 54], 0.8, true);
   drawEllipse(input.image, wristX, wristY, arm.cuffWidth * 0.76, 4.4, input.outline, true);
   drawEllipse(input.image, wristX, wristY, arm.cuffWidth * 0.6, 3.3, input.cuff, true);
 
@@ -444,6 +449,7 @@ function drawPlannedLowerBody(input: {
   accent: RgbaColor;
   outline: RgbaColor;
   articulationPlan: AnimeArticulationPlan;
+  torsoStructurePlan: AnimeTorsoStructurePlan;
 }) {
   const legColor: RgbaColor = [37, 43, 62, 255];
   const legShadow: RgbaColor = [25, 29, 45, 255];
@@ -452,13 +458,13 @@ function drawPlannedLowerBody(input: {
   const hipY = input.baseY + 1;
   drawQuad(
     input.image,
-    input.centerX - input.lowerBodyPlan.hipWidth / 2,
-    hipY - 3,
-    input.centerX + input.lowerBodyPlan.hipWidth / 2,
-    hipY - 3,
-    input.centerX + input.lowerBodyPlan.waistTransitionWidth / 2,
+    input.centerX - input.torsoStructurePlan.hipShapeWidth / 2 - input.torsoStructurePlan.pelvisTilt * 0.18,
+    hipY - 4,
+    input.centerX + input.torsoStructurePlan.hipShapeWidth / 2 - input.torsoStructurePlan.pelvisTilt * 0.18,
+    hipY - 1,
+    input.centerX + input.lowerBodyPlan.waistTransitionWidth / 2 + input.torsoStructurePlan.pelvisTilt * 0.22,
     hipY + input.lowerBodyPlan.lowerJacketOverlap,
-    input.centerX - input.lowerBodyPlan.waistTransitionWidth / 2,
+    input.centerX - input.lowerBodyPlan.waistTransitionWidth / 2 + input.torsoStructurePlan.pelvisTilt * 0.22,
     hipY + input.lowerBodyPlan.lowerJacketOverlap,
     input.outline,
     true,
@@ -477,12 +483,62 @@ function drawPlannedLowerBody(input: {
     true,
   );
   drawLine(input.image, input.centerX - 21, hipY + 8, input.centerX + 20, hipY + 8, input.accent, 1.2, true);
+  drawLine(input.image, input.centerX - 25, hipY + 3, input.centerX + 24, hipY + 5 + input.torsoStructurePlan.pelvisTilt * 0.08, [255, 225, 126, 96], 1, true);
+  drawLine(input.image, input.centerX - 18, hipY + 12, input.centerX - 25 + input.torsoStructurePlan.hemSway, hipY + input.lowerBodyPlan.lowerJacketOverlap + 4, [4, 7, 18, 84], 0.9, true);
+  drawLine(input.image, input.centerX + 18, hipY + 12, input.centerX + 25 + input.torsoStructurePlan.hemSway, hipY + input.lowerBodyPlan.lowerJacketOverlap + 2, [255, 213, 88, 70], 0.9, true);
   drawLine(input.image, input.centerX, hipY + 6, input.centerX, hipY + input.lowerBodyPlan.lowerJacketOverlap + 9, [8, 10, 18, 178], 1.1, true);
 
   drawPlannedLeg({ image: input.image, centerX: input.centerX, baseY: input.baseY, leg: input.lowerBodyPlan.leftLeg, bootAccent: input.accent, legColor, legShadow, legHighlight, outline: input.outline, side: -1, articulationPlan: input.articulationPlan });
   drawPlannedLeg({ image: input.image, centerX: input.centerX, baseY: input.baseY, leg: input.lowerBodyPlan.rightLeg, bootAccent: input.accent, legColor, legShadow, legHighlight, outline: input.outline, side: 1, articulationPlan: input.articulationPlan });
   drawPlannedFoot({ image: input.image, centerX: input.centerX, baseY: input.baseY, foot: input.lowerBodyPlan.leftFoot, bootColor, bootAccent: input.accent, outline: input.outline, side: -1, articulationPlan: input.articulationPlan });
   drawPlannedFoot({ image: input.image, centerX: input.centerX, baseY: input.baseY, foot: input.lowerBodyPlan.rightFoot, bootColor, bootAccent: input.accent, outline: input.outline, side: 1, articulationPlan: input.articulationPlan });
+}
+
+function drawTorsoClothingStructure(input: {
+  image: MutableImage;
+  centerX: number;
+  shoulderY: number;
+  waistY: number;
+  leftShoulderX: number;
+  rightShoulderX: number;
+  leftWaistX: number;
+  rightWaistX: number;
+  torsoStructurePlan: AnimeTorsoStructurePlan;
+  jacket: RgbaColor;
+  shadowPanel: RgbaColor;
+  centerPanel: RgbaColor;
+  accent: RgbaColor;
+  outline: RgbaColor;
+}) {
+  const ribY = input.shoulderY + 21;
+  const seamY = input.shoulderY + input.torsoStructurePlan.waistSeamY;
+  const ribHalf = input.torsoStructurePlan.ribcageWidth / 2;
+  const shirtHalf = input.torsoStructurePlan.innerShirtLayerWidth / 2;
+  const flow = input.torsoStructurePlan.torsoLean + input.torsoStructurePlan.torsoFollowDelay;
+  const leftRibX = input.centerX - ribHalf + flow * 0.25 - input.torsoStructurePlan.shoulderToWaistCurve * 0.28;
+  const rightRibX = input.centerX + ribHalf + flow * 0.15 + input.torsoStructurePlan.shoulderToWaistCurve * 0.2;
+  const leftInnerWaistX = input.centerX - shirtHalf + flow * 0.32;
+  const rightInnerWaistX = input.centerX + shirtHalf + flow * 0.32;
+
+  drawQuad(input.image, input.leftShoulderX + 8, input.shoulderY + 4, input.rightShoulderX - 7, input.shoulderY + 3, rightRibX, ribY, leftRibX, ribY + 2, rgba([8, 10, 20], 92), true);
+  drawQuad(input.image, input.centerX - 15, input.shoulderY + 1, input.centerX + 16, input.shoulderY + 1, rightInnerWaistX, input.waistY - 8, leftInnerWaistX, input.waistY - 5, input.centerPanel, true);
+  drawLine(input.image, input.leftShoulderX + 13, input.shoulderY + 8, leftInnerWaistX - input.torsoStructurePlan.outerJacketEdgeOffset, input.waistY - 10, input.accent, input.torsoStructurePlan.trimSeparationWidth, true);
+  drawLine(input.image, input.rightShoulderX - 12, input.shoulderY + 7, rightInnerWaistX + input.torsoStructurePlan.outerJacketEdgeOffset, input.waistY - 11, input.accent, input.torsoStructurePlan.trimSeparationWidth, true);
+  drawLine(input.image, input.centerX - input.torsoStructurePlan.coatOpeningWidth, input.shoulderY + 13, leftInnerWaistX + input.torsoStructurePlan.hemSway * 0.25, input.waistY - 6, input.shadowPanel, 1.15, true);
+  drawLine(input.image, input.centerX + input.torsoStructurePlan.coatOpeningWidth, input.shoulderY + 13, rightInnerWaistX + input.torsoStructurePlan.hemSway * 0.25, input.waistY - 8, [255, 242, 204, 84], 1.05, true);
+  drawLine(input.image, input.leftWaistX - 4, seamY, input.rightWaistX + 4, seamY + input.torsoStructurePlan.pelvisTilt * 0.1, input.accent, 1.2, true);
+  drawLine(input.image, input.leftWaistX + 2, seamY + 3, input.rightWaistX - 1, seamY + 4, [4, 7, 18, 92], 0.8, true);
+  drawLine(input.image, input.centerX - 12, input.shoulderY + input.torsoStructurePlan.collarStructureHeight * 0.35, input.centerX, input.shoulderY + input.torsoStructurePlan.collarStructureHeight, input.outline, 1.1, true);
+  drawLine(input.image, input.centerX + 13, input.shoulderY + input.torsoStructurePlan.collarStructureHeight * 0.35, input.centerX, input.shoulderY + input.torsoStructurePlan.collarStructureHeight, input.outline, 1.1, true);
+
+  for (let foldIndex = 0; foldIndex < input.torsoStructurePlan.coatTensionLineCount; foldIndex += 1) {
+    const side = foldIndex % 2 === 0 ? -1 : 1;
+    const startY = ribY + foldIndex * 5.2;
+    const startX = input.centerX + side * (13 + foldIndex * 1.8);
+    const endX = input.centerX + side * (18 + foldIndex * 2.5) + input.torsoStructurePlan.hemSway * 0.24;
+    const alpha = 54 + input.torsoStructurePlan.waistFoldStrength * 34;
+    drawLine(input.image, startX, startY, endX, input.waistY - 8 + foldIndex * 1.4, [255, 232, 168, alpha], 0.65, true);
+  }
 }
 
 function drawPlannedAnimeBody(input: {
@@ -500,6 +556,7 @@ function drawPlannedAnimeBody(input: {
   accent: RgbaColor;
   outline: RgbaColor;
   articulationPlan: AnimeArticulationPlan;
+  torsoStructurePlan: AnimeTorsoStructurePlan;
 }) {
   const { image, centerX, bodyPlan, outline, jacket, jacketLight, accent } = input;
   const shoulderY = input.neckY + bodyPlan.neckHeight;
@@ -514,14 +571,20 @@ function drawPlannedAnimeBody(input: {
   const rightWaistX = centerX + bodyPlan.waistWidth / 2 + torsoLean;
   const hemY = waistY + bodyPlan.lowerGarmentLength;
   const jacketSway = input.secondaryMotionState.jacketSway;
-  const fabricSway = bodyPlan.fabricFlow + input.motionPlan.fabricSway + input.secondaryMotionState.lowerFabricSway;
+  const fabricSway = bodyPlan.fabricFlow + input.motionPlan.fabricSway + input.secondaryMotionState.lowerFabricSway + input.torsoStructurePlan.hemSway * 0.45;
   const centerPanel = [235, 241, 248, 255] as const;
   const shadowPanel: RgbaColor = input.profile.id === "CHARACTER_005" ? [14, 15, 24, 255] : [26, 43, 83, 255];
+  const ribHalf = input.torsoStructurePlan.ribcageWidth / 2;
+  const ribY = shoulderY + 24;
+  const leftRibX = centerX - ribHalf + torsoLean * 0.22 - input.torsoStructurePlan.shoulderToWaistCurve * 0.26;
+  const rightRibX = centerX + ribHalf + torsoLean * 0.16 + input.torsoStructurePlan.shoulderToWaistCurve * 0.22;
 
   drawRect(image, centerX - 10, input.neckY - 1, 20, bodyPlan.neckHeight + 4, input.skinShadow, true);
-  drawQuad(image, leftShoulderX - 4, leftShoulderY + 2, rightShoulderX + 4, rightShoulderY + 2, rightWaistX + 9, waistY, leftWaistX - 9, waistY, outline, true);
-  drawQuad(image, leftShoulderX, leftShoulderY, rightShoulderX, rightShoulderY, rightWaistX, waistY, leftWaistX, waistY, jacket, true);
-  drawQuad(image, centerX - 13, shoulderY - 2, centerX + 14, shoulderY - 2, centerX + 10 + torsoLean, waistY - 3, centerX - 9 + torsoLean, waistY - 3, centerPanel, true);
+  drawQuad(image, leftShoulderX - 4, leftShoulderY + 2, rightShoulderX + 4, rightShoulderY + 2, rightRibX + 8, ribY, leftRibX - 8, ribY + 1, outline, true);
+  drawQuad(image, leftRibX - 8, ribY, rightRibX + 8, ribY, rightWaistX + 8 - input.torsoStructurePlan.waistTaper * 0.08, waistY, leftWaistX - 8 + input.torsoStructurePlan.waistTaper * 0.08, waistY, outline, true);
+  drawQuad(image, leftShoulderX, leftShoulderY, rightShoulderX, rightShoulderY, rightRibX, ribY, leftRibX, ribY + 1, jacket, true);
+  drawQuad(image, leftRibX + 1, ribY - 1, rightRibX - 1, ribY - 1, rightWaistX - input.torsoStructurePlan.waistTaper * 0.12, waistY, leftWaistX + input.torsoStructurePlan.waistTaper * 0.12, waistY, jacket, true);
+  drawQuad(image, centerX - 13, shoulderY - 2, centerX + 14, shoulderY - 2, centerX + 9 + torsoLean, waistY - 3, centerX - 8 + torsoLean, waistY - 3, centerPanel, true);
   drawTriangle(image, centerX - bodyPlan.jacketPanelWidth, shoulderY + 3, centerX - 4, shoulderY, centerX - 13 + torsoLean - jacketSway * 0.55, waistY - 17, shadowPanel, true);
   drawTriangle(image, centerX + bodyPlan.jacketPanelWidth, shoulderY + 3, centerX + 4, shoulderY, centerX + 14 + torsoLean + jacketSway * 0.55, waistY - 17, [19, 27, 52, 255], true);
   drawLine(image, leftShoulderX + 11, leftShoulderY + 6, centerX - 10 + torsoLean - jacketSway * 0.35, waistY - 9, accent, 2.1, true);
@@ -529,8 +592,25 @@ function drawPlannedAnimeBody(input: {
   drawLine(image, centerX - 17, shoulderY + 29, centerX + 18, shoulderY + 29, [232, 246, 255, 160], 1, true);
   drawLine(image, leftWaistX - 3, waistY - 7, rightWaistX + 3, waistY - 4, jacketLight, 1.6, true);
 
-  drawTriangle(image, leftWaistX - 12, waistY - 1, centerX - 3, waistY - 4, centerX - 18 + fabricSway, hemY + input.secondaryMotionState.hairSwayY * 0.25, jacket, true);
-  drawTriangle(image, rightWaistX + 12, waistY - 1, centerX + 5, waistY - 4, centerX + 22 + fabricSway, hemY - 3 - input.secondaryMotionState.hairSwayY * 0.15, shadowPanel, true);
+  drawTorsoClothingStructure({
+    image,
+    centerX,
+    shoulderY,
+    waistY,
+    leftShoulderX,
+    rightShoulderX,
+    leftWaistX,
+    rightWaistX,
+    torsoStructurePlan: input.torsoStructurePlan,
+    jacket,
+    shadowPanel,
+    centerPanel,
+    accent,
+    outline,
+  });
+
+  drawTriangle(image, leftWaistX - 12, waistY - 1, centerX - 3, waistY - 4, centerX - 18 + fabricSway + input.torsoStructurePlan.coatTailLag * 0.4, hemY + input.secondaryMotionState.hairSwayY * 0.25, jacket, true);
+  drawTriangle(image, rightWaistX + 12, waistY - 1, centerX + 5, waistY - 4, centerX + 22 + fabricSway + input.torsoStructurePlan.coatTailLag * 0.5, hemY - 3 - input.secondaryMotionState.hairSwayY * 0.15, shadowPanel, true);
   drawTriangle(image, centerX - 7, waistY - 2, centerX + 8, waistY - 1, centerX + 1 + fabricSway * 0.72, hemY + 3, [34, 39, 56, 255], true);
   drawLine(image, centerX - 17, waistY + 4, centerX - 23 + fabricSway, hemY - 4, accent, 1.4, true);
   drawLine(image, centerX + 19, waistY + 3, centerX + 26 + fabricSway, hemY - 6, accent, 1.4, true);
@@ -544,10 +624,11 @@ function drawPlannedAnimeBody(input: {
     accent,
     outline,
     articulationPlan: input.articulationPlan,
+    torsoStructurePlan: input.torsoStructurePlan,
   });
 
-  drawPlannedArm({ image, shoulderX: leftShoulderX + 2, shoulderY: leftShoulderY + 7, bodyPlan, side: -1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline, sleeveSway: input.secondaryMotionState.sleeveSway, articulationPlan: input.articulationPlan });
-  drawPlannedArm({ image, shoulderX: rightShoulderX - 2, shoulderY: rightShoulderY + 7, bodyPlan, side: 1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline, sleeveSway: input.secondaryMotionState.sleeveSway, articulationPlan: input.articulationPlan });
+  drawPlannedArm({ image, shoulderX: leftShoulderX + 2, shoulderY: leftShoulderY + 7, bodyPlan, side: -1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline, sleeveSway: input.secondaryMotionState.sleeveSway, articulationPlan: input.articulationPlan, torsoStructurePlan: input.torsoStructurePlan });
+  drawPlannedArm({ image, shoulderX: rightShoulderX - 2, shoulderY: rightShoulderY + 7, bodyPlan, side: 1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline, sleeveSway: input.secondaryMotionState.sleeveSway, articulationPlan: input.articulationPlan, torsoStructurePlan: input.torsoStructurePlan });
 }
 
 function drawCinematicLightingPass(input: {
@@ -598,6 +679,7 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
   const lowerBodyPlan = buildAnimeLowerBodyPlan({ profile, bodyPlan, posePreset, motionPlan });
   const poseEnergyState = buildAnimePoseEnergyState({ profile, posePreset, frameIndex });
   const articulationPlan = buildAnimeArticulationPlan({ profile, posePreset, bodyPlan, lowerBodyPlan, poseEnergyState, frameIndex });
+  const torsoStructurePlan = buildAnimeTorsoStructurePlan({ profile, bodyPlan, lowerBodyPlan, secondaryMotionState, articulationPlan, frameIndex });
   const centerX = facePlan.centerX + (profile.id === "CHARACTER_002" ? 3 : 0);
   const outline: RgbaColor = [17, 22, 42, 255];
   const skin = rgba(facePlan.skinBase);
@@ -653,6 +735,7 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
     accent,
     outline,
     articulationPlan,
+    torsoStructurePlan,
   });
   const shoulderY = 121 + bodyPlan.neckHeight;
   const waistY = shoulderY + bodyPlan.torsoHeight;
@@ -902,6 +985,14 @@ function buildFrameDiagnostic(frameIndex: number, truthCheck: AnimeCharacterTrut
     pose_energy_score: visualFidelityDiagnostics.pose_energy_score,
     silhouette_flow_score: visualFidelityDiagnostics.silhouette_flow_score,
     anatomy_primitive_risk: visualFidelityDiagnostics.anatomy_primitive_risk,
+    torso_structure_score: visualFidelityDiagnostics.torso_structure_score,
+    waist_flow_score: visualFidelityDiagnostics.waist_flow_score,
+    pelvis_balance_score: visualFidelityDiagnostics.pelvis_balance_score,
+    outfit_layering_score: visualFidelityDiagnostics.outfit_layering_score,
+    clothing_readability_score: visualFidelityDiagnostics.clothing_readability_score,
+    silhouette_motion_score: visualFidelityDiagnostics.silhouette_motion_score,
+    torso_stiffness_risk: visualFidelityDiagnostics.torso_stiffness_risk,
+    clothing_flatness_risk: visualFidelityDiagnostics.clothing_flatness_risk,
     lighting_stability_score: visualFidelityDiagnostics.lighting_continuity_score,
     lighting_consistency_score: visualFidelityDiagnostics.lighting_continuity_score,
     coherence_anchor_strength: 98,
@@ -1052,6 +1143,14 @@ function buildDiagnostics(
     pose_energy_score: visualFidelityDiagnostics.pose_energy_score,
     silhouette_flow_score: visualFidelityDiagnostics.silhouette_flow_score,
     anatomy_primitive_risk: visualFidelityDiagnostics.anatomy_primitive_risk,
+    torso_structure_score: visualFidelityDiagnostics.torso_structure_score,
+    waist_flow_score: visualFidelityDiagnostics.waist_flow_score,
+    pelvis_balance_score: visualFidelityDiagnostics.pelvis_balance_score,
+    outfit_layering_score: visualFidelityDiagnostics.outfit_layering_score,
+    clothing_readability_score: visualFidelityDiagnostics.clothing_readability_score,
+    silhouette_motion_score: visualFidelityDiagnostics.silhouette_motion_score,
+    torso_stiffness_risk: visualFidelityDiagnostics.torso_stiffness_risk,
+    clothing_flatness_risk: visualFidelityDiagnostics.clothing_flatness_risk,
     phrase_continuity_score: 96,
     transition_smoothness_score: 96,
     visual_continuity_score: 97,
@@ -1088,6 +1187,10 @@ function buildDiagnostics(
       { id: "hand-shape-readability", label: "Hand shape readability", score: visualFidelityDiagnostics.hand_shape_readability_score, status: visualFidelityDiagnostics.anatomy_primitive_risk === "LOW" ? "stable" : "watch", summary: `Simplified mitten hands include palm, thumb, grouped-finger, and wrist bridge cues; anatomy primitive risk: ${visualFidelityDiagnostics.anatomy_primitive_risk}.` },
       { id: "pose-energy", label: "Pose energy", score: visualFidelityDiagnostics.pose_energy_score, status: "stable", summary: "Pose energy adds a deterministic line of action and asymmetry without changing profile identity." },
       { id: "silhouette-flow", label: "Silhouette flow", score: visualFidelityDiagnostics.silhouette_flow_score, status: "stable", summary: "Head, shoulders, torso, legs, and boots follow a more intentional anime silhouette flow." },
+      { id: "torso-structure", label: "Torso structure", score: visualFidelityDiagnostics.torso_structure_score, status: visualFidelityDiagnostics.torso_stiffness_risk === "LOW" ? "stable" : "watch", summary: `Ribcage taper, waist curve, and pelvis transition are active; torso stiffness risk: ${visualFidelityDiagnostics.torso_stiffness_risk}.` },
+      { id: "outfit-layering", label: "Outfit layering", score: visualFidelityDiagnostics.outfit_layering_score, status: "stable", summary: "Outer jacket edges, inner shirt, collar, trim, waist seam, and coat opening are rendered as separate layers." },
+      { id: "silhouette-motion", label: "Silhouette motion", score: visualFidelityDiagnostics.silhouette_motion_score, status: "stable", summary: "Coat hem, sleeve folds, waist folds, and hip line follow bounded secondary motion." },
+      { id: "clothing-flatness-risk", label: "Clothing flatness risk", score: visualFidelityDiagnostics.clothing_flatness_risk === "LOW" ? 94 : visualFidelityDiagnostics.clothing_flatness_risk === "MEDIUM" ? 78 : 52, status: visualFidelityDiagnostics.clothing_flatness_risk === "LOW" ? "stable" : "watch", summary: `Clothing flatness risk: ${visualFidelityDiagnostics.clothing_flatness_risk}.` },
       { id: "scene-cohesion", label: "Anime character scene cohesion", score: visualFidelityDiagnostics.background_separation, status: "stable", summary: "Background supports the character instead of dominating." },
     ],
     artifact_diagnostics: [
@@ -1162,6 +1265,14 @@ function buildDiagnostics(
       `pose_energy_score=${visualFidelityDiagnostics.pose_energy_score}`,
       `silhouette_flow_score=${visualFidelityDiagnostics.silhouette_flow_score}`,
       `anatomy_primitive_risk=${visualFidelityDiagnostics.anatomy_primitive_risk}`,
+      `torso_structure_score=${visualFidelityDiagnostics.torso_structure_score}`,
+      `waist_flow_score=${visualFidelityDiagnostics.waist_flow_score}`,
+      `pelvis_balance_score=${visualFidelityDiagnostics.pelvis_balance_score}`,
+      `outfit_layering_score=${visualFidelityDiagnostics.outfit_layering_score}`,
+      `clothing_readability_score=${visualFidelityDiagnostics.clothing_readability_score}`,
+      `silhouette_motion_score=${visualFidelityDiagnostics.silhouette_motion_score}`,
+      `torso_stiffness_risk=${visualFidelityDiagnostics.torso_stiffness_risk}`,
+      `clothing_flatness_risk=${visualFidelityDiagnostics.clothing_flatness_risk}`,
       `visual_fidelity_score=${visualFidelityDiagnostics.visual_fidelity_score}`,
       `fidelity_tier=${visualFidelityDiagnostics.fidelity_tier}`,
     ],
@@ -1262,6 +1373,16 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
   });
   const articulationSummary = summarizeAnimeArticulationDiagnostics(articulationSequence);
   const diagnosticArticulationPlan = articulationSequence[2] ?? articulationSequence[0];
+  const torsoStructureSequence = motionSequence.map((motionPlan, frameIndex) => {
+    const bodyPlan = buildAnimeBodyPlan({ profile: input.profile, posePreset: diagnosticPosePreset, frameIndex });
+    const lowerBodyPlan = buildAnimeLowerBodyPlan({ profile: input.profile, bodyPlan, posePreset: diagnosticPosePreset, motionPlan });
+    const poseEnergyState = buildAnimePoseEnergyState({ profile: input.profile, posePreset: diagnosticPosePreset, frameIndex });
+    const articulationPlan = buildAnimeArticulationPlan({ profile: input.profile, posePreset: diagnosticPosePreset, bodyPlan, lowerBodyPlan, poseEnergyState, frameIndex });
+    const secondaryMotionState = secondaryMotionSequence[frameIndex] ?? diagnosticSecondaryMotionState;
+    return buildAnimeTorsoStructurePlan({ profile: input.profile, bodyPlan, lowerBodyPlan, secondaryMotionState, articulationPlan, frameIndex });
+  });
+  const torsoStructureSummary = summarizeAnimeTorsoStructureDiagnostics(torsoStructureSequence);
+  const diagnosticTorsoStructurePlan = torsoStructureSequence[2] ?? torsoStructureSequence[0];
   const visualFidelityDiagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
     eyePlan: buildAnimeEyeRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
@@ -1297,6 +1418,8 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     cinematicLightingDiagnostics: cinematicLightingSummary,
     articulationPlan: diagnosticArticulationPlan,
     articulationDiagnostics: articulationSummary,
+    torsoStructurePlan: diagnosticTorsoStructurePlan,
+    torsoStructureDiagnostics: torsoStructureSummary,
     truthCheck,
     outfitReadability: diagnosticBodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
@@ -1338,10 +1461,11 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     shouldUserInspect: true,
     visualReviewNotes: [
       "A deterministic 2D anime character render is the primary subject with early anime fidelity active.",
-      "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, expression-driven eyebrows and mouth, planned shoulders with shoulder tilt, tapered torso, segmented upper arms and forearms, visible elbow cues, wrist bridges, simplified mitten hands with thumb and grouped-finger cues, cuffs, articulated knees, angled grounded boots, grounded stance, and jacket silhouette for the selected profile.",
+      "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, expression-driven eyebrows and mouth, planned shoulders with shoulder tilt, ribcage-to-waist taper, curved torso flow, waist seam, pelvis/hip transition, layered jacket opening, inner shirt layer, collar structure, trim separation, sleeve folds, coat tension lines, hem sway, segmented upper arms and forearms, visible elbow cues, wrist bridges, simplified mitten hands with thumb and grouped-finger cues, cuffs, articulated knees, angled grounded boots, grounded stance, and jacket silhouette for the selected profile.",
       "The GIF should preserve stance identity with bounded fabric sway, deterministic partial blink, subtle gaze settle, coordinated hair sway, bang/side-lock motion, sleeve/cuff sway, lower fabric motion, face-priority framing, a small push-in/drift, and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
       `The lighting pass uses ${visualFidelityDiagnostics.lighting_mood} with bounded rim light, eye glow, darker atmosphere, and secondary beacon support; it is deterministic raster lighting, not global illumination or neural relighting.`,
       `Articulation status: ${visualFidelityDiagnostics.anatomy_primitive_risk === "LOW" ? "EARLY_ANIME_ARTICULATION_ACTIVE" : "PARTIAL_ARTICULATION_UPGRADE"}; hands are simplified anime mitten hands, not detailed fingers.`,
+      `Torso/clothing structure status: ${visualFidelityDiagnostics.clothing_flatness_risk === "LOW" || visualFidelityDiagnostics.clothing_flatness_risk === "MEDIUM" ? "EARLY_ANIME_TORSO_CLOTHING_STRUCTURE_ACTIVE" : "PARTIAL_TORSO_STRUCTURE_UPGRADE"}; clothing is layered deterministic raster structure, not simulated cloth.`,
       "Body/pose/motion/expression/secondary-motion/camera-framing/lighting/articulation polish is early deterministic raster art, not cinematic anime quality, realistic anatomy, detailed fingers, dialogue, lip-sync, multi-shot sequencing, physics simulation, or neural motion synthesis.",
       "The beacon/chamber is rendered as supporting background only.",
       `Visual fidelity tier: ${visualFidelityDiagnostics.fidelity_tier} (${visualFidelityDiagnostics.visual_fidelity_score}/100).`,
@@ -1451,6 +1575,14 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     `Pose energy score: ${visualFidelityDiagnostics.pose_energy_score}/100`,
     `Silhouette flow score: ${visualFidelityDiagnostics.silhouette_flow_score}/100`,
     `Anatomy primitive risk: ${visualFidelityDiagnostics.anatomy_primitive_risk}`,
+    `Torso structure score: ${visualFidelityDiagnostics.torso_structure_score}/100`,
+    `Waist flow score: ${visualFidelityDiagnostics.waist_flow_score}/100`,
+    `Pelvis balance score: ${visualFidelityDiagnostics.pelvis_balance_score}/100`,
+    `Outfit layering score: ${visualFidelityDiagnostics.outfit_layering_score}/100`,
+    `Clothing readability score: ${visualFidelityDiagnostics.clothing_readability_score}/100`,
+    `Silhouette motion score: ${visualFidelityDiagnostics.silhouette_motion_score}/100`,
+    `Torso stiffness risk: ${visualFidelityDiagnostics.torso_stiffness_risk}`,
+    `Clothing flatness risk: ${visualFidelityDiagnostics.clothing_flatness_risk}`,
     "",
     `First PNG to inspect: ${visualReviewPackage.firstPngToInspect ?? "none"}`,
     `GIF to inspect: ${visualReviewPackage.gifToInspect ?? "none"}`,

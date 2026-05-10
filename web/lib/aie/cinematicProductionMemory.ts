@@ -1807,6 +1807,10 @@ export type CinematicGovernedPreviewQualityIndicatorId =
   | "hand-shape-readability"
   | "pose-energy"
   | "silhouette-flow"
+  | "torso-structure"
+  | "outfit-layering"
+  | "silhouette-motion"
+  | "clothing-flatness-risk"
   | "reveal-focus-preservation"
   | "drone-response-focus"
   | "aftermath-focus-balance"
@@ -2061,6 +2065,14 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   pose_energy_score?: number;
   silhouette_flow_score?: number;
   anatomy_primitive_risk?: "LOW" | "MEDIUM" | "HIGH";
+  torso_structure_score?: number;
+  waist_flow_score?: number;
+  pelvis_balance_score?: number;
+  outfit_layering_score?: number;
+  clothing_readability_score?: number;
+  silhouette_motion_score?: number;
+  torso_stiffness_risk?: "LOW" | "MEDIUM" | "HIGH";
+  clothing_flatness_risk?: "LOW" | "MEDIUM" | "HIGH";
   lighting_stability_score: number;
   lighting_consistency_score: number;
   coherence_anchor_strength: number;
@@ -2148,6 +2160,14 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
     pose_energy_score?: number;
     silhouette_flow_score?: number;
     anatomy_primitive_risk?: "LOW" | "MEDIUM" | "HIGH";
+    torso_structure_score?: number;
+    waist_flow_score?: number;
+    pelvis_balance_score?: number;
+    outfit_layering_score?: number;
+    clothing_readability_score?: number;
+    silhouette_motion_score?: number;
+    torso_stiffness_risk?: "LOW" | "MEDIUM" | "HIGH";
+    clothing_flatness_risk?: "LOW" | "MEDIUM" | "HIGH";
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };
@@ -2361,6 +2381,14 @@ export type CinematicGovernedPreviewDiagnostics = {
   pose_energy_score?: number;
   silhouette_flow_score?: number;
   anatomy_primitive_risk?: "LOW" | "MEDIUM" | "HIGH";
+  torso_structure_score?: number;
+  waist_flow_score?: number;
+  pelvis_balance_score?: number;
+  outfit_layering_score?: number;
+  clothing_readability_score?: number;
+  silhouette_motion_score?: number;
+  torso_stiffness_risk?: "LOW" | "MEDIUM" | "HIGH";
+  clothing_flatness_risk?: "LOW" | "MEDIUM" | "HIGH";
   continuity_quality_indicators: CinematicGovernedPreviewQualityIndicator[];
   artifact_diagnostics: string[];
   frame_diagnostics: CinematicGovernedPreviewFrameDiagnostic[];
@@ -2444,6 +2472,14 @@ export type CinematicGovernedPreviewDiagnostics = {
     pose_energy_score?: number;
     silhouette_flow_score?: number;
     anatomy_primitive_risk?: "LOW" | "MEDIUM" | "HIGH";
+    torso_structure_score?: number;
+    waist_flow_score?: number;
+    pelvis_balance_score?: number;
+    outfit_layering_score?: number;
+    clothing_readability_score?: number;
+    silhouette_motion_score?: number;
+    torso_stiffness_risk?: "LOW" | "MEDIUM" | "HIGH";
+    clothing_flatness_risk?: "LOW" | "MEDIUM" | "HIGH";
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };

@@ -15,6 +15,7 @@ import { buildAnimeCameraFramingSequence, buildAnimeCameraFramingState, summariz
 import { buildAnimeCinematicLightingSequence, buildAnimeCinematicLightingState, summarizeAnimeCinematicLightingDiagnostics } from "./animeCinematicLighting";
 import { buildAnimePoseEnergyState } from "./animePoseEnergy";
 import { buildAnimeArticulationPlan, summarizeAnimeArticulationDiagnostics } from "./animeArticulationRenderer";
+import { buildAnimeTorsoStructurePlan, summarizeAnimeTorsoStructureDiagnostics } from "./animeTorsoStructure";
 import { resolveAnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, classifyAnimeVisualFidelity } from "./animeVisualFidelityDiagnostics";
 import type { AnimeCharacterTruthCheck } from "./governedAnimeCharacterState";
@@ -53,6 +54,8 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
   const poseEnergyState = buildAnimePoseEnergyState({ profile, posePreset, frameIndex: 2 });
   const articulationPlan = buildAnimeArticulationPlan({ profile, posePreset, bodyPlan, lowerBodyPlan, poseEnergyState, frameIndex: 2 });
   const articulationDiagnostics = summarizeAnimeArticulationDiagnostics([articulationPlan]);
+  const torsoStructurePlan = buildAnimeTorsoStructurePlan({ profile, bodyPlan, lowerBodyPlan, secondaryMotionState, articulationPlan, frameIndex: 2 });
+  const torsoStructureDiagnostics = summarizeAnimeTorsoStructureDiagnostics([torsoStructurePlan]);
 
   const diagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile, expression }),
@@ -69,6 +72,8 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
     cinematicLightingDiagnostics,
     articulationPlan,
     articulationDiagnostics,
+    torsoStructurePlan,
+    torsoStructureDiagnostics,
     truthCheck: truthCheck(),
     outfitReadability: bodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
@@ -145,6 +150,14 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
   assert.equal(diagnostics.pose_energy_score >= 88, true);
   assert.equal(diagnostics.silhouette_flow_score >= 88, true);
   assert.equal(["LOW", "MEDIUM"].includes(diagnostics.anatomy_primitive_risk), true);
+  assert.equal(diagnostics.torso_structure_score >= 90, true);
+  assert.equal(diagnostics.waist_flow_score >= 88, true);
+  assert.equal(diagnostics.pelvis_balance_score >= 88, true);
+  assert.equal(diagnostics.outfit_layering_score >= 88, true);
+  assert.equal(diagnostics.clothing_readability_score >= 88, true);
+  assert.equal(diagnostics.silhouette_motion_score >= 90, true);
+  assert.equal(["LOW", "MEDIUM"].includes(diagnostics.torso_stiffness_risk), true);
+  assert.equal(["LOW", "MEDIUM"].includes(diagnostics.clothing_flatness_risk), true);
 });
 
 test("anime visual fidelity diagnostics block fallback dominance", () => {

@@ -10,6 +10,7 @@ import type { AnimeSecondaryMotionState } from "./animeSecondaryMotion";
 import type { AnimeCameraFramingDiagnostics, AnimeCameraFramingState, AnimeShotPreset } from "./animeCameraFraming";
 import type { AnimeCinematicLightingDiagnostics, AnimeCinematicLightingState, AnimeLightingMood } from "./animeCinematicLighting";
 import type { AnimeArticulationDiagnostics, AnimeArticulationPlan } from "./animeArticulationRenderer";
+import type { AnimeTorsoStructureDiagnostics, AnimeTorsoStructurePlan } from "./animeTorsoStructure";
 
 export type AnimeVisualFidelityTier = "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
 
@@ -85,6 +86,14 @@ export type AnimeVisualFidelityDiagnostics = {
   pose_energy_score: number;
   silhouette_flow_score: number;
   anatomy_primitive_risk: "LOW" | "MEDIUM" | "HIGH";
+  torso_structure_score: number;
+  waist_flow_score: number;
+  pelvis_balance_score: number;
+  outfit_layering_score: number;
+  clothing_readability_score: number;
+  silhouette_motion_score: number;
+  torso_stiffness_risk: "LOW" | "MEDIUM" | "HIGH";
+  clothing_flatness_risk: "LOW" | "MEDIUM" | "HIGH";
   visual_fidelity_score: number;
   fidelity_tier: AnimeVisualFidelityTier;
 };
@@ -115,6 +124,8 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   cinematicLightingDiagnostics?: AnimeCinematicLightingDiagnostics;
   articulationPlan?: AnimeArticulationPlan;
   articulationDiagnostics?: AnimeArticulationDiagnostics;
+  torsoStructurePlan?: AnimeTorsoStructurePlan;
+  torsoStructureDiagnostics?: AnimeTorsoStructureDiagnostics;
   truthCheck: AnimeCharacterTruthCheck;
   outfitReadability?: number;
   backgroundSeparation?: number;
@@ -155,7 +166,7 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   const waist_transition_score = input.lowerBodyPlan?.waistTransitionScore ?? torso_readability_score;
   const motion_continuity_score = input.motionPlan?.limbContinuityScore ?? limb_continuity_score;
   const frame_interpolation_score = input.motionPlan?.frameInterpolationScore ?? 88;
-  const fabric_motion_score = input.lowerBodyPlan?.fabricMotionScore ?? input.motionPlan?.fabricContinuityScore ?? outfit_flow_score;
+  const fabric_motion_score = input.torsoStructureDiagnostics?.fabric_motion_score ?? input.torsoStructurePlan?.fabricMotionScore ?? input.lowerBodyPlan?.fabricMotionScore ?? input.motionPlan?.fabricContinuityScore ?? outfit_flow_score;
   const animation_smoothness_score = input.motionPlan?.animationSmoothnessScore ?? 88;
   const expression_readability_score = input.expressionState?.expressionContinuityScore ?? 86;
   const blink_readability_score = input.expressionState?.blinkReadabilityScore ?? 82;
@@ -202,6 +213,14 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   const pose_energy_score = input.articulationDiagnostics?.pose_energy_score ?? input.articulationPlan?.poseEnergyScore ?? pose_language_score;
   const silhouette_flow_score = input.articulationDiagnostics?.silhouette_flow_score ?? input.articulationPlan?.silhouetteFlowScore ?? silhouette_readability;
   const anatomy_primitive_risk = input.articulationDiagnostics?.anatomy_primitive_risk ?? input.articulationPlan?.anatomyPrimitiveRisk ?? "MEDIUM";
+  const torso_structure_score = input.torsoStructureDiagnostics?.torso_structure_score ?? input.torsoStructurePlan?.torsoStructureScore ?? torso_readability_score;
+  const waist_flow_score = input.torsoStructureDiagnostics?.waist_flow_score ?? input.torsoStructurePlan?.waistFlowScore ?? waist_transition_score;
+  const pelvis_balance_score = input.torsoStructureDiagnostics?.pelvis_balance_score ?? input.torsoStructurePlan?.pelvisBalanceScore ?? stance_grounding_score;
+  const outfit_layering_score = input.torsoStructureDiagnostics?.outfit_layering_score ?? input.torsoStructurePlan?.outfitLayeringScore ?? outfit_flow_score;
+  const clothing_readability_score = input.torsoStructureDiagnostics?.clothing_readability_score ?? input.torsoStructurePlan?.clothingReadabilityScore ?? outfit_readability;
+  const silhouette_motion_score = input.torsoStructureDiagnostics?.silhouette_motion_score ?? input.torsoStructurePlan?.silhouetteMotionScore ?? silhouette_flow_score;
+  const torso_stiffness_risk = input.torsoStructureDiagnostics?.torso_stiffness_risk ?? input.torsoStructurePlan?.torsoStiffnessRisk ?? "MEDIUM";
+  const clothing_flatness_risk = input.torsoStructureDiagnostics?.clothing_flatness_risk ?? input.torsoStructurePlan?.clothingFlatnessRisk ?? "MEDIUM";
   const pose_readability = input.poseReadability ?? average([pose_language_score, stance_balance_score, arm_readability_score]);
   const visual_fidelity_score = average([
     anime_face_readability,
@@ -269,6 +288,12 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     foot_pose_readability_score,
     pose_energy_score,
     silhouette_flow_score,
+    torso_structure_score,
+    waist_flow_score,
+    pelvis_balance_score,
+    outfit_layering_score,
+    clothing_readability_score,
+    silhouette_motion_score,
   ]);
 
   return {
@@ -343,6 +368,14 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     pose_energy_score,
     silhouette_flow_score,
     anatomy_primitive_risk,
+    torso_structure_score,
+    waist_flow_score,
+    pelvis_balance_score,
+    outfit_layering_score,
+    clothing_readability_score,
+    silhouette_motion_score,
+    torso_stiffness_risk,
+    clothing_flatness_risk,
     visual_fidelity_score,
     fidelity_tier: classifyAnimeVisualFidelity(visual_fidelity_score, input.truthCheck),
   };
