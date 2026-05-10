@@ -1802,6 +1802,11 @@ export type CinematicGovernedPreviewQualityIndicatorId =
   | "eye-highlight"
   | "color-mood"
   | "lighting-continuity"
+  | "shoulder-articulation"
+  | "elbow-readability"
+  | "hand-shape-readability"
+  | "pose-energy"
+  | "silhouette-flow"
   | "reveal-focus-preservation"
   | "drone-response-focus"
   | "aftermath-focus-balance"
@@ -2047,6 +2052,15 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   color_mood_score?: number;
   lighting_continuity_score?: number;
   lighting_flicker_risk?: "LOW" | "MEDIUM" | "HIGH";
+  shoulder_articulation_score?: number;
+  elbow_readability_score?: number;
+  wrist_hand_connection_score?: number;
+  hand_shape_readability_score?: number;
+  hip_knee_articulation_score?: number;
+  foot_pose_readability_score?: number;
+  pose_energy_score?: number;
+  silhouette_flow_score?: number;
+  anatomy_primitive_risk?: "LOW" | "MEDIUM" | "HIGH";
   lighting_stability_score: number;
   lighting_consistency_score: number;
   coherence_anchor_strength: number;
@@ -2125,6 +2139,15 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
     color_mood_score?: number;
     lighting_continuity_score?: number;
     lighting_flicker_risk?: "LOW" | "MEDIUM" | "HIGH";
+    shoulder_articulation_score?: number;
+    elbow_readability_score?: number;
+    wrist_hand_connection_score?: number;
+    hand_shape_readability_score?: number;
+    hip_knee_articulation_score?: number;
+    foot_pose_readability_score?: number;
+    pose_energy_score?: number;
+    silhouette_flow_score?: number;
+    anatomy_primitive_risk?: "LOW" | "MEDIUM" | "HIGH";
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };
@@ -2329,6 +2352,15 @@ export type CinematicGovernedPreviewDiagnostics = {
   color_mood_score?: number;
   lighting_continuity_score?: number;
   lighting_flicker_risk?: "LOW" | "MEDIUM" | "HIGH";
+  shoulder_articulation_score?: number;
+  elbow_readability_score?: number;
+  wrist_hand_connection_score?: number;
+  hand_shape_readability_score?: number;
+  hip_knee_articulation_score?: number;
+  foot_pose_readability_score?: number;
+  pose_energy_score?: number;
+  silhouette_flow_score?: number;
+  anatomy_primitive_risk?: "LOW" | "MEDIUM" | "HIGH";
   continuity_quality_indicators: CinematicGovernedPreviewQualityIndicator[];
   artifact_diagnostics: string[];
   frame_diagnostics: CinematicGovernedPreviewFrameDiagnostic[];
@@ -2403,6 +2435,15 @@ export type CinematicGovernedPreviewDiagnostics = {
     color_mood_score?: number;
     lighting_continuity_score?: number;
     lighting_flicker_risk?: "LOW" | "MEDIUM" | "HIGH";
+    shoulder_articulation_score?: number;
+    elbow_readability_score?: number;
+    wrist_hand_connection_score?: number;
+    hand_shape_readability_score?: number;
+    hip_knee_articulation_score?: number;
+    foot_pose_readability_score?: number;
+    pose_energy_score?: number;
+    silhouette_flow_score?: number;
+    anatomy_primitive_risk?: "LOW" | "MEDIUM" | "HIGH";
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };

@@ -9,6 +9,7 @@ import type { AnimeExpressionState } from "./animeExpressionRenderer";
 import type { AnimeSecondaryMotionState } from "./animeSecondaryMotion";
 import type { AnimeCameraFramingDiagnostics, AnimeCameraFramingState, AnimeShotPreset } from "./animeCameraFraming";
 import type { AnimeCinematicLightingDiagnostics, AnimeCinematicLightingState, AnimeLightingMood } from "./animeCinematicLighting";
+import type { AnimeArticulationDiagnostics, AnimeArticulationPlan } from "./animeArticulationRenderer";
 
 export type AnimeVisualFidelityTier = "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
 
@@ -75,6 +76,15 @@ export type AnimeVisualFidelityDiagnostics = {
   color_mood_score: number;
   lighting_continuity_score: number;
   lighting_flicker_risk: "LOW" | "MEDIUM" | "HIGH";
+  shoulder_articulation_score: number;
+  elbow_readability_score: number;
+  wrist_hand_connection_score: number;
+  hand_shape_readability_score: number;
+  hip_knee_articulation_score: number;
+  foot_pose_readability_score: number;
+  pose_energy_score: number;
+  silhouette_flow_score: number;
+  anatomy_primitive_risk: "LOW" | "MEDIUM" | "HIGH";
   visual_fidelity_score: number;
   fidelity_tier: AnimeVisualFidelityTier;
 };
@@ -103,6 +113,8 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   cameraFramingDiagnostics?: AnimeCameraFramingDiagnostics;
   cinematicLightingState?: AnimeCinematicLightingState;
   cinematicLightingDiagnostics?: AnimeCinematicLightingDiagnostics;
+  articulationPlan?: AnimeArticulationPlan;
+  articulationDiagnostics?: AnimeArticulationDiagnostics;
   truthCheck: AnimeCharacterTruthCheck;
   outfitReadability?: number;
   backgroundSeparation?: number;
@@ -181,6 +193,15 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   const color_mood_score = input.cinematicLightingDiagnostics?.color_mood_score ?? 84;
   const lighting_continuity_score = input.cinematicLightingDiagnostics?.lighting_continuity_score ?? input.cinematicLightingState?.lightingContinuityScore ?? 86;
   const lighting_flicker_risk = input.cinematicLightingDiagnostics?.lighting_flicker_risk ?? "LOW";
+  const shoulder_articulation_score = input.articulationDiagnostics?.shoulder_articulation_score ?? input.articulationPlan?.shoulderArticulationScore ?? 82;
+  const elbow_readability_score = input.articulationDiagnostics?.elbow_readability_score ?? input.articulationPlan?.elbowReadabilityScore ?? 80;
+  const wrist_hand_connection_score = input.articulationDiagnostics?.wrist_hand_connection_score ?? input.articulationPlan?.wristHandConnectionScore ?? 80;
+  const hand_shape_readability_score = input.articulationDiagnostics?.hand_shape_readability_score ?? input.articulationPlan?.handShapeReadabilityScore ?? 78;
+  const hip_knee_articulation_score = input.articulationDiagnostics?.hip_knee_articulation_score ?? input.articulationPlan?.hipKneeArticulationScore ?? 82;
+  const foot_pose_readability_score = input.articulationDiagnostics?.foot_pose_readability_score ?? input.articulationPlan?.footPoseReadabilityScore ?? 82;
+  const pose_energy_score = input.articulationDiagnostics?.pose_energy_score ?? input.articulationPlan?.poseEnergyScore ?? pose_language_score;
+  const silhouette_flow_score = input.articulationDiagnostics?.silhouette_flow_score ?? input.articulationPlan?.silhouetteFlowScore ?? silhouette_readability;
+  const anatomy_primitive_risk = input.articulationDiagnostics?.anatomy_primitive_risk ?? input.articulationPlan?.anatomyPrimitiveRisk ?? "MEDIUM";
   const pose_readability = input.poseReadability ?? average([pose_language_score, stance_balance_score, arm_readability_score]);
   const visual_fidelity_score = average([
     anime_face_readability,
@@ -240,6 +261,14 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     atmosphere_depth_score,
     color_mood_score,
     lighting_continuity_score,
+    shoulder_articulation_score,
+    elbow_readability_score,
+    wrist_hand_connection_score,
+    hand_shape_readability_score,
+    hip_knee_articulation_score,
+    foot_pose_readability_score,
+    pose_energy_score,
+    silhouette_flow_score,
   ]);
 
   return {
@@ -305,6 +334,15 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     color_mood_score,
     lighting_continuity_score,
     lighting_flicker_risk,
+    shoulder_articulation_score,
+    elbow_readability_score,
+    wrist_hand_connection_score,
+    hand_shape_readability_score,
+    hip_knee_articulation_score,
+    foot_pose_readability_score,
+    pose_energy_score,
+    silhouette_flow_score,
+    anatomy_primitive_risk,
     visual_fidelity_score,
     fidelity_tier: classifyAnimeVisualFidelity(visual_fidelity_score, input.truthCheck),
   };

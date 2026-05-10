@@ -15,6 +15,8 @@ import { buildAnimeExpressionSequence, buildAnimeExpressionState, summarizeAnime
 import { buildAnimeSecondaryMotionSequence, buildAnimeSecondaryMotionState, summarizeAnimeSecondaryMotionDiagnostics, type AnimeSecondaryMotionState } from "./animeSecondaryMotion";
 import { buildAnimeCameraFramingSequence, buildAnimeCameraFramingState, summarizeAnimeCameraFramingDiagnostics, type AnimeCameraFramingState } from "./animeCameraFraming";
 import { buildAnimeCinematicLightingSequence, buildAnimeCinematicLightingState, buildAnimeMoodPalette, summarizeAnimeCinematicLightingDiagnostics, type AnimeCinematicLightingState, type AnimeMoodPalette } from "./animeCinematicLighting";
+import { buildAnimePoseEnergyState } from "./animePoseEnergy";
+import { buildAnimeArticulationPlan, summarizeAnimeArticulationDiagnostics, type AnimeArticulationPlan } from "./animeArticulationRenderer";
 import { resolveAnimePoseLanguagePreset, type AnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, type AnimeVisualFidelityDiagnostics } from "./animeVisualFidelityDiagnostics";
 import type {
@@ -300,6 +302,33 @@ function drawAnimeMouth(image: MutableImage, centerX: number, mouthY: number, ex
   drawLine(image, centerX - 5, mouthY, centerX + 6, mouthY + 0.2, mouthColor, 1, true);
 }
 
+function drawArticulatedHand(input: {
+  image: MutableImage;
+  handX: number;
+  handY: number;
+  wristX: number;
+  wristY: number;
+  side: -1 | 1;
+  palmWidth: number;
+  palmHeight: number;
+  thumbCueDirection: -1 | 1;
+  skin: RgbaColor;
+  outline: RgbaColor;
+  cuff: RgbaColor;
+}) {
+  const wristBridgeX = input.handX - input.side * 3.2;
+  const wristBridgeY = input.handY - 5.8;
+  drawLine(input.image, input.wristX, input.wristY, wristBridgeX, wristBridgeY, input.outline, 3.2, true);
+  drawLine(input.image, input.wristX, input.wristY, wristBridgeX, wristBridgeY, input.cuff, 1.7, true);
+  drawEllipse(input.image, input.handX, input.handY, input.palmWidth * 0.62, input.palmHeight * 0.54, input.outline, true);
+  drawEllipse(input.image, input.handX - input.side * 0.8, input.handY - 0.2, input.palmWidth * 0.48, input.palmHeight * 0.42, input.skin, true);
+  drawEllipse(input.image, input.handX + input.thumbCueDirection * 4.5, input.handY + 0.8, input.palmWidth * 0.22, input.palmHeight * 0.34, input.outline, true);
+  drawEllipse(input.image, input.handX + input.thumbCueDirection * 4.8, input.handY + 0.9, input.palmWidth * 0.16, input.palmHeight * 0.25, input.skin, true);
+  drawEllipse(input.image, input.handX - input.side * 1.5, input.handY + 3.5, input.palmWidth * 0.36, input.palmHeight * 0.22, input.skin, true);
+  drawLine(input.image, input.handX - input.side * 5.2, input.handY + 1.8, input.handX + input.side * 4.2, input.handY + 2.5, [116, 73, 76, 132], 0.8, true);
+  drawLine(input.image, input.handX - input.side * 4.2, input.handY + 4.3, input.handX + input.side * 2.6, input.handY + 4.7, [116, 73, 76, 116], 0.65, true);
+}
+
 function drawPlannedArm(input: {
   image: MutableImage;
   shoulderX: number;
@@ -312,30 +341,44 @@ function drawPlannedArm(input: {
   skin: RgbaColor;
   outline: RgbaColor;
   sleeveSway?: number;
+  articulationPlan: AnimeArticulationPlan;
 }) {
   const arm = input.side === -1 ? input.bodyPlan.leftArm : input.bodyPlan.rightArm;
+  const articulationArm = input.side === -1 ? input.articulationPlan.leftArm : input.articulationPlan.rightArm;
   const sleeveSway = input.sleeveSway ?? 0;
-  const elbowX = input.shoulderX + arm.elbowOffsetX + sleeveSway * 0.28;
-  const elbowY = input.shoulderY + arm.elbowOffsetY;
-  const handX = input.shoulderX + arm.handOffsetX + sleeveSway * 0.42;
-  const handY = input.shoulderY + arm.handOffsetY;
-  const wristX = handX - input.side * 2;
-  const wristY = handY - 7;
+  const elbowX = input.shoulderX + arm.elbowOffsetX + sleeveSway * 0.28 + input.side * input.articulationPlan.poseAsymmetry * 3.2;
+  const elbowY = input.shoulderY + arm.elbowOffsetY - input.articulationPlan.poseAsymmetry * 1.8;
+  const handX = input.shoulderX + arm.handOffsetX + sleeveSway * 0.42 + input.side * input.articulationPlan.poseAsymmetry * 5.8;
+  const handY = input.shoulderY + arm.handOffsetY - (arm.handOrientation === "forward-ready" ? input.articulationPlan.poseAsymmetry * 7 : 0);
+  const wristX = handX - input.side * (3.8 + input.articulationPlan.poseAsymmetry * 2.2);
+  const wristY = handY - 7.2;
 
-  drawLine(input.image, input.shoulderX, input.shoulderY, elbowX, elbowY, input.outline, arm.sleeveWidth + 2.4, true);
-  drawLine(input.image, elbowX, elbowY, wristX, wristY, input.outline, arm.sleeveWidth + 1.8, true);
-  drawLine(input.image, input.shoulderX, input.shoulderY, elbowX, elbowY, input.sleeveShadow, arm.sleeveWidth + 0.8, true);
-  drawLine(input.image, elbowX, elbowY, wristX, wristY, input.sleeve, arm.sleeveWidth, true);
-  drawEllipse(input.image, elbowX, elbowY, arm.sleeveWidth + 1, arm.sleeveWidth + 0.4, input.sleeveShadow, true);
-  drawEllipse(input.image, wristX, wristY, arm.cuffWidth * 0.72, 4.2, input.outline, true);
-  drawEllipse(input.image, wristX, wristY, arm.cuffWidth * 0.58, 3.2, input.cuff, true);
+  drawEllipse(input.image, input.shoulderX, input.shoulderY, articulationArm.upperArmWidth + 1.6, articulationArm.upperArmWidth * 0.7, input.outline, true);
+  drawLine(input.image, input.shoulderX, input.shoulderY, elbowX, elbowY, input.outline, articulationArm.upperArmWidth + 2.2, true);
+  drawLine(input.image, elbowX, elbowY, wristX, wristY, input.outline, articulationArm.forearmWidth + 2.1, true);
+  drawLine(input.image, input.shoulderX, input.shoulderY, elbowX, elbowY, input.sleeveShadow, articulationArm.upperArmWidth + 0.5, true);
+  drawLine(input.image, elbowX, elbowY, wristX, wristY, input.sleeve, articulationArm.forearmWidth, true);
+  drawLine(input.image, input.shoulderX + input.side * 2, input.shoulderY + 3, elbowX + input.side * 1.2, elbowY - 2, [235, 246, 255, 86], 0.8, true);
+  drawEllipse(input.image, elbowX, elbowY, articulationArm.elbowCueRadius, articulationArm.elbowCueRadius * 0.68, input.outline, true);
+  drawEllipse(input.image, elbowX, elbowY, articulationArm.elbowCueRadius - 1.1, articulationArm.elbowCueRadius * 0.44, input.sleeveShadow, true);
+  drawLine(input.image, elbowX - input.side * 4.5, elbowY + 1, elbowX + input.side * 4.3, elbowY - 0.4, input.cuff, 0.95, true);
+  drawEllipse(input.image, wristX, wristY, arm.cuffWidth * 0.76, 4.4, input.outline, true);
+  drawEllipse(input.image, wristX, wristY, arm.cuffWidth * 0.6, 3.3, input.cuff, true);
 
-  const palmWidth = arm.handOrientation === "at-hip" ? arm.palmWidth + 1.5 : arm.palmWidth;
-  const palmHeight = arm.palmHeight;
-  drawEllipse(input.image, handX, handY, palmWidth * 0.72, palmHeight * 0.7, input.outline, true);
-  drawEllipse(input.image, handX, handY, palmWidth * 0.56, palmHeight * 0.56, input.skin, true);
-  drawEllipse(input.image, handX + input.side * 4.4, handY + 1, 2.7, 3.5, input.skin, true);
-  drawLine(input.image, handX - input.side * 1.5, handY + 3.2, handX + input.side * 3.8, handY + 4, [116, 73, 76, 118], 0.7, true);
+  drawArticulatedHand({
+    image: input.image,
+    handX,
+    handY,
+    wristX,
+    wristY,
+    side: input.side,
+    palmWidth: articulationArm.palmWidth,
+    palmHeight: articulationArm.palmHeight,
+    thumbCueDirection: articulationArm.thumbCueDirection,
+    skin: input.skin,
+    outline: input.outline,
+    cuff: input.cuff,
+  });
 }
 
 function drawPlannedLeg(input: {
@@ -348,23 +391,26 @@ function drawPlannedLeg(input: {
   legShadow: RgbaColor;
   legHighlight: RgbaColor;
   outline: RgbaColor;
+  side: -1 | 1;
+  articulationPlan: AnimeArticulationPlan;
 }) {
+  const articulationLeg = input.side === -1 ? input.articulationPlan.leftLeg : input.articulationPlan.rightLeg;
   const hipX = input.centerX + input.leg.hipX;
   const hipY = input.baseY + input.leg.hipY;
-  const kneeX = input.centerX + input.leg.kneeX;
+  const kneeX = input.centerX + input.leg.kneeX + input.side * input.articulationPlan.poseAsymmetry * 3;
   const kneeY = input.baseY + input.leg.kneeY;
-  const ankleX = input.centerX + input.leg.ankleX;
+  const ankleX = input.centerX + input.leg.ankleX + input.side * (articulationLeg.weightRole === "weight-bearing" ? 1.2 : 3.2);
   const ankleY = input.baseY + input.leg.ankleY;
 
-  drawLine(input.image, hipX, hipY, kneeX, kneeY, input.outline, input.leg.thighWidth + 2, true);
-  drawLine(input.image, kneeX, kneeY, ankleX, ankleY, input.outline, input.leg.calfWidth + 2, true);
-  drawLine(input.image, hipX, hipY, kneeX, kneeY, input.legColor, input.leg.thighWidth, true);
-  drawLine(input.image, kneeX, kneeY, ankleX, ankleY, input.legShadow, input.leg.calfWidth, true);
+  drawLine(input.image, hipX, hipY, kneeX, kneeY, input.outline, articulationLeg.thighWidth + 2, true);
+  drawLine(input.image, kneeX, kneeY, ankleX, ankleY, input.outline, articulationLeg.calfWidth + 2, true);
+  drawLine(input.image, hipX, hipY, kneeX, kneeY, input.legColor, articulationLeg.thighWidth, true);
+  drawLine(input.image, kneeX, kneeY, ankleX, ankleY, input.legShadow, articulationLeg.calfWidth, true);
   drawLine(input.image, hipX + (kneeX > hipX ? 1.6 : -1.6), hipY + 4, kneeX + (ankleX > kneeX ? 1.2 : -1.2), kneeY - 2, input.legHighlight, 1.1, true);
   drawLine(input.image, kneeX, kneeY + 3, ankleX, ankleY - 4, input.legHighlight, 0.95, true);
-  drawEllipse(input.image, kneeX, kneeY, input.leg.kneeWidth, input.leg.kneeWidth * 0.58, input.outline, true);
-  drawEllipse(input.image, kneeX, kneeY, input.leg.kneeWidth - 1.5, input.leg.kneeWidth * 0.38, input.legColor, true);
-  drawLine(input.image, kneeX - 4, kneeY + 1, kneeX + 4, kneeY + 1, input.bootAccent, 1, true);
+  drawEllipse(input.image, kneeX, kneeY, articulationLeg.kneeCueRadius, articulationLeg.kneeCueRadius * 0.58, input.outline, true);
+  drawEllipse(input.image, kneeX, kneeY, articulationLeg.kneeCueRadius - 1.6, articulationLeg.kneeCueRadius * 0.36, input.legColor, true);
+  drawLine(input.image, kneeX - input.side * 5.2, kneeY + 0.8, kneeX + input.side * 4.2, kneeY - 0.6, input.bootAccent, 1, true);
 }
 
 function drawPlannedFoot(input: {
@@ -375,14 +421,18 @@ function drawPlannedFoot(input: {
   bootColor: RgbaColor;
   bootAccent: RgbaColor;
   outline: RgbaColor;
+  side: -1 | 1;
+  articulationPlan: AnimeArticulationPlan;
 }) {
+  const articulationLeg = input.side === -1 ? input.articulationPlan.leftLeg : input.articulationPlan.rightLeg;
   const footX = input.centerX + input.foot.anchorX;
   const footY = input.baseY + input.foot.anchorY;
-  drawEllipse(input.image, footX, footY + 2.1, input.foot.contactShadowWidth + 2, 3.4, [5, 8, 16, 152]);
-  drawEllipse(input.image, footX, footY, input.foot.width * 0.62, input.foot.height + 0.8, input.outline, true);
-  drawEllipse(input.image, footX + input.foot.toeDirection * 4, footY - 0.2, input.foot.width * 0.55, input.foot.height * 0.82, input.bootColor, true);
-  drawLine(input.image, footX - input.foot.toeDirection * 4, footY + 1.4, footX + input.foot.toeDirection * 10, footY + 1.2, input.outline, 1.2, true);
-  drawLine(input.image, footX - input.foot.toeDirection * 3, footY - 1.4, footX + input.foot.toeDirection * 10, footY - 1.6, input.bootAccent, 1.3, true);
+  const toeLift = articulationLeg.weightRole === "weight-bearing" ? 0.2 : -1.1;
+  drawEllipse(input.image, footX + input.foot.toeDirection * 2.5, footY + 2.1, input.foot.contactShadowWidth + 2, 3.4, [5, 8, 16, 152]);
+  drawEllipse(input.image, footX, footY, input.foot.width * 0.64, input.foot.height + 0.9, input.outline, true);
+  drawEllipse(input.image, footX + input.foot.toeDirection * 4.6, footY + toeLift, input.foot.width * 0.58, input.foot.height * 0.82, input.bootColor, true);
+  drawLine(input.image, footX - input.foot.toeDirection * 5, footY + 1.5, footX + input.foot.toeDirection * 11.5, footY + toeLift + 1.1, input.outline, 1.2, true);
+  drawLine(input.image, footX - input.foot.toeDirection * 3.5, footY - 1.5, footX + input.foot.toeDirection * 11.5, footY + toeLift - 1.5, input.bootAccent, 1.35, true);
 }
 
 function drawPlannedLowerBody(input: {
@@ -393,6 +443,7 @@ function drawPlannedLowerBody(input: {
   jacket: RgbaColor;
   accent: RgbaColor;
   outline: RgbaColor;
+  articulationPlan: AnimeArticulationPlan;
 }) {
   const legColor: RgbaColor = [37, 43, 62, 255];
   const legShadow: RgbaColor = [25, 29, 45, 255];
@@ -428,10 +479,10 @@ function drawPlannedLowerBody(input: {
   drawLine(input.image, input.centerX - 21, hipY + 8, input.centerX + 20, hipY + 8, input.accent, 1.2, true);
   drawLine(input.image, input.centerX, hipY + 6, input.centerX, hipY + input.lowerBodyPlan.lowerJacketOverlap + 9, [8, 10, 18, 178], 1.1, true);
 
-  drawPlannedLeg({ image: input.image, centerX: input.centerX, baseY: input.baseY, leg: input.lowerBodyPlan.leftLeg, bootAccent: input.accent, legColor, legShadow, legHighlight, outline: input.outline });
-  drawPlannedLeg({ image: input.image, centerX: input.centerX, baseY: input.baseY, leg: input.lowerBodyPlan.rightLeg, bootAccent: input.accent, legColor, legShadow, legHighlight, outline: input.outline });
-  drawPlannedFoot({ image: input.image, centerX: input.centerX, baseY: input.baseY, foot: input.lowerBodyPlan.leftFoot, bootColor, bootAccent: input.accent, outline: input.outline });
-  drawPlannedFoot({ image: input.image, centerX: input.centerX, baseY: input.baseY, foot: input.lowerBodyPlan.rightFoot, bootColor, bootAccent: input.accent, outline: input.outline });
+  drawPlannedLeg({ image: input.image, centerX: input.centerX, baseY: input.baseY, leg: input.lowerBodyPlan.leftLeg, bootAccent: input.accent, legColor, legShadow, legHighlight, outline: input.outline, side: -1, articulationPlan: input.articulationPlan });
+  drawPlannedLeg({ image: input.image, centerX: input.centerX, baseY: input.baseY, leg: input.lowerBodyPlan.rightLeg, bootAccent: input.accent, legColor, legShadow, legHighlight, outline: input.outline, side: 1, articulationPlan: input.articulationPlan });
+  drawPlannedFoot({ image: input.image, centerX: input.centerX, baseY: input.baseY, foot: input.lowerBodyPlan.leftFoot, bootColor, bootAccent: input.accent, outline: input.outline, side: -1, articulationPlan: input.articulationPlan });
+  drawPlannedFoot({ image: input.image, centerX: input.centerX, baseY: input.baseY, foot: input.lowerBodyPlan.rightFoot, bootColor, bootAccent: input.accent, outline: input.outline, side: 1, articulationPlan: input.articulationPlan });
 }
 
 function drawPlannedAnimeBody(input: {
@@ -448,15 +499,17 @@ function drawPlannedAnimeBody(input: {
   jacketLight: RgbaColor;
   accent: RgbaColor;
   outline: RgbaColor;
+  articulationPlan: AnimeArticulationPlan;
 }) {
   const { image, centerX, bodyPlan, outline, jacket, jacketLight, accent } = input;
   const shoulderY = input.neckY + bodyPlan.neckHeight;
-  const leftShoulderY = shoulderY + bodyPlan.shoulderAngle * 0.45;
-  const rightShoulderY = shoulderY - bodyPlan.shoulderAngle * 0.45;
-  const leftShoulderX = centerX - bodyPlan.shoulderWidth / 2;
-  const rightShoulderX = centerX + bodyPlan.shoulderWidth / 2;
+  const lineLean = input.articulationPlan.lineOfAction * 0.28;
+  const leftShoulderY = shoulderY + bodyPlan.shoulderAngle * 0.45 - input.articulationPlan.poseAsymmetry * 2.2;
+  const rightShoulderY = shoulderY - bodyPlan.shoulderAngle * 0.45 + input.articulationPlan.poseAsymmetry * 1.4;
+  const leftShoulderX = centerX - bodyPlan.shoulderWidth / 2 + lineLean;
+  const rightShoulderX = centerX + bodyPlan.shoulderWidth / 2 + lineLean * 0.3;
   const waistY = shoulderY + bodyPlan.torsoHeight;
-  const torsoLean = bodyPlan.torsoAngle;
+  const torsoLean = bodyPlan.torsoAngle + lineLean;
   const leftWaistX = centerX - bodyPlan.waistWidth / 2 + torsoLean;
   const rightWaistX = centerX + bodyPlan.waistWidth / 2 + torsoLean;
   const hemY = waistY + bodyPlan.lowerGarmentLength;
@@ -490,10 +543,11 @@ function drawPlannedAnimeBody(input: {
     jacket,
     accent,
     outline,
+    articulationPlan: input.articulationPlan,
   });
 
-  drawPlannedArm({ image, shoulderX: leftShoulderX + 2, shoulderY: leftShoulderY + 7, bodyPlan, side: -1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline, sleeveSway: input.secondaryMotionState.sleeveSway });
-  drawPlannedArm({ image, shoulderX: rightShoulderX - 2, shoulderY: rightShoulderY + 7, bodyPlan, side: 1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline, sleeveSway: input.secondaryMotionState.sleeveSway });
+  drawPlannedArm({ image, shoulderX: leftShoulderX + 2, shoulderY: leftShoulderY + 7, bodyPlan, side: -1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline, sleeveSway: input.secondaryMotionState.sleeveSway, articulationPlan: input.articulationPlan });
+  drawPlannedArm({ image, shoulderX: rightShoulderX - 2, shoulderY: rightShoulderY + 7, bodyPlan, side: 1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline, sleeveSway: input.secondaryMotionState.sleeveSway, articulationPlan: input.articulationPlan });
 }
 
 function drawCinematicLightingPass(input: {
@@ -542,6 +596,8 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
   const secondaryMotionState = buildAnimeSecondaryMotionState({ profile, frameIndex, frameCount: 5, expressionState, motionPlan });
   const bodyPlan = buildAnimeBodyPlan({ profile, posePreset, frameIndex });
   const lowerBodyPlan = buildAnimeLowerBodyPlan({ profile, bodyPlan, posePreset, motionPlan });
+  const poseEnergyState = buildAnimePoseEnergyState({ profile, posePreset, frameIndex });
+  const articulationPlan = buildAnimeArticulationPlan({ profile, posePreset, bodyPlan, lowerBodyPlan, poseEnergyState, frameIndex });
   const centerX = facePlan.centerX + (profile.id === "CHARACTER_002" ? 3 : 0);
   const outline: RgbaColor = [17, 22, 42, 255];
   const skin = rgba(facePlan.skinBase);
@@ -596,6 +652,7 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
     jacketLight,
     accent,
     outline,
+    articulationPlan,
   });
   const shoulderY = 121 + bodyPlan.neckHeight;
   const waistY = shoulderY + bodyPlan.torsoHeight;
@@ -836,6 +893,15 @@ function buildFrameDiagnostic(frameIndex: number, truthCheck: AnimeCharacterTrut
     color_mood_score: visualFidelityDiagnostics.color_mood_score,
     lighting_continuity_score: visualFidelityDiagnostics.lighting_continuity_score,
     lighting_flicker_risk: visualFidelityDiagnostics.lighting_flicker_risk,
+    shoulder_articulation_score: visualFidelityDiagnostics.shoulder_articulation_score,
+    elbow_readability_score: visualFidelityDiagnostics.elbow_readability_score,
+    wrist_hand_connection_score: visualFidelityDiagnostics.wrist_hand_connection_score,
+    hand_shape_readability_score: visualFidelityDiagnostics.hand_shape_readability_score,
+    hip_knee_articulation_score: visualFidelityDiagnostics.hip_knee_articulation_score,
+    foot_pose_readability_score: visualFidelityDiagnostics.foot_pose_readability_score,
+    pose_energy_score: visualFidelityDiagnostics.pose_energy_score,
+    silhouette_flow_score: visualFidelityDiagnostics.silhouette_flow_score,
+    anatomy_primitive_risk: visualFidelityDiagnostics.anatomy_primitive_risk,
     lighting_stability_score: visualFidelityDiagnostics.lighting_continuity_score,
     lighting_consistency_score: visualFidelityDiagnostics.lighting_continuity_score,
     coherence_anchor_strength: 98,
@@ -977,6 +1043,15 @@ function buildDiagnostics(
     color_mood_score: visualFidelityDiagnostics.color_mood_score,
     lighting_continuity_score: visualFidelityDiagnostics.lighting_continuity_score,
     lighting_flicker_risk: visualFidelityDiagnostics.lighting_flicker_risk,
+    shoulder_articulation_score: visualFidelityDiagnostics.shoulder_articulation_score,
+    elbow_readability_score: visualFidelityDiagnostics.elbow_readability_score,
+    wrist_hand_connection_score: visualFidelityDiagnostics.wrist_hand_connection_score,
+    hand_shape_readability_score: visualFidelityDiagnostics.hand_shape_readability_score,
+    hip_knee_articulation_score: visualFidelityDiagnostics.hip_knee_articulation_score,
+    foot_pose_readability_score: visualFidelityDiagnostics.foot_pose_readability_score,
+    pose_energy_score: visualFidelityDiagnostics.pose_energy_score,
+    silhouette_flow_score: visualFidelityDiagnostics.silhouette_flow_score,
+    anatomy_primitive_risk: visualFidelityDiagnostics.anatomy_primitive_risk,
     phrase_continuity_score: 96,
     transition_smoothness_score: 96,
     visual_continuity_score: 97,
@@ -1008,6 +1083,11 @@ function buildDiagnostics(
       { id: "eye-highlight", label: "Eye highlight control", score: visualFidelityDiagnostics.eye_highlight_score, status: "stable", summary: "Eye glow and catchlights remain readable through the blink sequence." },
       { id: "color-mood", label: "Color mood", score: visualFidelityDiagnostics.color_mood_score, status: "stable", summary: `${visualFidelityDiagnostics.lighting_mood} palette adds cinematic contrast without uncontrolled glow.` },
       { id: "lighting-continuity", label: "Lighting continuity", score: visualFidelityDiagnostics.lighting_continuity_score, status: visualFidelityDiagnostics.lighting_flicker_risk === "LOW" ? "stable" : "watch", summary: `Lighting flicker risk: ${visualFidelityDiagnostics.lighting_flicker_risk}.` },
+      { id: "shoulder-articulation", label: "Shoulder articulation", score: visualFidelityDiagnostics.shoulder_articulation_score, status: "stable", summary: "Shoulder tilt and caps support a clearer line from head through torso and arms." },
+      { id: "elbow-readability", label: "Elbow readability", score: visualFidelityDiagnostics.elbow_readability_score, status: "stable", summary: "Upper arm and forearm segments include elbow bend cues instead of one tube." },
+      { id: "hand-shape-readability", label: "Hand shape readability", score: visualFidelityDiagnostics.hand_shape_readability_score, status: visualFidelityDiagnostics.anatomy_primitive_risk === "LOW" ? "stable" : "watch", summary: `Simplified mitten hands include palm, thumb, grouped-finger, and wrist bridge cues; anatomy primitive risk: ${visualFidelityDiagnostics.anatomy_primitive_risk}.` },
+      { id: "pose-energy", label: "Pose energy", score: visualFidelityDiagnostics.pose_energy_score, status: "stable", summary: "Pose energy adds a deterministic line of action and asymmetry without changing profile identity." },
+      { id: "silhouette-flow", label: "Silhouette flow", score: visualFidelityDiagnostics.silhouette_flow_score, status: "stable", summary: "Head, shoulders, torso, legs, and boots follow a more intentional anime silhouette flow." },
       { id: "scene-cohesion", label: "Anime character scene cohesion", score: visualFidelityDiagnostics.background_separation, status: "stable", summary: "Background supports the character instead of dominating." },
     ],
     artifact_diagnostics: [
@@ -1073,6 +1153,15 @@ function buildDiagnostics(
       `color_mood_score=${visualFidelityDiagnostics.color_mood_score}`,
       `lighting_continuity_score=${visualFidelityDiagnostics.lighting_continuity_score}`,
       `lighting_flicker_risk=${visualFidelityDiagnostics.lighting_flicker_risk}`,
+      `shoulder_articulation_score=${visualFidelityDiagnostics.shoulder_articulation_score}`,
+      `elbow_readability_score=${visualFidelityDiagnostics.elbow_readability_score}`,
+      `wrist_hand_connection_score=${visualFidelityDiagnostics.wrist_hand_connection_score}`,
+      `hand_shape_readability_score=${visualFidelityDiagnostics.hand_shape_readability_score}`,
+      `hip_knee_articulation_score=${visualFidelityDiagnostics.hip_knee_articulation_score}`,
+      `foot_pose_readability_score=${visualFidelityDiagnostics.foot_pose_readability_score}`,
+      `pose_energy_score=${visualFidelityDiagnostics.pose_energy_score}`,
+      `silhouette_flow_score=${visualFidelityDiagnostics.silhouette_flow_score}`,
+      `anatomy_primitive_risk=${visualFidelityDiagnostics.anatomy_primitive_risk}`,
       `visual_fidelity_score=${visualFidelityDiagnostics.visual_fidelity_score}`,
       `fidelity_tier=${visualFidelityDiagnostics.fidelity_tier}`,
     ],
@@ -1165,6 +1254,14 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
   const cinematicLightingSequence = buildAnimeCinematicLightingSequence({ profile: input.profile, frameCount });
   const cinematicLightingSummary = summarizeAnimeCinematicLightingDiagnostics(cinematicLightingSequence);
   const diagnosticCinematicLightingState = cinematicLightingSequence[2] ?? buildAnimeCinematicLightingState({ profile: input.profile, frameIndex: 2, frameCount });
+  const articulationSequence = motionSequence.map((motionPlan, frameIndex) => {
+    const bodyPlan = buildAnimeBodyPlan({ profile: input.profile, posePreset: diagnosticPosePreset, frameIndex });
+    const lowerBodyPlan = buildAnimeLowerBodyPlan({ profile: input.profile, bodyPlan, posePreset: diagnosticPosePreset, motionPlan });
+    const poseEnergyState = buildAnimePoseEnergyState({ profile: input.profile, posePreset: diagnosticPosePreset, frameIndex });
+    return buildAnimeArticulationPlan({ profile: input.profile, posePreset: diagnosticPosePreset, bodyPlan, lowerBodyPlan, poseEnergyState, frameIndex });
+  });
+  const articulationSummary = summarizeAnimeArticulationDiagnostics(articulationSequence);
+  const diagnosticArticulationPlan = articulationSequence[2] ?? articulationSequence[0];
   const visualFidelityDiagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
     eyePlan: buildAnimeEyeRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
@@ -1198,6 +1295,8 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     cameraFramingDiagnostics: cameraFramingSummary,
     cinematicLightingState: diagnosticCinematicLightingState,
     cinematicLightingDiagnostics: cinematicLightingSummary,
+    articulationPlan: diagnosticArticulationPlan,
+    articulationDiagnostics: articulationSummary,
     truthCheck,
     outfitReadability: diagnosticBodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
@@ -1239,10 +1338,11 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     shouldUserInspect: true,
     visualReviewNotes: [
       "A deterministic 2D anime character render is the primary subject with early anime fidelity active.",
-      "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, expression-driven eyebrows and mouth, planned shoulders, tapered torso, segmented arms, simplified palms, cuffs, separated lower legs, grounded boots, and jacket silhouette for the selected profile.",
+      "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, expression-driven eyebrows and mouth, planned shoulders with shoulder tilt, tapered torso, segmented upper arms and forearms, visible elbow cues, wrist bridges, simplified mitten hands with thumb and grouped-finger cues, cuffs, articulated knees, angled grounded boots, grounded stance, and jacket silhouette for the selected profile.",
       "The GIF should preserve stance identity with bounded fabric sway, deterministic partial blink, subtle gaze settle, coordinated hair sway, bang/side-lock motion, sleeve/cuff sway, lower fabric motion, face-priority framing, a small push-in/drift, and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
       `The lighting pass uses ${visualFidelityDiagnostics.lighting_mood} with bounded rim light, eye glow, darker atmosphere, and secondary beacon support; it is deterministic raster lighting, not global illumination or neural relighting.`,
-      "Body/pose/motion/expression/secondary-motion/camera-framing polish is early deterministic raster art, not cinematic anime quality, detailed hand anatomy, dialogue, lip-sync, multi-shot sequencing, physics simulation, or neural motion synthesis.",
+      `Articulation status: ${visualFidelityDiagnostics.anatomy_primitive_risk === "LOW" ? "EARLY_ANIME_ARTICULATION_ACTIVE" : "PARTIAL_ARTICULATION_UPGRADE"}; hands are simplified anime mitten hands, not detailed fingers.`,
+      "Body/pose/motion/expression/secondary-motion/camera-framing/lighting/articulation polish is early deterministic raster art, not cinematic anime quality, realistic anatomy, detailed fingers, dialogue, lip-sync, multi-shot sequencing, physics simulation, or neural motion synthesis.",
       "The beacon/chamber is rendered as supporting background only.",
       `Visual fidelity tier: ${visualFidelityDiagnostics.fidelity_tier} (${visualFidelityDiagnostics.visual_fidelity_score}/100).`,
       truthCheck.fallback_primitive_dominance ? "Fallback primitive dominance detected; do not claim success." : "Cube/beacon/drone fallback dominance is absent for this character render package.",
@@ -1342,6 +1442,15 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     `Color mood score: ${visualFidelityDiagnostics.color_mood_score}/100`,
     `Lighting continuity score: ${visualFidelityDiagnostics.lighting_continuity_score}/100`,
     `Lighting flicker risk: ${visualFidelityDiagnostics.lighting_flicker_risk}`,
+    `Shoulder articulation score: ${visualFidelityDiagnostics.shoulder_articulation_score}/100`,
+    `Elbow readability score: ${visualFidelityDiagnostics.elbow_readability_score}/100`,
+    `Wrist/hand connection score: ${visualFidelityDiagnostics.wrist_hand_connection_score}/100`,
+    `Hand shape readability score: ${visualFidelityDiagnostics.hand_shape_readability_score}/100`,
+    `Hip/knee articulation score: ${visualFidelityDiagnostics.hip_knee_articulation_score}/100`,
+    `Foot pose readability score: ${visualFidelityDiagnostics.foot_pose_readability_score}/100`,
+    `Pose energy score: ${visualFidelityDiagnostics.pose_energy_score}/100`,
+    `Silhouette flow score: ${visualFidelityDiagnostics.silhouette_flow_score}/100`,
+    `Anatomy primitive risk: ${visualFidelityDiagnostics.anatomy_primitive_risk}`,
     "",
     `First PNG to inspect: ${visualReviewPackage.firstPngToInspect ?? "none"}`,
     `GIF to inspect: ${visualReviewPackage.gifToInspect ?? "none"}`,
