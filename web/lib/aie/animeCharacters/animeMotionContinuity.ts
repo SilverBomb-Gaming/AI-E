@@ -1,4 +1,5 @@
 import type { AnimePoseLanguagePreset } from "./animePoseLanguage";
+import type { AnimeTemporalMotionPlan } from "./animeTemporalMotion";
 
 export type AnimeMotionContinuityPlan = {
   frameIndex: number;
@@ -36,14 +37,16 @@ export function buildAnimeMotionContinuityPlan(input: {
   frameIndex: number;
   frameCount: number;
   posePreset: AnimePoseLanguagePreset;
+  temporalPlan?: AnimeTemporalMotionPlan;
 }): AnimeMotionContinuityPlan {
   const frameCount = Math.max(1, input.frameCount);
-  const phase = smoothStep(pingPongPhase(input.frameIndex, frameCount));
+  const phase = input.temporalPlan ? input.temporalPlan.easedTime : smoothStep(pingPongPhase(input.frameIndex, frameCount));
   const asymmetryDirection = input.posePreset.torsoAngle >= 0 ? 1 : -1;
-  const easedWeightShift = Number((((phase - 0.5) * input.posePreset.poseAsymmetry * 5.2) * asymmetryDirection).toFixed(2));
-  const verticalSettle = Number((Math.sin(phase * Math.PI) * 0.9).toFixed(2));
-  const fabricSway = Number(((phase - 0.5) * 3.2 + easedWeightShift * 0.18).toFixed(2));
-  const hairFabricSyncOffset = Number((fabricSway * 0.62).toFixed(2));
+  const temporalBody = input.temporalPlan?.bodyMotionWeight ?? 0;
+  const easedWeightShift = Number(((((phase - 0.5) * input.posePreset.poseAsymmetry * 4.4) + temporalBody * 1.15) * asymmetryDirection).toFixed(2));
+  const verticalSettle = Number(((Math.sin(phase * Math.PI) * 0.62) + (input.temporalPlan?.smoothedBodyOffsetY ?? 0) * 0.22).toFixed(2));
+  const fabricSway = Number(((phase - 0.5) * 2.35 + easedWeightShift * 0.14 + (input.temporalPlan?.smoothedClothOffsetX ?? 0) * 0.55).toFixed(2));
+  const hairFabricSyncOffset = Number((fabricSway * 0.46 + (input.temporalPlan?.smoothedHairOffsetX ?? 0) * 0.22).toFixed(2));
   const stancePreservation = clampScore(96 - Math.abs(easedWeightShift) * 1.2);
   const limbContinuityScore = clampScore(94 - Math.abs(easedWeightShift) * 0.8);
   const silhouetteContinuityScore = clampScore(95 - Math.abs(fabricSway) * 0.55);
@@ -71,11 +74,13 @@ export function buildAnimeMotionContinuityPlan(input: {
 export function buildAnimeMotionContinuitySequence(input: {
   frameCount: number;
   posePreset: AnimePoseLanguagePreset;
+  temporalPlans?: AnimeTemporalMotionPlan[];
 }): AnimeMotionContinuityPlan[] {
   return Array.from({ length: input.frameCount }, (_, frameIndex) => buildAnimeMotionContinuityPlan({
     frameIndex,
     frameCount: input.frameCount,
     posePreset: input.posePreset,
+    temporalPlan: input.temporalPlans?.[frameIndex],
   }));
 }
 

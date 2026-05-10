@@ -1,6 +1,7 @@
 import type { AnimeCharacterProfile } from "./governedAnimeCharacterState";
 import type { AnimeExpressionState } from "./animeExpressionRenderer";
 import type { AnimeMotionContinuityPlan } from "./animeMotionContinuity";
+import type { AnimeTemporalMotionPlan } from "./animeTemporalMotion";
 
 export type AnimeMotionJitterRisk = "LOW" | "MEDIUM" | "HIGH";
 
@@ -66,21 +67,24 @@ export function buildAnimeSecondaryMotionState(input: {
   frameCount: number;
   expressionState?: AnimeExpressionState;
   motionPlan?: AnimeMotionContinuityPlan;
+  temporalPlan?: AnimeTemporalMotionPlan;
 }): AnimeSecondaryMotionState {
   const frameCount = Math.max(1, input.frameCount);
   const frameIndex = Math.max(0, input.frameIndex) % frameCount;
-  const phase = secondaryPhase(frameIndex, frameCount);
+  const phase = input.temporalPlan ? Math.max(0, Math.min(1, input.temporalPlan.easedTime + input.temporalPlan.hairMotionLag * 0.18)) : secondaryPhase(frameIndex, frameCount);
   const settlePhase = Math.sin((frameIndex / Math.max(1, frameCount - 1)) * Math.PI);
   const direction = input.profile.id === "CHARACTER_005" ? 1 : -1;
   const scale = profileMotionScale(input.profile);
   const blinkDampening = input.expressionState && input.expressionState.eyeOpenAmount < 0.65 ? 0.72 : 1;
-  const bodyCarry = input.motionPlan ? input.motionPlan.fabricSway * 0.28 : 0;
-  const hairSwayX = roundMotion(((phase - 0.5) * 5.1 * scale + bodyCarry) * direction * blinkDampening);
-  const hairSwayY = roundMotion(settlePhase * 1.15 * scale);
+  const bodyCarry = input.motionPlan ? input.motionPlan.fabricSway * 0.22 : 0;
+  const temporalHairCarry = input.temporalPlan?.smoothedHairOffsetX ?? 0;
+  const temporalClothCarry = input.temporalPlan?.smoothedClothOffsetX ?? 0;
+  const hairSwayX = roundMotion(((phase - 0.5) * 3.4 * scale + bodyCarry + temporalHairCarry * 0.56) * direction * blinkDampening);
+  const hairSwayY = roundMotion((settlePhase * 0.92 * scale) + (input.temporalPlan?.smoothedBodyOffsetY ?? 0) * 0.28);
   const bangOffset = roundMotion(hairSwayX * 0.42 + (input.expressionState?.gazeOffsetX ?? 0) * 0.35);
   const sideLockOffset = roundMotion(hairSwayX * 0.86);
-  const rearHairSettle = roundMotion((0.5 - phase) * 2.2 * scale + (input.motionPlan?.verticalSettle ?? 0) * 0.35);
-  const jacketSway = roundMotion((phase - 0.5) * 2.5 * scale + bodyCarry * 0.55);
+  const rearHairSettle = roundMotion((0.5 - phase) * 1.8 * scale + (input.motionPlan?.verticalSettle ?? 0) * 0.28 + (input.temporalPlan?.followThroughPhase ?? 0) * 0.62);
+  const jacketSway = roundMotion((phase - 0.5) * 1.55 * scale + bodyCarry * 0.42 + temporalClothCarry * 0.42);
   const sleeveSway = roundMotion(jacketSway * 0.65 + hairSwayX * 0.14);
   const lowerFabricSway = roundMotion(jacketSway * 1.16 + (input.motionPlan?.fabricSway ?? 0) * 0.38);
   const largestDelta = Math.max(Math.abs(hairSwayX), Math.abs(sideLockOffset), Math.abs(lowerFabricSway));
@@ -123,6 +127,7 @@ export function buildAnimeSecondaryMotionSequence(input: {
   frameCount: number;
   expressionStates?: AnimeExpressionState[];
   motionPlans?: AnimeMotionContinuityPlan[];
+  temporalPlans?: AnimeTemporalMotionPlan[];
 }): AnimeSecondaryMotionState[] {
   return Array.from({ length: input.frameCount }, (_, frameIndex) => buildAnimeSecondaryMotionState({
     profile: input.profile,
@@ -130,6 +135,7 @@ export function buildAnimeSecondaryMotionSequence(input: {
     frameCount: input.frameCount,
     expressionState: input.expressionStates?.[frameIndex],
     motionPlan: input.motionPlans?.[frameIndex],
+    temporalPlan: input.temporalPlans?.[frameIndex],
   }));
 }
 

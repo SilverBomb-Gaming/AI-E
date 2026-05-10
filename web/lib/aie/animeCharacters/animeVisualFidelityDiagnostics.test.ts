@@ -16,6 +16,7 @@ import { buildAnimeCinematicLightingSequence, buildAnimeCinematicLightingState, 
 import { buildAnimePoseEnergyState } from "./animePoseEnergy";
 import { buildAnimeArticulationPlan, summarizeAnimeArticulationDiagnostics } from "./animeArticulationRenderer";
 import { buildAnimeTorsoStructurePlan, summarizeAnimeTorsoStructureDiagnostics } from "./animeTorsoStructure";
+import { buildAnimeTemporalMotionPlan, summarizeAnimeTemporalMotionDiagnostics } from "./animeTemporalMotion";
 import { resolveAnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, classifyAnimeVisualFidelity } from "./animeVisualFidelityDiagnostics";
 import type { AnimeCharacterTruthCheck } from "./governedAnimeCharacterState";
@@ -38,17 +39,19 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
   const expression = selectDefaultAnimeCharacterExpression(profile.expressionDefault);
   const poseTemplate = selectDefaultAnimeCharacterPose(profile.poseDefault);
   const posePreset = resolveAnimePoseLanguagePreset({ profile, poseTemplate });
+  const temporalMotionPlan = buildAnimeTemporalMotionPlan({ frameIndex: 2, frameCount: 5 });
+  const temporalMotionDiagnostics = summarizeAnimeTemporalMotionDiagnostics([0, 1, 2, 3, 4].map((frameIndex) => buildAnimeTemporalMotionPlan({ frameIndex, frameCount: 5 })));
   const bodyPlan = buildAnimeBodyPlan({
     profile,
     posePreset,
     frameIndex: 2,
   });
-  const motionPlan = buildAnimeMotionContinuityPlan({ frameIndex: 2, frameCount: 5, posePreset });
+  const motionPlan = buildAnimeMotionContinuityPlan({ frameIndex: 2, frameCount: 5, posePreset, temporalPlan: temporalMotionPlan });
   const lowerBodyPlan = buildAnimeLowerBodyPlan({ profile, bodyPlan, posePreset, motionPlan });
-  const expressionState = buildAnimeExpressionState({ profile, expression, frameIndex: 1, frameCount: 5 });
-  const secondaryMotionState = buildAnimeSecondaryMotionState({ profile, frameIndex: 2, frameCount: 5, expressionState, motionPlan });
-  const cameraFramingState = buildAnimeCameraFramingState({ profile, frameIndex: 2, frameCount: 5, expressionState });
-  const cameraFramingDiagnostics = summarizeAnimeCameraFramingDiagnostics(buildAnimeCameraFramingSequence({ profile, frameCount: 5, expressionStates: [expressionState, expressionState, expressionState, expressionState, expressionState] }));
+  const expressionState = buildAnimeExpressionState({ profile, expression, frameIndex: 1, frameCount: 5, temporalPlan: buildAnimeTemporalMotionPlan({ frameIndex: 1, frameCount: 5 }) });
+  const secondaryMotionState = buildAnimeSecondaryMotionState({ profile, frameIndex: 2, frameCount: 5, expressionState, motionPlan, temporalPlan: temporalMotionPlan });
+  const cameraFramingState = buildAnimeCameraFramingState({ profile, frameIndex: 2, frameCount: 5, expressionState, temporalPlan: temporalMotionPlan });
+  const cameraFramingDiagnostics = summarizeAnimeCameraFramingDiagnostics(buildAnimeCameraFramingSequence({ profile, frameCount: 5, expressionStates: [expressionState, expressionState, expressionState, expressionState, expressionState], temporalPlans: [0, 1, 2, 3, 4].map((frameIndex) => buildAnimeTemporalMotionPlan({ frameIndex, frameCount: 5 })) }));
   const cinematicLightingState = buildAnimeCinematicLightingState({ profile, frameIndex: 2, frameCount: 5 });
   const cinematicLightingDiagnostics = summarizeAnimeCinematicLightingDiagnostics(buildAnimeCinematicLightingSequence({ profile, frameCount: 5 }));
   const poseEnergyState = buildAnimePoseEnergyState({ profile, posePreset, frameIndex: 2 });
@@ -74,6 +77,8 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
     articulationDiagnostics,
     torsoStructurePlan,
     torsoStructureDiagnostics,
+    temporalMotionPlan,
+    temporalMotionDiagnostics,
     truthCheck: truthCheck(),
     outfitReadability: bodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
@@ -158,6 +163,15 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
   assert.equal(diagnostics.silhouette_motion_score >= 90, true);
   assert.equal(["LOW", "MEDIUM"].includes(diagnostics.torso_stiffness_risk), true);
   assert.equal(["LOW", "MEDIUM"].includes(diagnostics.clothing_flatness_risk), true);
+  assert.equal(diagnostics.temporal_smoothing_score >= 88, true);
+  assert.equal(diagnostics.easing_curve_score >= 88, true);
+  assert.equal(diagnostics.anticipation_readability_score >= 88, true);
+  assert.equal(diagnostics.follow_through_score >= 88, true);
+  assert.equal(diagnostics.overlapping_action_score >= 86, true);
+  assert.equal(["LOW", "MEDIUM"].includes(diagnostics.frame_snap_risk), true);
+  assert.equal(diagnostics.motion_arc_consistency >= 88, true);
+  assert.equal(diagnostics.settle_quality_score >= 88, true);
+  assert.equal(diagnostics.temporal_jitter_risk, "LOW");
 });
 
 test("anime visual fidelity diagnostics block fallback dominance", () => {

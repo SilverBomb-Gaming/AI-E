@@ -11,6 +11,7 @@ import type { AnimeCameraFramingDiagnostics, AnimeCameraFramingState, AnimeShotP
 import type { AnimeCinematicLightingDiagnostics, AnimeCinematicLightingState, AnimeLightingMood } from "./animeCinematicLighting";
 import type { AnimeArticulationDiagnostics, AnimeArticulationPlan } from "./animeArticulationRenderer";
 import type { AnimeTorsoStructureDiagnostics, AnimeTorsoStructurePlan } from "./animeTorsoStructure";
+import type { AnimeTemporalMotionDiagnostics, AnimeTemporalMotionPlan } from "./animeTemporalMotion";
 
 export type AnimeVisualFidelityTier = "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
 
@@ -94,6 +95,16 @@ export type AnimeVisualFidelityDiagnostics = {
   silhouette_motion_score: number;
   torso_stiffness_risk: "LOW" | "MEDIUM" | "HIGH";
   clothing_flatness_risk: "LOW" | "MEDIUM" | "HIGH";
+  temporal_smoothing_score: number;
+  easing_curve_score: number;
+  anticipation_readability_score: number;
+  follow_through_score: number;
+  overlapping_action_score: number;
+  frame_snap_risk: "LOW" | "MEDIUM" | "HIGH";
+  motion_arc_consistency: number;
+  settle_quality_score: number;
+  temporal_jitter_risk: "LOW" | "MEDIUM" | "HIGH";
+  temporal_continuity_score: number;
   visual_fidelity_score: number;
   fidelity_tier: AnimeVisualFidelityTier;
 };
@@ -126,6 +137,8 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   articulationDiagnostics?: AnimeArticulationDiagnostics;
   torsoStructurePlan?: AnimeTorsoStructurePlan;
   torsoStructureDiagnostics?: AnimeTorsoStructureDiagnostics;
+  temporalMotionPlan?: AnimeTemporalMotionPlan;
+  temporalMotionDiagnostics?: AnimeTemporalMotionDiagnostics;
   truthCheck: AnimeCharacterTruthCheck;
   outfitReadability?: number;
   backgroundSeparation?: number;
@@ -221,6 +234,16 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
   const silhouette_motion_score = input.torsoStructureDiagnostics?.silhouette_motion_score ?? input.torsoStructurePlan?.silhouetteMotionScore ?? silhouette_flow_score;
   const torso_stiffness_risk = input.torsoStructureDiagnostics?.torso_stiffness_risk ?? input.torsoStructurePlan?.torsoStiffnessRisk ?? "MEDIUM";
   const clothing_flatness_risk = input.torsoStructureDiagnostics?.clothing_flatness_risk ?? input.torsoStructurePlan?.clothingFlatnessRisk ?? "MEDIUM";
+  const temporal_smoothing_score = input.temporalMotionDiagnostics?.temporal_smoothing_score ?? input.temporalMotionPlan?.temporalSmoothingScore ?? animation_smoothness_score;
+  const easing_curve_score = input.temporalMotionDiagnostics?.easing_curve_score ?? input.temporalMotionPlan?.easingCurveScore ?? frame_interpolation_score;
+  const anticipation_readability_score = input.temporalMotionDiagnostics?.anticipation_readability_score ?? input.temporalMotionPlan?.anticipationReadabilityScore ?? expression_readability_score;
+  const follow_through_score = input.temporalMotionDiagnostics?.follow_through_score ?? input.temporalMotionPlan?.followThroughScore ?? secondary_motion_continuity;
+  const overlapping_action_score = input.temporalMotionDiagnostics?.overlapping_action_score ?? input.temporalMotionPlan?.overlappingActionScore ?? secondary_motion_continuity;
+  const frame_snap_risk = input.temporalMotionDiagnostics?.frame_snap_risk ?? input.temporalMotionPlan?.frameSnapRisk ?? "MEDIUM";
+  const motion_arc_consistency = input.temporalMotionDiagnostics?.motion_arc_consistency ?? input.temporalMotionPlan?.motionArcConsistency ?? silhouette_flow_score;
+  const settle_quality_score = input.temporalMotionDiagnostics?.settle_quality_score ?? input.temporalMotionPlan?.settleQualityScore ?? camera_motion_smoothness;
+  const temporal_jitter_risk = input.temporalMotionDiagnostics?.temporal_jitter_risk ?? input.temporalMotionPlan?.temporalJitterRisk ?? motion_jitter_risk;
+  const temporal_continuity_score = input.temporalMotionDiagnostics?.temporal_continuity_score ?? input.temporalMotionPlan?.temporalContinuityScore ?? motion_continuity_score;
   const pose_readability = input.poseReadability ?? average([pose_language_score, stance_balance_score, arm_readability_score]);
   const visual_fidelity_score = average([
     anime_face_readability,
@@ -294,6 +317,14 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     outfit_layering_score,
     clothing_readability_score,
     silhouette_motion_score,
+    temporal_smoothing_score,
+    easing_curve_score,
+    anticipation_readability_score,
+    follow_through_score,
+    overlapping_action_score,
+    motion_arc_consistency,
+    settle_quality_score,
+    temporal_continuity_score,
   ]);
 
   return {
@@ -376,6 +407,16 @@ export function buildAnimeVisualFidelityDiagnostics(input: {
     silhouette_motion_score,
     torso_stiffness_risk,
     clothing_flatness_risk,
+    temporal_smoothing_score,
+    easing_curve_score,
+    anticipation_readability_score,
+    follow_through_score,
+    overlapping_action_score,
+    frame_snap_risk,
+    motion_arc_consistency,
+    settle_quality_score,
+    temporal_jitter_risk,
+    temporal_continuity_score,
     visual_fidelity_score,
     fidelity_tier: classifyAnimeVisualFidelity(visual_fidelity_score, input.truthCheck),
   };

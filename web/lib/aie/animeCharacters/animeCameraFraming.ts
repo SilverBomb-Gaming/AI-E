@@ -1,5 +1,6 @@
 import type { AnimeCharacterProfile } from "./governedAnimeCharacterState";
 import type { AnimeExpressionState } from "./animeExpressionRenderer";
+import type { AnimeTemporalMotionPlan } from "./animeTemporalMotion";
 
 export type AnimeShotPreset =
   | "CENTERED_HERO_SHOT"
@@ -94,17 +95,18 @@ export function buildAnimeCameraFramingState(input: {
   frameCount: number;
   expressionState?: AnimeExpressionState;
   shotPreset?: AnimeShotPreset;
+  temporalPlan?: AnimeTemporalMotionPlan;
 }): AnimeCameraFramingState {
   const frameCount = Math.max(1, input.frameCount);
   const frameIndex = Math.max(0, input.frameIndex) % frameCount;
-  const progress = smoothStep(normalizedFrame(frameIndex, frameCount));
+  const progress = input.temporalPlan ? Math.max(0, Math.min(1, input.temporalPlan.easedTime + input.temporalPlan.cameraMotionLag * 0.12)) : smoothStep(normalizedFrame(frameIndex, frameCount));
   const preset = input.shotPreset ?? resolveAnimeShotPreset(input.profile);
   const base = presetBase({ preset, profile: input.profile });
   const pushIn = preset === "SUBTLE_PUSH_IN" ? progress * 0.026 : preset === "FACE_PRIORITY_MEDIUM_SHOT" ? progress * 0.012 : progress * 0.006;
   const drift = Math.sin(progress * Math.PI) * 1.1;
   const blinkHold = input.expressionState && input.expressionState.eyeOpenAmount < 0.65 ? -0.8 : 0;
-  const cameraOffsetX = roundMotion(base.offsetX + (preset === "THREE_QUARTER_ANIME_REVEAL" ? drift * 0.8 : drift * 0.45));
-  const cameraOffsetY = roundMotion(base.offsetY + blinkHold - progress * 1.1);
+  const cameraOffsetX = roundMotion(base.offsetX + (preset === "THREE_QUARTER_ANIME_REVEAL" ? drift * 0.8 : drift * 0.45) + (input.temporalPlan?.smoothedCameraOffsetX ?? 0) * 0.32);
+  const cameraOffsetY = roundMotion(base.offsetY + blinkHold - progress * 0.92 + (input.temporalPlan?.smoothedCameraOffsetY ?? 0) * 0.34);
   const cameraZoom = roundMotion(Math.min(1.065, base.zoom + pushIn));
   const characterAnchorX = roundMotion(base.anchorX + cameraOffsetX * 0.2);
   const characterAnchorY = roundMotion(base.anchorY + cameraOffsetY * 0.25);
@@ -135,6 +137,7 @@ export function buildAnimeCameraFramingSequence(input: {
   frameCount: number;
   expressionStates?: AnimeExpressionState[];
   shotPreset?: AnimeShotPreset;
+  temporalPlans?: AnimeTemporalMotionPlan[];
 }): AnimeCameraFramingState[] {
   return Array.from({ length: input.frameCount }, (_, frameIndex) => buildAnimeCameraFramingState({
     profile: input.profile,
@@ -142,6 +145,7 @@ export function buildAnimeCameraFramingSequence(input: {
     frameCount: input.frameCount,
     expressionState: input.expressionStates?.[frameIndex],
     shotPreset: input.shotPreset,
+    temporalPlan: input.temporalPlans?.[frameIndex],
   }));
 }
 

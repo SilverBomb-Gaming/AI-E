@@ -18,6 +18,7 @@ import { buildAnimeCinematicLightingSequence, buildAnimeCinematicLightingState, 
 import { buildAnimePoseEnergyState } from "./animePoseEnergy";
 import { buildAnimeArticulationPlan, summarizeAnimeArticulationDiagnostics, type AnimeArticulationPlan } from "./animeArticulationRenderer";
 import { buildAnimeTorsoStructurePlan, summarizeAnimeTorsoStructureDiagnostics, type AnimeTorsoStructurePlan } from "./animeTorsoStructure";
+import { buildAnimeTemporalMotionPlan, buildAnimeTemporalMotionSequence, summarizeAnimeTemporalMotionDiagnostics, type AnimeTemporalMotionPlan } from "./animeTemporalMotion";
 import { resolveAnimePoseLanguagePreset, type AnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, type AnimeVisualFidelityDiagnostics } from "./animeVisualFidelityDiagnostics";
 import type {
@@ -666,21 +667,21 @@ function drawCinematicLightingPass(input: {
   drawEllipse(input.image, input.centerX + 14, input.faceY + 1, 24, 17, eyeGlow, true);
 }
 
-function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile, poseTemplate: AnimeCharacterPoseTemplate, expressionTemplate: AnimeCharacterExpressionTemplate, frameIndex: number) {
-  const sway = Math.sin(frameIndex * 0.7) * 2;
+function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile, poseTemplate: AnimeCharacterPoseTemplate, expressionTemplate: AnimeCharacterExpressionTemplate, frameIndex: number, temporalPlan: AnimeTemporalMotionPlan) {
+  const sway = Math.sin(temporalPlan.easedTime * Math.PI) * 1.2 + temporalPlan.smoothedBodyOffsetY * 0.35;
   const facePlan = buildAnimeFaceRenderPlan({ profile, expression: expressionTemplate });
   const eyePlan = buildAnimeEyeRenderPlan({ profile, expression: expressionTemplate });
   const hairPlan = buildAnimeHairRenderPlan({ profile, frameIndex });
-  const expressionState = buildAnimeExpressionState({ profile, expression: expressionTemplate, frameIndex, frameCount: 5 });
+  const expressionState = buildAnimeExpressionState({ profile, expression: expressionTemplate, frameIndex, frameCount: 5, temporalPlan });
   const posePreset = resolveAnimePoseLanguagePreset({ profile, poseTemplate });
-  const motionPlan = buildAnimeMotionContinuityPlan({ frameIndex, frameCount: 5, posePreset });
-  const secondaryMotionState = buildAnimeSecondaryMotionState({ profile, frameIndex, frameCount: 5, expressionState, motionPlan });
+  const motionPlan = buildAnimeMotionContinuityPlan({ frameIndex, frameCount: 5, posePreset, temporalPlan });
+  const secondaryMotionState = buildAnimeSecondaryMotionState({ profile, frameIndex, frameCount: 5, expressionState, motionPlan, temporalPlan });
   const bodyPlan = buildAnimeBodyPlan({ profile, posePreset, frameIndex });
   const lowerBodyPlan = buildAnimeLowerBodyPlan({ profile, bodyPlan, posePreset, motionPlan });
   const poseEnergyState = buildAnimePoseEnergyState({ profile, posePreset, frameIndex });
   const articulationPlan = buildAnimeArticulationPlan({ profile, posePreset, bodyPlan, lowerBodyPlan, poseEnergyState, frameIndex });
   const torsoStructurePlan = buildAnimeTorsoStructurePlan({ profile, bodyPlan, lowerBodyPlan, secondaryMotionState, articulationPlan, frameIndex });
-  const centerX = facePlan.centerX + (profile.id === "CHARACTER_002" ? 3 : 0);
+  const centerX = facePlan.centerX + (profile.id === "CHARACTER_002" ? 3 : 0) + temporalPlan.smoothedBodyOffsetX * 0.42;
   const outline: RgbaColor = [17, 22, 42, 255];
   const skin = rgba(facePlan.skinBase);
   const skinShadow = rgba(facePlan.skinShadow, 185);
@@ -754,13 +755,14 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
 
 function buildFrame(profile: AnimeCharacterProfile, poseTemplate: AnimeCharacterPoseTemplate, expressionTemplate: AnimeCharacterExpressionTemplate, frameIndex: number): MutableImage {
   const image = createImage(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-  const expressionState = buildAnimeExpressionState({ profile, expression: expressionTemplate, frameIndex, frameCount: 5 });
-  const cameraFramingState = buildAnimeCameraFramingState({ profile, frameIndex, frameCount: 5, expressionState });
+  const temporalPlan = buildAnimeTemporalMotionPlan({ frameIndex, frameCount: 5 });
+  const expressionState = buildAnimeExpressionState({ profile, expression: expressionTemplate, frameIndex, frameCount: 5, temporalPlan });
+  const cameraFramingState = buildAnimeCameraFramingState({ profile, frameIndex, frameCount: 5, expressionState, temporalPlan });
   const cinematicLightingState = buildAnimeCinematicLightingState({ profile, frameIndex, frameCount: 5 });
   image.cameraFramingState = cameraFramingState;
   image.cinematicLightingState = cinematicLightingState;
   fillBackground(image, frameIndex, cameraFramingState, cinematicLightingState);
-  drawAnimeCharacter(image, profile, poseTemplate, expressionTemplate, frameIndex);
+  drawAnimeCharacter(image, profile, poseTemplate, expressionTemplate, frameIndex, temporalPlan);
   return image;
 }
 
@@ -993,6 +995,16 @@ function buildFrameDiagnostic(frameIndex: number, truthCheck: AnimeCharacterTrut
     silhouette_motion_score: visualFidelityDiagnostics.silhouette_motion_score,
     torso_stiffness_risk: visualFidelityDiagnostics.torso_stiffness_risk,
     clothing_flatness_risk: visualFidelityDiagnostics.clothing_flatness_risk,
+    temporal_smoothing_score: visualFidelityDiagnostics.temporal_smoothing_score,
+    easing_curve_score: visualFidelityDiagnostics.easing_curve_score,
+    anticipation_readability_score: visualFidelityDiagnostics.anticipation_readability_score,
+    follow_through_score: visualFidelityDiagnostics.follow_through_score,
+    overlapping_action_score: visualFidelityDiagnostics.overlapping_action_score,
+    frame_snap_risk: visualFidelityDiagnostics.frame_snap_risk,
+    motion_arc_consistency: visualFidelityDiagnostics.motion_arc_consistency,
+    settle_quality_score: visualFidelityDiagnostics.settle_quality_score,
+    temporal_jitter_risk: visualFidelityDiagnostics.temporal_jitter_risk,
+    temporal_continuity_score: visualFidelityDiagnostics.temporal_continuity_score,
     lighting_stability_score: visualFidelityDiagnostics.lighting_continuity_score,
     lighting_consistency_score: visualFidelityDiagnostics.lighting_continuity_score,
     coherence_anchor_strength: 98,
@@ -1151,6 +1163,16 @@ function buildDiagnostics(
     silhouette_motion_score: visualFidelityDiagnostics.silhouette_motion_score,
     torso_stiffness_risk: visualFidelityDiagnostics.torso_stiffness_risk,
     clothing_flatness_risk: visualFidelityDiagnostics.clothing_flatness_risk,
+    temporal_smoothing_score: visualFidelityDiagnostics.temporal_smoothing_score,
+    easing_curve_score: visualFidelityDiagnostics.easing_curve_score,
+    anticipation_readability_score: visualFidelityDiagnostics.anticipation_readability_score,
+    follow_through_score: visualFidelityDiagnostics.follow_through_score,
+    overlapping_action_score: visualFidelityDiagnostics.overlapping_action_score,
+    frame_snap_risk: visualFidelityDiagnostics.frame_snap_risk,
+    motion_arc_consistency: visualFidelityDiagnostics.motion_arc_consistency,
+    settle_quality_score: visualFidelityDiagnostics.settle_quality_score,
+    temporal_jitter_risk: visualFidelityDiagnostics.temporal_jitter_risk,
+    temporal_continuity_score: visualFidelityDiagnostics.temporal_continuity_score,
     phrase_continuity_score: 96,
     transition_smoothness_score: 96,
     visual_continuity_score: 97,
@@ -1191,6 +1213,11 @@ function buildDiagnostics(
       { id: "outfit-layering", label: "Outfit layering", score: visualFidelityDiagnostics.outfit_layering_score, status: "stable", summary: "Outer jacket edges, inner shirt, collar, trim, waist seam, and coat opening are rendered as separate layers." },
       { id: "silhouette-motion", label: "Silhouette motion", score: visualFidelityDiagnostics.silhouette_motion_score, status: "stable", summary: "Coat hem, sleeve folds, waist folds, and hip line follow bounded secondary motion." },
       { id: "clothing-flatness-risk", label: "Clothing flatness risk", score: visualFidelityDiagnostics.clothing_flatness_risk === "LOW" ? 94 : visualFidelityDiagnostics.clothing_flatness_risk === "MEDIUM" ? 78 : 52, status: visualFidelityDiagnostics.clothing_flatness_risk === "LOW" ? "stable" : "watch", summary: `Clothing flatness risk: ${visualFidelityDiagnostics.clothing_flatness_risk}.` },
+      { id: "temporal-smoothing", label: "Temporal smoothing", score: visualFidelityDiagnostics.temporal_smoothing_score, status: visualFidelityDiagnostics.temporal_jitter_risk === "LOW" ? "stable" : "watch", summary: `Eased timing, anticipation, follow-through, and settle are active; temporal jitter risk: ${visualFidelityDiagnostics.temporal_jitter_risk}.` },
+      { id: "overlapping-action", label: "Overlapping action", score: visualFidelityDiagnostics.overlapping_action_score, status: "stable", summary: "Face/blink leads body motion, hair follows body, cloth follows hair, and camera settles last." },
+      { id: "motion-arc-consistency", label: "Motion arc consistency", score: visualFidelityDiagnostics.motion_arc_consistency, status: "stable", summary: "Head, torso, hair, cloth, and camera offsets use bounded eased arcs." },
+      { id: "frame-snap-risk", label: "Frame snap risk", score: visualFidelityDiagnostics.frame_snap_risk === "LOW" ? 94 : visualFidelityDiagnostics.frame_snap_risk === "MEDIUM" ? 78 : 50, status: visualFidelityDiagnostics.frame_snap_risk === "LOW" ? "stable" : "watch", summary: `Frame snap risk: ${visualFidelityDiagnostics.frame_snap_risk}.` },
+      { id: "temporal-jitter-risk", label: "Temporal jitter risk", score: visualFidelityDiagnostics.temporal_jitter_risk === "LOW" ? 96 : visualFidelityDiagnostics.temporal_jitter_risk === "MEDIUM" ? 76 : 48, status: visualFidelityDiagnostics.temporal_jitter_risk === "LOW" ? "stable" : "watch", summary: `Temporal jitter risk: ${visualFidelityDiagnostics.temporal_jitter_risk}.` },
       { id: "scene-cohesion", label: "Anime character scene cohesion", score: visualFidelityDiagnostics.background_separation, status: "stable", summary: "Background supports the character instead of dominating." },
     ],
     artifact_diagnostics: [
@@ -1273,6 +1300,16 @@ function buildDiagnostics(
       `silhouette_motion_score=${visualFidelityDiagnostics.silhouette_motion_score}`,
       `torso_stiffness_risk=${visualFidelityDiagnostics.torso_stiffness_risk}`,
       `clothing_flatness_risk=${visualFidelityDiagnostics.clothing_flatness_risk}`,
+      `temporal_smoothing_score=${visualFidelityDiagnostics.temporal_smoothing_score}`,
+      `easing_curve_score=${visualFidelityDiagnostics.easing_curve_score}`,
+      `anticipation_readability_score=${visualFidelityDiagnostics.anticipation_readability_score}`,
+      `follow_through_score=${visualFidelityDiagnostics.follow_through_score}`,
+      `overlapping_action_score=${visualFidelityDiagnostics.overlapping_action_score}`,
+      `frame_snap_risk=${visualFidelityDiagnostics.frame_snap_risk}`,
+      `motion_arc_consistency=${visualFidelityDiagnostics.motion_arc_consistency}`,
+      `settle_quality_score=${visualFidelityDiagnostics.settle_quality_score}`,
+      `temporal_jitter_risk=${visualFidelityDiagnostics.temporal_jitter_risk}`,
+      `temporal_continuity_score=${visualFidelityDiagnostics.temporal_continuity_score}`,
       `visual_fidelity_score=${visualFidelityDiagnostics.visual_fidelity_score}`,
       `fidelity_tier=${visualFidelityDiagnostics.fidelity_tier}`,
     ],
@@ -1348,20 +1385,23 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     diagnosticsRecognizeCharacter: true,
   });
   const diagnosticPosePreset = resolveAnimePoseLanguagePreset({ profile: input.profile, poseTemplate: input.poseTemplate });
+  const temporalSequence = buildAnimeTemporalMotionSequence({ frameCount });
+  const temporalMotionSummary = summarizeAnimeTemporalMotionDiagnostics(temporalSequence);
+  const diagnosticTemporalPlan = temporalSequence[2] ?? temporalSequence[0] ?? buildAnimeTemporalMotionPlan({ frameIndex: 2, frameCount });
   const diagnosticBodyPlan = buildAnimeBodyPlan({ profile: input.profile, posePreset: diagnosticPosePreset, frameIndex: 2 });
-  const diagnosticMotionPlan = buildAnimeMotionContinuityPlan({ frameIndex: 2, frameCount, posePreset: diagnosticPosePreset });
+  const diagnosticMotionPlan = buildAnimeMotionContinuityPlan({ frameIndex: 2, frameCount, posePreset: diagnosticPosePreset, temporalPlan: diagnosticTemporalPlan });
   const diagnosticLowerBodyPlan = buildAnimeLowerBodyPlan({ profile: input.profile, bodyPlan: diagnosticBodyPlan, posePreset: diagnosticPosePreset, motionPlan: diagnosticMotionPlan });
-  const motionContinuitySummary = summarizeAnimeMotionContinuity(buildAnimeMotionContinuitySequence({ frameCount, posePreset: diagnosticPosePreset }));
-  const expressionSequence = buildAnimeExpressionSequence({ profile: input.profile, expression: input.expressionTemplate, frameCount });
+  const motionSequence = buildAnimeMotionContinuitySequence({ frameCount, posePreset: diagnosticPosePreset, temporalPlans: temporalSequence });
+  const motionContinuitySummary = summarizeAnimeMotionContinuity(motionSequence);
+  const expressionSequence = buildAnimeExpressionSequence({ profile: input.profile, expression: input.expressionTemplate, frameCount, temporalPlans: temporalSequence });
   const expressionSummary = summarizeAnimeExpressionDiagnostics(expressionSequence);
-  const diagnosticExpressionState = buildAnimeExpressionState({ profile: input.profile, expression: input.expressionTemplate, frameIndex: 1, frameCount });
-  const motionSequence = buildAnimeMotionContinuitySequence({ frameCount, posePreset: diagnosticPosePreset });
-  const secondaryMotionSequence = buildAnimeSecondaryMotionSequence({ profile: input.profile, frameCount, expressionStates: expressionSequence, motionPlans: motionSequence });
+  const diagnosticExpressionState = buildAnimeExpressionState({ profile: input.profile, expression: input.expressionTemplate, frameIndex: 1, frameCount, temporalPlan: temporalSequence[1] });
+  const secondaryMotionSequence = buildAnimeSecondaryMotionSequence({ profile: input.profile, frameCount, expressionStates: expressionSequence, motionPlans: motionSequence, temporalPlans: temporalSequence });
   const secondaryMotionSummary = summarizeAnimeSecondaryMotionDiagnostics(secondaryMotionSequence);
-  const diagnosticSecondaryMotionState = buildAnimeSecondaryMotionState({ profile: input.profile, frameIndex: 2, frameCount, expressionState: expressionSequence[2], motionPlan: motionSequence[2] });
-  const cameraFramingSequence = buildAnimeCameraFramingSequence({ profile: input.profile, frameCount, expressionStates: expressionSequence });
+  const diagnosticSecondaryMotionState = buildAnimeSecondaryMotionState({ profile: input.profile, frameIndex: 2, frameCount, expressionState: expressionSequence[2], motionPlan: motionSequence[2], temporalPlan: diagnosticTemporalPlan });
+  const cameraFramingSequence = buildAnimeCameraFramingSequence({ profile: input.profile, frameCount, expressionStates: expressionSequence, temporalPlans: temporalSequence });
   const cameraFramingSummary = summarizeAnimeCameraFramingDiagnostics(cameraFramingSequence);
-  const diagnosticCameraFramingState = cameraFramingSequence[2] ?? buildAnimeCameraFramingState({ profile: input.profile, frameIndex: 2, frameCount, expressionState: expressionSequence[2] });
+  const diagnosticCameraFramingState = cameraFramingSequence[2] ?? buildAnimeCameraFramingState({ profile: input.profile, frameIndex: 2, frameCount, expressionState: expressionSequence[2], temporalPlan: diagnosticTemporalPlan });
   const cinematicLightingSequence = buildAnimeCinematicLightingSequence({ profile: input.profile, frameCount });
   const cinematicLightingSummary = summarizeAnimeCinematicLightingDiagnostics(cinematicLightingSequence);
   const diagnosticCinematicLightingState = cinematicLightingSequence[2] ?? buildAnimeCinematicLightingState({ profile: input.profile, frameIndex: 2, frameCount });
@@ -1420,6 +1460,8 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     articulationDiagnostics: articulationSummary,
     torsoStructurePlan: diagnosticTorsoStructurePlan,
     torsoStructureDiagnostics: torsoStructureSummary,
+    temporalMotionPlan: diagnosticTemporalPlan,
+    temporalMotionDiagnostics: temporalMotionSummary,
     truthCheck,
     outfitReadability: diagnosticBodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
@@ -1462,11 +1504,12 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     visualReviewNotes: [
       "A deterministic 2D anime character render is the primary subject with early anime fidelity active.",
       "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, expression-driven eyebrows and mouth, planned shoulders with shoulder tilt, ribcage-to-waist taper, curved torso flow, waist seam, pelvis/hip transition, layered jacket opening, inner shirt layer, collar structure, trim separation, sleeve folds, coat tension lines, hem sway, segmented upper arms and forearms, visible elbow cues, wrist bridges, simplified mitten hands with thumb and grouped-finger cues, cuffs, articulated knees, angled grounded boots, grounded stance, and jacket silhouette for the selected profile.",
-      "The GIF should preserve stance identity with bounded fabric sway, deterministic partial blink, subtle gaze settle, coordinated hair sway, bang/side-lock motion, sleeve/cuff sway, lower fabric motion, face-priority framing, a small push-in/drift, and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
+      "The GIF should preserve stance identity with smoother eased body motion, anticipation into the pose shift, deterministic partial blink, subtle gaze settle, coordinated hair sway, bang/side-lock motion, follow-through in sleeve/cuff sway and lower fabric motion, face-priority framing, camera settling after character motion, a small push-in/drift, and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
       `The lighting pass uses ${visualFidelityDiagnostics.lighting_mood} with bounded rim light, eye glow, darker atmosphere, and secondary beacon support; it is deterministic raster lighting, not global illumination or neural relighting.`,
       `Articulation status: ${visualFidelityDiagnostics.anatomy_primitive_risk === "LOW" ? "EARLY_ANIME_ARTICULATION_ACTIVE" : "PARTIAL_ARTICULATION_UPGRADE"}; hands are simplified anime mitten hands, not detailed fingers.`,
       `Torso/clothing structure status: ${visualFidelityDiagnostics.clothing_flatness_risk === "LOW" || visualFidelityDiagnostics.clothing_flatness_risk === "MEDIUM" ? "EARLY_ANIME_TORSO_CLOTHING_STRUCTURE_ACTIVE" : "PARTIAL_TORSO_STRUCTURE_UPGRADE"}; clothing is layered deterministic raster structure, not simulated cloth.`,
-      "Body/pose/motion/expression/secondary-motion/camera-framing/lighting/articulation polish is early deterministic raster art, not cinematic anime quality, realistic anatomy, detailed fingers, dialogue, lip-sync, multi-shot sequencing, physics simulation, or neural motion synthesis.",
+      `Temporal smoothing status: ${visualFidelityDiagnostics.temporal_jitter_risk === "LOW" && visualFidelityDiagnostics.temporal_smoothing_score >= 88 ? "EARLY_ANIME_TEMPORAL_SMOOTHING_ACTIVE" : "PARTIAL_TEMPORAL_SMOOTHING"}; timing uses deterministic easing, anticipation, follow-through, overlap, and integer-pixel snap controls, not neural interpolation.`,
+      "Body/pose/motion/expression/secondary-motion/camera-framing/lighting/articulation/torso polish is early deterministic raster art, not cinematic anime quality, realistic anatomy, detailed fingers, dialogue, lip-sync, multi-shot sequencing, physics simulation, high-frame-rate animation, or neural motion synthesis.",
       "The beacon/chamber is rendered as supporting background only.",
       `Visual fidelity tier: ${visualFidelityDiagnostics.fidelity_tier} (${visualFidelityDiagnostics.visual_fidelity_score}/100).`,
       truthCheck.fallback_primitive_dominance ? "Fallback primitive dominance detected; do not claim success." : "Cube/beacon/drone fallback dominance is absent for this character render package.",
@@ -1583,6 +1626,15 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     `Silhouette motion score: ${visualFidelityDiagnostics.silhouette_motion_score}/100`,
     `Torso stiffness risk: ${visualFidelityDiagnostics.torso_stiffness_risk}`,
     `Clothing flatness risk: ${visualFidelityDiagnostics.clothing_flatness_risk}`,
+    `Temporal smoothing score: ${visualFidelityDiagnostics.temporal_smoothing_score}/100`,
+    `Easing curve score: ${visualFidelityDiagnostics.easing_curve_score}/100`,
+    `Anticipation readability score: ${visualFidelityDiagnostics.anticipation_readability_score}/100`,
+    `Follow-through score: ${visualFidelityDiagnostics.follow_through_score}/100`,
+    `Overlapping action score: ${visualFidelityDiagnostics.overlapping_action_score}/100`,
+    `Frame snap risk: ${visualFidelityDiagnostics.frame_snap_risk}`,
+    `Motion arc consistency: ${visualFidelityDiagnostics.motion_arc_consistency}/100`,
+    `Settle quality score: ${visualFidelityDiagnostics.settle_quality_score}/100`,
+    `Temporal jitter risk: ${visualFidelityDiagnostics.temporal_jitter_risk}`,
     "",
     `First PNG to inspect: ${visualReviewPackage.firstPngToInspect ?? "none"}`,
     `GIF to inspect: ${visualReviewPackage.gifToInspect ?? "none"}`,

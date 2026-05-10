@@ -1,4 +1,5 @@
 import type { AnimeCharacterExpressionTemplate, AnimeCharacterProfile } from "./governedAnimeCharacterState";
+import type { AnimeTemporalMotionPlan } from "./animeTemporalMotion";
 
 export type AnimeMouthShape = "neutral" | "small-smile" | "focused-line" | "soft-concern";
 
@@ -87,16 +88,19 @@ export function buildAnimeExpressionState(input: {
   expression: AnimeCharacterExpressionTemplate;
   frameIndex: number;
   frameCount: number;
+  temporalPlan?: AnimeTemporalMotionPlan;
 }): AnimeExpressionState {
   const frameCount = Math.max(1, input.frameCount);
   const normalizedFrame = Math.max(0, input.frameIndex) % frameCount;
-  const eyeOpenAmount = blinkOpenAmount(normalizedFrame);
+  const earlyAnticipationBlink = input.temporalPlan ? Math.max(0, input.temporalPlan.anticipationPhase - input.temporalPlan.actionPhase * 0.22) : 0;
+  const followThroughRecovery = input.temporalPlan?.followThroughPhase ?? 0;
+  const eyeOpenAmount = Math.max(0.42, Math.min(1, blinkOpenAmount(normalizedFrame) - earlyAnticipationBlink * 0.18 + followThroughRecovery * 0.04));
   const blinkDepth = 1 - eyeOpenAmount;
   const eyebrowEmotion = eyebrowEmotionForExpression(input.expression, input.profile);
   const expressionIntensity = input.profile.id === "CHARACTER_005" ? 1.15 : input.profile.id === "CHARACTER_001" ? 0.88 : 1;
-  const gazeWave = Math.sin((normalizedFrame / Math.max(1, frameCount - 1)) * Math.PI);
-  const gazeOffsetX = roundMotion((input.profile.id === "CHARACTER_005" ? 0.55 : 0.35) * gazeWave * expressionIntensity);
-  const gazeOffsetY = roundMotion(normalizedFrame === frameCount - 1 ? -0.28 : blinkDepth > 0.3 ? 0.18 : 0);
+  const gazeWave = Math.sin(((input.temporalPlan?.easedTime ?? normalizedFrame / Math.max(1, frameCount - 1)) + (input.temporalPlan?.expressionMotionLag ?? 0)) * Math.PI);
+  const gazeOffsetX = roundMotion((input.profile.id === "CHARACTER_005" ? 0.46 : 0.3) * gazeWave * expressionIntensity);
+  const gazeOffsetY = roundMotion(normalizedFrame === frameCount - 1 ? -0.22 : blinkDepth > 0.3 ? 0.16 : (input.temporalPlan?.settlePhase ?? 0) * -0.08);
   const eyebrowTilt = roundMotion(baseEyebrowTilt(eyebrowEmotion) + blinkDepth * 0.7);
   const expressionContinuityScore = clampScore(94 - Math.abs(gazeOffsetX) * 1.5 - blinkDepth * 3);
   const blinkReadabilityScore = clampScore(88 + blinkDepth * 12);
@@ -131,12 +135,14 @@ export function buildAnimeExpressionSequence(input: {
   profile: AnimeCharacterProfile;
   expression: AnimeCharacterExpressionTemplate;
   frameCount: number;
+  temporalPlans?: AnimeTemporalMotionPlan[];
 }): AnimeExpressionState[] {
   return Array.from({ length: input.frameCount }, (_, frameIndex) => buildAnimeExpressionState({
     profile: input.profile,
     expression: input.expression,
     frameIndex,
     frameCount: input.frameCount,
+    temporalPlan: input.temporalPlans?.[frameIndex],
   }));
 }
 
