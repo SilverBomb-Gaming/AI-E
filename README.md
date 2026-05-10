@@ -2,6 +2,36 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## Local Storage And Cache Policy
+
+AI-E development machines should keep heavy temp, cache, render, and test-artifact writes off the system drive when possible. The preferred local cache root is `E:\AI_SYSTEM` with these directories:
+
+- `E:\AI_SYSTEM\temp`
+- `E:\AI_SYSTEM\npm-cache`
+- `E:\AI_SYSTEM\node-cache`
+- `E:\AI_SYSTEM\render-cache`
+- `E:\AI_SYSTEM\logs`
+
+Before running large npm, Next.js, renderer, PNG/GIF, or test workloads on Windows, set the active shell to use the E: cache paths:
+
+```powershell
+$env:TEMP="E:\AI_SYSTEM\temp"
+$env:TMP="E:\AI_SYSTEM\temp"
+$env:npm_config_cache="E:\AI_SYSTEM\npm-cache"
+npm config set cache "E:\AI_SYSTEM\npm-cache" --global
+```
+
+Verify the active shell before validation:
+
+```powershell
+npm config get cache
+[System.IO.Path]::GetTempPath()
+```
+
+For a permanent Windows change, use System Properties -> Advanced -> Environment Variables, then set the user variables `TEMP` and `TMP` to `E:\AI_SYSTEM\temp`. Optionally set the system variables `TEMP` and `TMP` to the same path, then reboot. Do not force this by script unless the operator explicitly approves the machine-level change.
+
+Do not use `C:` for heavy generation/cache work. Safe cleanup targets after inspection include old npm cache contents under `AppData\Local\npm-cache`, stale user temp files, `C:\Windows\Temp`, old `.next` folders in inactive projects, old `node_modules\.cache` folders, browser download leftovers, and the recycle bin. Do not remove developer tools, VS Code data, Python/Node/Git/Unity installs, `.vscode`, `.ollama`, `.cache\huggingface`, Windows SDKs, .NET SDKs, Visual Studio Build Tools, or active project dependencies during routine AI-E housekeeping.
+
 ## Governed Cinematic Shot Engine
 
 AI-E now includes the first governed cinematic shot-engine layer inside the bounded preview sandbox.

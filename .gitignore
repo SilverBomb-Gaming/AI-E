@@ -20,6 +20,15 @@ build_artifacts/
 
 # Existing AI-E runtime artifacts
 runner_artifacts/
+.aie/
+
+# Local machine cache roots
+AI_SYSTEM/
+.npm-cache/
+.node-cache/
+.render-cache/
+cache/
+cache_*/
 
 # General local logs and runtime indexes
 *.log
