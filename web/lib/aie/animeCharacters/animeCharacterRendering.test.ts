@@ -209,7 +209,12 @@ test("approved character render executes bounded preview and reports anime diagn
   assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.blink_readability_score ?? 0) >= 85, true);
   assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.gaze_stability_score ?? 0) >= 90, true);
   assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.face_liveliness_score ?? 0) >= 85, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.hair_motion_score ?? 0) >= 88, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.cloth_motion_score ?? 0) >= 86, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.secondary_motion_continuity ?? 0) >= 90, true);
+  assert.equal(report.diagnostics?.anime_visual_fidelity_diagnostics?.motion_jitter_risk, "LOW");
   assert.equal(report.diagnostics?.artifact_diagnostics.some((entry) => entry === "fidelity_tier=EARLY_ANIME"), true);
+  assert.equal(report.diagnostics?.artifact_diagnostics.some((entry) => entry === "motion_jitter_risk=LOW"), true);
   assert.equal(report.visualReviewPackage?.reviewLabel, "USER_VISUAL_CHECK_READY");
   assert.equal(report.characterApproved, true);
   assert.equal(report.poseTemplateId, "NEUTRAL_HERO_STANCE");
@@ -285,6 +290,13 @@ test("character-first renderer writes inspectable PNG GIF manifest diagnostics a
   assert.equal(manifest.anime_visual_fidelity_diagnostics.eyebrow_readability_score >= 85, true);
   assert.equal(manifest.anime_visual_fidelity_diagnostics.expression_frame_consistency >= 90, true);
   assert.equal(manifest.anime_visual_fidelity_diagnostics.face_liveliness_score >= 85, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.hair_motion_score >= 88, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.bang_motion_readability >= 88, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.side_lock_continuity >= 90, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.cloth_motion_score >= 86, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.jacket_sway_readability >= 86, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.secondary_motion_continuity >= 90, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.motion_jitter_risk, "LOW");
   assert.equal(manifest.first_png_to_inspect.endsWith("anime_character_frame_001.png"), true);
 });
 
@@ -316,14 +328,22 @@ test("solar crimson render exports confident body pose polish diagnostics", asyn
   assert.equal(manifest.anime_visual_fidelity_diagnostics.expression_readability_score >= 88, true);
   assert.equal(manifest.anime_visual_fidelity_diagnostics.blink_readability_score >= 85, true);
   assert.equal(manifest.anime_visual_fidelity_diagnostics.face_liveliness_score >= 85, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.hair_motion_score >= 88, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.cloth_motion_score >= 86, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.secondary_motion_continuity >= 90, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.motion_jitter_risk, "LOW");
   assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.pose_frame_consistency ?? 0) >= 90), true);
   assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.foot_grounding_score ?? 0) >= 82), true);
   assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.animation_smoothness_score ?? 0) >= 90), true);
   assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.blink_readability_score ?? 0) >= 85), true);
   assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.face_liveliness_score ?? 0) >= 85), true);
+  assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.hair_motion_score ?? 0) >= 88), true);
+  assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.cloth_motion_score ?? 0) >= 86), true);
+  assert.equal(result.diagnostics.frame_diagnostics.every((entry) => entry.motion_jitter_risk === "LOW"), true);
   assert.equal(result.visualReviewPackage.visualReviewNotes.some((entry) => entry.includes("planned shoulders")), true);
   assert.equal(result.visualReviewPackage.visualReviewNotes.some((entry) => entry.includes("grounded boots")), true);
   assert.equal(result.visualReviewPackage.visualReviewNotes.some((entry) => entry.includes("partial blink")), true);
+  assert.equal(result.visualReviewPackage.visualReviewNotes.some((entry) => entry.includes("coordinated hair sway")), true);
 });
 
 test("fallback primitive truth check cannot pass anime character compatibility", () => {

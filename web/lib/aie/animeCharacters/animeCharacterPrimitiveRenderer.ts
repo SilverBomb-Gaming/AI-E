@@ -12,6 +12,7 @@ import { buildAnimeBodyPlan, type AnimeBodyPlan } from "./animeBodyRenderer";
 import { buildAnimeLowerBodyPlan, type AnimeLowerBodyLegPlan, type AnimeLowerBodyPlan } from "./animeLowerBodyRenderer";
 import { buildAnimeMotionContinuityPlan, buildAnimeMotionContinuitySequence, summarizeAnimeMotionContinuity, type AnimeMotionContinuityPlan } from "./animeMotionContinuity";
 import { buildAnimeExpressionSequence, buildAnimeExpressionState, summarizeAnimeExpressionDiagnostics, type AnimeExpressionState } from "./animeExpressionRenderer";
+import { buildAnimeSecondaryMotionSequence, buildAnimeSecondaryMotionState, summarizeAnimeSecondaryMotionDiagnostics, type AnimeSecondaryMotionState } from "./animeSecondaryMotion";
 import { resolveAnimePoseLanguagePreset, type AnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, type AnimeVisualFidelityDiagnostics } from "./animeVisualFidelityDiagnostics";
 import type {
@@ -178,16 +179,19 @@ function drawQuad(image: MutableImage, ax: number, ay: number, bx: number, by: n
   drawTriangle(image, ax, ay, cx, cy, dx, dy, color, markCharacter);
 }
 
-function drawHairLayer(image: MutableImage, centerX: number, layer: AnimeHairLayer, hairPlan: AnimeHairRenderPlan) {
+function drawHairLayer(image: MutableImage, centerX: number, layer: AnimeHairLayer, hairPlan: AnimeHairRenderPlan, secondaryMotionState?: AnimeSecondaryMotionState) {
   const color = layer.shade === "light" ? rgba(hairPlan.highlightColor, 226) : layer.shade === "shadow" ? rgba(hairPlan.shadowColor) : rgba(hairPlan.baseColor);
+  const roleOffsetX = !secondaryMotionState ? 0 : layer.role === "front-bang" ? secondaryMotionState.bangOffset : layer.role === "side-lock" ? secondaryMotionState.sideLockOffset : layer.role === "rear-volume" ? secondaryMotionState.hairSwayX : secondaryMotionState.hairSwayX * 0.45;
+  const roleTipOffsetX = !secondaryMotionState ? 0 : layer.role === "front-bang" ? secondaryMotionState.bangOffset * 1.25 : layer.role === "side-lock" ? secondaryMotionState.sideLockOffset * 1.2 : layer.role === "rear-volume" ? secondaryMotionState.hairSwayX * 1.35 : secondaryMotionState.hairSwayX * 0.55;
+  const roleOffsetY = !secondaryMotionState ? 0 : layer.role === "rear-volume" ? secondaryMotionState.rearHairSettle : secondaryMotionState.hairSwayY * 0.55;
   drawTriangle(
     image,
-    centerX + layer.anchorX - 120 - layer.width,
-    layer.anchorY,
-    centerX + layer.anchorX - 120 + layer.width,
-    layer.anchorY,
-    centerX + layer.tipX - 120,
-    layer.tipY,
+    centerX + layer.anchorX - 120 - layer.width + roleOffsetX,
+    layer.anchorY + roleOffsetY * 0.45,
+    centerX + layer.anchorX - 120 + layer.width + roleOffsetX,
+    layer.anchorY + roleOffsetY * 0.45,
+    centerX + layer.tipX - 120 + roleTipOffsetX,
+    layer.tipY + roleOffsetY,
     color,
     true,
   );
@@ -253,11 +257,13 @@ function drawPlannedArm(input: {
   cuff: RgbaColor;
   skin: RgbaColor;
   outline: RgbaColor;
+  sleeveSway?: number;
 }) {
   const arm = input.side === -1 ? input.bodyPlan.leftArm : input.bodyPlan.rightArm;
-  const elbowX = input.shoulderX + arm.elbowOffsetX;
+  const sleeveSway = input.sleeveSway ?? 0;
+  const elbowX = input.shoulderX + arm.elbowOffsetX + sleeveSway * 0.28;
   const elbowY = input.shoulderY + arm.elbowOffsetY;
-  const handX = input.shoulderX + arm.handOffsetX;
+  const handX = input.shoulderX + arm.handOffsetX + sleeveSway * 0.42;
   const handY = input.shoulderY + arm.handOffsetY;
   const wristX = handX - input.side * 2;
   const wristY = handY - 7;
@@ -382,6 +388,7 @@ function drawPlannedAnimeBody(input: {
   bodyPlan: AnimeBodyPlan;
   lowerBodyPlan: AnimeLowerBodyPlan;
   motionPlan: AnimeMotionContinuityPlan;
+  secondaryMotionState: AnimeSecondaryMotionState;
   skinShadow: RgbaColor;
   jacket: RgbaColor;
   jacketLight: RgbaColor;
@@ -399,7 +406,8 @@ function drawPlannedAnimeBody(input: {
   const leftWaistX = centerX - bodyPlan.waistWidth / 2 + torsoLean;
   const rightWaistX = centerX + bodyPlan.waistWidth / 2 + torsoLean;
   const hemY = waistY + bodyPlan.lowerGarmentLength;
-  const fabricSway = bodyPlan.fabricFlow + input.motionPlan.fabricSway;
+  const jacketSway = input.secondaryMotionState.jacketSway;
+  const fabricSway = bodyPlan.fabricFlow + input.motionPlan.fabricSway + input.secondaryMotionState.lowerFabricSway;
   const centerPanel = [235, 241, 248, 255] as const;
   const shadowPanel: RgbaColor = input.profile.id === "CHARACTER_005" ? [14, 15, 24, 255] : [26, 43, 83, 255];
 
@@ -407,16 +415,16 @@ function drawPlannedAnimeBody(input: {
   drawQuad(image, leftShoulderX - 4, leftShoulderY + 2, rightShoulderX + 4, rightShoulderY + 2, rightWaistX + 9, waistY, leftWaistX - 9, waistY, outline, true);
   drawQuad(image, leftShoulderX, leftShoulderY, rightShoulderX, rightShoulderY, rightWaistX, waistY, leftWaistX, waistY, jacket, true);
   drawQuad(image, centerX - 13, shoulderY - 2, centerX + 14, shoulderY - 2, centerX + 10 + torsoLean, waistY - 3, centerX - 9 + torsoLean, waistY - 3, centerPanel, true);
-  drawTriangle(image, centerX - bodyPlan.jacketPanelWidth, shoulderY + 3, centerX - 4, shoulderY, centerX - 13 + torsoLean, waistY - 17, shadowPanel, true);
-  drawTriangle(image, centerX + bodyPlan.jacketPanelWidth, shoulderY + 3, centerX + 4, shoulderY, centerX + 14 + torsoLean, waistY - 17, [19, 27, 52, 255], true);
-  drawLine(image, leftShoulderX + 11, leftShoulderY + 6, centerX - 10 + torsoLean, waistY - 9, accent, 2.1, true);
-  drawLine(image, rightShoulderX - 11, rightShoulderY + 6, centerX + 11 + torsoLean, waistY - 9, accent, 2.1, true);
+  drawTriangle(image, centerX - bodyPlan.jacketPanelWidth, shoulderY + 3, centerX - 4, shoulderY, centerX - 13 + torsoLean - jacketSway * 0.55, waistY - 17, shadowPanel, true);
+  drawTriangle(image, centerX + bodyPlan.jacketPanelWidth, shoulderY + 3, centerX + 4, shoulderY, centerX + 14 + torsoLean + jacketSway * 0.55, waistY - 17, [19, 27, 52, 255], true);
+  drawLine(image, leftShoulderX + 11, leftShoulderY + 6, centerX - 10 + torsoLean - jacketSway * 0.35, waistY - 9, accent, 2.1, true);
+  drawLine(image, rightShoulderX - 11, rightShoulderY + 6, centerX + 11 + torsoLean + jacketSway * 0.35, waistY - 9, accent, 2.1, true);
   drawLine(image, centerX - 17, shoulderY + 29, centerX + 18, shoulderY + 29, [232, 246, 255, 160], 1, true);
   drawLine(image, leftWaistX - 3, waistY - 7, rightWaistX + 3, waistY - 4, jacketLight, 1.6, true);
 
-  drawTriangle(image, leftWaistX - 12, waistY - 1, centerX - 3, waistY - 4, centerX - 18 + fabricSway, hemY, jacket, true);
-  drawTriangle(image, rightWaistX + 12, waistY - 1, centerX + 5, waistY - 4, centerX + 22 + fabricSway, hemY - 3, shadowPanel, true);
-  drawTriangle(image, centerX - 7, waistY - 2, centerX + 8, waistY - 1, centerX + 1 + fabricSway, hemY + 3, [34, 39, 56, 255], true);
+  drawTriangle(image, leftWaistX - 12, waistY - 1, centerX - 3, waistY - 4, centerX - 18 + fabricSway, hemY + input.secondaryMotionState.hairSwayY * 0.25, jacket, true);
+  drawTriangle(image, rightWaistX + 12, waistY - 1, centerX + 5, waistY - 4, centerX + 22 + fabricSway, hemY - 3 - input.secondaryMotionState.hairSwayY * 0.15, shadowPanel, true);
+  drawTriangle(image, centerX - 7, waistY - 2, centerX + 8, waistY - 1, centerX + 1 + fabricSway * 0.72, hemY + 3, [34, 39, 56, 255], true);
   drawLine(image, centerX - 17, waistY + 4, centerX - 23 + fabricSway, hemY - 4, accent, 1.4, true);
   drawLine(image, centerX + 19, waistY + 3, centerX + 26 + fabricSway, hemY - 6, accent, 1.4, true);
 
@@ -430,8 +438,8 @@ function drawPlannedAnimeBody(input: {
     outline,
   });
 
-  drawPlannedArm({ image, shoulderX: leftShoulderX + 2, shoulderY: leftShoulderY + 7, bodyPlan, side: -1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline });
-  drawPlannedArm({ image, shoulderX: rightShoulderX - 2, shoulderY: rightShoulderY + 7, bodyPlan, side: 1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline });
+  drawPlannedArm({ image, shoulderX: leftShoulderX + 2, shoulderY: leftShoulderY + 7, bodyPlan, side: -1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline, sleeveSway: input.secondaryMotionState.sleeveSway });
+  drawPlannedArm({ image, shoulderX: rightShoulderX - 2, shoulderY: rightShoulderY + 7, bodyPlan, side: 1, sleeve: jacket, sleeveShadow: shadowPanel, cuff: accent, skin: input.skinShadow, outline, sleeveSway: input.secondaryMotionState.sleeveSway });
 }
 
 function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile, poseTemplate: AnimeCharacterPoseTemplate, expressionTemplate: AnimeCharacterExpressionTemplate, frameIndex: number) {
@@ -442,6 +450,7 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
   const expressionState = buildAnimeExpressionState({ profile, expression: expressionTemplate, frameIndex, frameCount: 5 });
   const posePreset = resolveAnimePoseLanguagePreset({ profile, poseTemplate });
   const motionPlan = buildAnimeMotionContinuityPlan({ frameIndex, frameCount: 5, posePreset });
+  const secondaryMotionState = buildAnimeSecondaryMotionState({ profile, frameIndex, frameCount: 5, expressionState, motionPlan });
   const bodyPlan = buildAnimeBodyPlan({ profile, posePreset, frameIndex });
   const lowerBodyPlan = buildAnimeLowerBodyPlan({ profile, bodyPlan, posePreset, motionPlan });
   const centerX = facePlan.centerX + (profile.id === "CHARACTER_002" ? 3 : 0);
@@ -453,13 +462,13 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
   const jacketLight: RgbaColor = profile.id === "CHARACTER_002" ? [24, 214, 226, 255] : profile.id === "CHARACTER_005" ? [245, 190, 47, 255] : [100, 210, 246, 255];
   const accent: RgbaColor = profile.id === "CHARACTER_003" ? [175, 128, 246, 255] : jacketLight;
 
-  drawEllipse(image, centerX, 129 + sway, 58, 92, [8, 13, 28, 188]);
-  drawEllipse(image, centerX - 1, 118 + sway, 55, 88, outline, true);
-  drawEllipse(image, centerX - 1, 116 + sway, 48, 84, rgba(hairPlan.shadowColor), true);
-  drawEllipse(image, centerX - 8, 112 + sway, 39, 82, rgba(hairPlan.baseColor), true);
-  drawEllipse(image, centerX + 19, 107 - sway, 29, 73, rgba(hairPlan.baseColor, 236), true);
+  drawEllipse(image, centerX + secondaryMotionState.hairSwayX * 0.28, 129 + sway + secondaryMotionState.rearHairSettle * 0.45, 58, 92, [8, 13, 28, 188]);
+  drawEllipse(image, centerX - 1 + secondaryMotionState.hairSwayX * 0.32, 118 + sway + secondaryMotionState.rearHairSettle * 0.35, 55, 88, outline, true);
+  drawEllipse(image, centerX - 1 + secondaryMotionState.hairSwayX * 0.5, 116 + sway + secondaryMotionState.rearHairSettle * 0.5, 48, 84, rgba(hairPlan.shadowColor), true);
+  drawEllipse(image, centerX - 8 + secondaryMotionState.sideLockOffset * 0.35, 112 + sway + secondaryMotionState.hairSwayY * 0.4, 39, 82, rgba(hairPlan.baseColor), true);
+  drawEllipse(image, centerX + 19 + secondaryMotionState.sideLockOffset * 0.45, 107 - sway + secondaryMotionState.hairSwayY * 0.25, 29, 73, rgba(hairPlan.baseColor, 236), true);
   for (const layer of hairPlan.layers.filter((entry) => entry.role === "rear-volume" || entry.role === "side-lock")) {
-    drawHairLayer(image, centerX, layer, hairPlan);
+    drawHairLayer(image, centerX, layer, hairPlan, secondaryMotionState);
   }
 
   drawEllipse(image, centerX, facePlan.centerY, facePlan.faceRadiusX + 4, facePlan.faceRadiusY + 4, outline, true);
@@ -468,12 +477,12 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
   drawLine(image, centerX - 20, 105, centerX, facePlan.chinY, skinShadow, 1.2, true);
   drawLine(image, centerX + 20, 105, centerX, facePlan.chinY, [255, 229, 208, 110], 1.1, true);
 
-  drawTriangle(image, centerX - 41, 46, centerX - 6, 29, centerX - 22, 83, rgba(hairPlan.baseColor), true);
-  drawTriangle(image, centerX + 39, 47, centerX + 7, 30, centerX + 22, 83, rgba(hairPlan.shadowColor), true);
+  drawTriangle(image, centerX - 41 + secondaryMotionState.bangOffset * 0.45, 46, centerX - 6 + secondaryMotionState.bangOffset * 0.15, 29, centerX - 22 + secondaryMotionState.bangOffset, 83, rgba(hairPlan.baseColor), true);
+  drawTriangle(image, centerX + 39 + secondaryMotionState.bangOffset * 0.35, 47, centerX + 7 + secondaryMotionState.bangOffset * 0.15, 30, centerX + 22 + secondaryMotionState.bangOffset, 83, rgba(hairPlan.shadowColor), true);
   for (const layer of hairPlan.layers.filter((entry) => entry.role === "front-bang" || entry.role === "highlight-streak")) {
-    drawHairLayer(image, centerX, layer, hairPlan);
+    drawHairLayer(image, centerX, layer, hairPlan, secondaryMotionState);
   }
-  drawLine(image, centerX - 28, 46, centerX + 16, 38, rgba(hairPlan.highlightColor, 166), 1.1, true);
+  drawLine(image, centerX - 28 + secondaryMotionState.bangOffset * 0.4, 46 + secondaryMotionState.hairSwayY * 0.2, centerX + 16 + secondaryMotionState.bangOffset * 0.55, 38 + secondaryMotionState.hairSwayY * 0.15, rgba(hairPlan.highlightColor, 166), 1.1, true);
 
   drawAnimeEyebrow(image, centerX, facePlan.eyeLineY, expressionState, -1, outline);
   drawAnimeEyebrow(image, centerX, facePlan.eyeLineY, expressionState, 1, outline);
@@ -492,6 +501,7 @@ function drawAnimeCharacter(image: MutableImage, profile: AnimeCharacterProfile,
     bodyPlan,
     lowerBodyPlan,
     motionPlan,
+    secondaryMotionState,
     skinShadow,
     jacket,
     jacketLight,
@@ -690,6 +700,15 @@ function buildFrameDiagnostic(frameIndex: number, truthCheck: AnimeCharacterTrut
     eyebrow_readability_score: visualFidelityDiagnostics.eyebrow_readability_score,
     expression_frame_consistency: visualFidelityDiagnostics.expression_frame_consistency,
     face_liveliness_score: visualFidelityDiagnostics.face_liveliness_score,
+    hair_motion_score: visualFidelityDiagnostics.hair_motion_score,
+    bang_motion_readability: visualFidelityDiagnostics.bang_motion_readability,
+    side_lock_continuity: visualFidelityDiagnostics.side_lock_continuity,
+    rear_hair_settle_score: visualFidelityDiagnostics.rear_hair_settle_score,
+    cloth_motion_score: visualFidelityDiagnostics.cloth_motion_score,
+    jacket_sway_readability: visualFidelityDiagnostics.jacket_sway_readability,
+    lower_fabric_motion_score: visualFidelityDiagnostics.lower_fabric_motion_score,
+    secondary_motion_continuity: visualFidelityDiagnostics.secondary_motion_continuity,
+    motion_jitter_risk: visualFidelityDiagnostics.motion_jitter_risk,
     lighting_stability_score: 96,
     lighting_consistency_score: 96,
     coherence_anchor_strength: 98,
@@ -802,6 +821,15 @@ function buildDiagnostics(
     eyebrow_readability_score: visualFidelityDiagnostics.eyebrow_readability_score,
     expression_frame_consistency: visualFidelityDiagnostics.expression_frame_consistency,
     face_liveliness_score: visualFidelityDiagnostics.face_liveliness_score,
+    hair_motion_score: visualFidelityDiagnostics.hair_motion_score,
+    bang_motion_readability: visualFidelityDiagnostics.bang_motion_readability,
+    side_lock_continuity: visualFidelityDiagnostics.side_lock_continuity,
+    rear_hair_settle_score: visualFidelityDiagnostics.rear_hair_settle_score,
+    cloth_motion_score: visualFidelityDiagnostics.cloth_motion_score,
+    jacket_sway_readability: visualFidelityDiagnostics.jacket_sway_readability,
+    lower_fabric_motion_score: visualFidelityDiagnostics.lower_fabric_motion_score,
+    secondary_motion_continuity: visualFidelityDiagnostics.secondary_motion_continuity,
+    motion_jitter_risk: visualFidelityDiagnostics.motion_jitter_risk,
     phrase_continuity_score: 96,
     transition_smoothness_score: 96,
     visual_continuity_score: 97,
@@ -821,6 +849,10 @@ function buildDiagnostics(
       { id: "blink-readability", label: "Blink readability", score: visualFidelityDiagnostics.blink_readability_score, status: "stable", summary: "The GIF includes a deterministic partial blink without removing anime eye identity." },
       { id: "gaze-stability", label: "Gaze stability", score: visualFidelityDiagnostics.gaze_stability_score, status: "stable", summary: "Small gaze offsets keep highlights and pupils forward-facing and readable." },
       { id: "face-liveliness", label: "Face liveliness", score: visualFidelityDiagnostics.face_liveliness_score, status: "stable", summary: "Blink, gaze, eyebrow, cheek, and mouth changes add bounded facial life." },
+      { id: "hair-motion", label: "Hair secondary motion", score: visualFidelityDiagnostics.hair_motion_score, status: "stable", summary: "Rear hair, bangs, side locks, and highlight streaks receive bounded deterministic sway." },
+      { id: "cloth-motion", label: "Cloth secondary motion", score: visualFidelityDiagnostics.cloth_motion_score, status: "stable", summary: "Jacket panels, sleeves, cuffs, and lower fabric accents use coordinated cloth sway." },
+      { id: "secondary-motion-continuity", label: "Secondary motion continuity", score: visualFidelityDiagnostics.secondary_motion_continuity, status: "stable", summary: "Hair and cloth motion share a smooth deterministic phase with no random jitter." },
+      { id: "motion-jitter-risk", label: "Motion jitter risk", score: visualFidelityDiagnostics.motion_jitter_risk === "LOW" ? 96 : visualFidelityDiagnostics.motion_jitter_risk === "MEDIUM" ? 76 : 48, status: visualFidelityDiagnostics.motion_jitter_risk === "LOW" ? "stable" : "watch", summary: `Secondary motion jitter risk: ${visualFidelityDiagnostics.motion_jitter_risk}.` },
       { id: "scene-cohesion", label: "Anime character scene cohesion", score: visualFidelityDiagnostics.background_separation, status: "stable", summary: "Background supports the character instead of dominating." },
     ],
     artifact_diagnostics: [
@@ -857,6 +889,15 @@ function buildDiagnostics(
       `eyebrow_readability_score=${visualFidelityDiagnostics.eyebrow_readability_score}`,
       `expression_frame_consistency=${visualFidelityDiagnostics.expression_frame_consistency}`,
       `face_liveliness_score=${visualFidelityDiagnostics.face_liveliness_score}`,
+      `hair_motion_score=${visualFidelityDiagnostics.hair_motion_score}`,
+      `bang_motion_readability=${visualFidelityDiagnostics.bang_motion_readability}`,
+      `side_lock_continuity=${visualFidelityDiagnostics.side_lock_continuity}`,
+      `rear_hair_settle_score=${visualFidelityDiagnostics.rear_hair_settle_score}`,
+      `cloth_motion_score=${visualFidelityDiagnostics.cloth_motion_score}`,
+      `jacket_sway_readability=${visualFidelityDiagnostics.jacket_sway_readability}`,
+      `lower_fabric_motion_score=${visualFidelityDiagnostics.lower_fabric_motion_score}`,
+      `secondary_motion_continuity=${visualFidelityDiagnostics.secondary_motion_continuity}`,
+      `motion_jitter_risk=${visualFidelityDiagnostics.motion_jitter_risk}`,
       `visual_fidelity_score=${visualFidelityDiagnostics.visual_fidelity_score}`,
       `fidelity_tier=${visualFidelityDiagnostics.fidelity_tier}`,
     ],
@@ -939,6 +980,10 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
   const expressionSequence = buildAnimeExpressionSequence({ profile: input.profile, expression: input.expressionTemplate, frameCount });
   const expressionSummary = summarizeAnimeExpressionDiagnostics(expressionSequence);
   const diagnosticExpressionState = buildAnimeExpressionState({ profile: input.profile, expression: input.expressionTemplate, frameIndex: 1, frameCount });
+  const motionSequence = buildAnimeMotionContinuitySequence({ frameCount, posePreset: diagnosticPosePreset });
+  const secondaryMotionSequence = buildAnimeSecondaryMotionSequence({ profile: input.profile, frameCount, expressionStates: expressionSequence, motionPlans: motionSequence });
+  const secondaryMotionSummary = summarizeAnimeSecondaryMotionDiagnostics(secondaryMotionSequence);
+  const diagnosticSecondaryMotionState = buildAnimeSecondaryMotionState({ profile: input.profile, frameIndex: 2, frameCount, expressionState: expressionSequence[2], motionPlan: motionSequence[2] });
   const visualFidelityDiagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
     eyePlan: buildAnimeEyeRenderPlan({ profile: input.profile, expression: input.expressionTemplate }),
@@ -955,6 +1000,18 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
       mouthReadabilityScore: expressionSummary.mouth_readability_score,
       eyebrowReadabilityScore: expressionSummary.eyebrow_readability_score,
       faceLivelinessScore: expressionSummary.face_liveliness_score,
+    },
+    secondaryMotionState: {
+      ...diagnosticSecondaryMotionState,
+      hairMotionScore: secondaryMotionSummary.hair_motion_score,
+      bangMotionReadability: secondaryMotionSummary.bang_motion_readability,
+      sideLockContinuity: secondaryMotionSummary.side_lock_continuity,
+      rearHairSettleScore: secondaryMotionSummary.rear_hair_settle_score,
+      clothMotionScore: secondaryMotionSummary.cloth_motion_score,
+      jacketSwayReadability: secondaryMotionSummary.jacket_sway_readability,
+      lowerFabricMotionScore: secondaryMotionSummary.lower_fabric_motion_score,
+      secondaryMotionContinuity: secondaryMotionSummary.secondary_motion_continuity,
+      motionJitterRisk: secondaryMotionSummary.motion_jitter_risk,
     },
     truthCheck,
     outfitReadability: diagnosticBodyPlan.outfitFlowScore,
@@ -998,8 +1055,8 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     visualReviewNotes: [
       "A deterministic 2D anime character render is the primary subject with early anime fidelity active.",
       "The first PNG should show a softened anime face shape, layered hair, large reflective eyes, expression-driven eyebrows and mouth, planned shoulders, tapered torso, segmented arms, simplified palms, cuffs, separated lower legs, grounded boots, and jacket silhouette for the selected profile.",
-      "The GIF should preserve stance identity with bounded fabric sway, a deterministic partial blink, subtle gaze settle, and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
-      "Body/pose/motion/expression polish is early deterministic raster art, not cinematic anime quality, detailed hand anatomy, dialogue, lip-sync, or neural motion synthesis.",
+      "The GIF should preserve stance identity with bounded fabric sway, deterministic partial blink, subtle gaze settle, coordinated hair sway, bang/side-lock motion, sleeve/cuff sway, lower fabric motion, and reduced frame popping, but it is still early deterministic raster motion rather than cinematic animation.",
+      "Body/pose/motion/expression/secondary-motion polish is early deterministic raster art, not cinematic anime quality, detailed hand anatomy, dialogue, lip-sync, physics simulation, or neural motion synthesis.",
       "The beacon/chamber is rendered as supporting background only.",
       `Visual fidelity tier: ${visualFidelityDiagnostics.fidelity_tier} (${visualFidelityDiagnostics.visual_fidelity_score}/100).`,
       truthCheck.fallback_primitive_dominance ? "Fallback primitive dominance detected; do not claim success." : "Cube/beacon/drone fallback dominance is absent for this character render package.",
@@ -1070,6 +1127,15 @@ export async function executeAnimeCharacterPrimitiveRender(input: {
     `Eyebrow readability score: ${visualFidelityDiagnostics.eyebrow_readability_score}/100`,
     `Expression frame consistency: ${visualFidelityDiagnostics.expression_frame_consistency}/100`,
     `Face liveliness score: ${visualFidelityDiagnostics.face_liveliness_score}/100`,
+    `Hair motion score: ${visualFidelityDiagnostics.hair_motion_score}/100`,
+    `Bang motion readability: ${visualFidelityDiagnostics.bang_motion_readability}/100`,
+    `Side-lock continuity: ${visualFidelityDiagnostics.side_lock_continuity}/100`,
+    `Rear hair settle score: ${visualFidelityDiagnostics.rear_hair_settle_score}/100`,
+    `Cloth motion score: ${visualFidelityDiagnostics.cloth_motion_score}/100`,
+    `Jacket sway readability: ${visualFidelityDiagnostics.jacket_sway_readability}/100`,
+    `Lower fabric motion score: ${visualFidelityDiagnostics.lower_fabric_motion_score}/100`,
+    `Secondary motion continuity: ${visualFidelityDiagnostics.secondary_motion_continuity}/100`,
+    `Motion jitter risk: ${visualFidelityDiagnostics.motion_jitter_risk}`,
     "",
     `First PNG to inspect: ${visualReviewPackage.firstPngToInspect ?? "none"}`,
     `GIF to inspect: ${visualReviewPackage.gifToInspect ?? "none"}`,

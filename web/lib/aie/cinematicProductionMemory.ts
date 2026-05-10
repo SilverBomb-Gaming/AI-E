@@ -1790,6 +1790,10 @@ export type CinematicGovernedPreviewQualityIndicatorId =
   | "blink-readability"
   | "gaze-stability"
   | "face-liveliness"
+  | "hair-motion"
+  | "cloth-motion"
+  | "secondary-motion-continuity"
+  | "motion-jitter-risk"
   | "reveal-focus-preservation"
   | "drone-response-focus"
   | "aftermath-focus-balance"
@@ -2006,6 +2010,15 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   eyebrow_readability_score?: number;
   expression_frame_consistency?: number;
   face_liveliness_score?: number;
+  hair_motion_score?: number;
+  bang_motion_readability?: number;
+  side_lock_continuity?: number;
+  rear_hair_settle_score?: number;
+  cloth_motion_score?: number;
+  jacket_sway_readability?: number;
+  lower_fabric_motion_score?: number;
+  secondary_motion_continuity?: number;
+  motion_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
   lighting_stability_score: number;
   lighting_consistency_score: number;
   coherence_anchor_strength: number;
@@ -2055,6 +2068,15 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
     eyebrow_readability_score?: number;
     expression_frame_consistency?: number;
     face_liveliness_score?: number;
+    hair_motion_score?: number;
+    bang_motion_readability?: number;
+    side_lock_continuity?: number;
+    rear_hair_settle_score?: number;
+    cloth_motion_score?: number;
+    jacket_sway_readability?: number;
+    lower_fabric_motion_score?: number;
+    secondary_motion_continuity?: number;
+    motion_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };
@@ -2230,6 +2252,15 @@ export type CinematicGovernedPreviewDiagnostics = {
   eyebrow_readability_score?: number;
   expression_frame_consistency?: number;
   face_liveliness_score?: number;
+  hair_motion_score?: number;
+  bang_motion_readability?: number;
+  side_lock_continuity?: number;
+  rear_hair_settle_score?: number;
+  cloth_motion_score?: number;
+  jacket_sway_readability?: number;
+  lower_fabric_motion_score?: number;
+  secondary_motion_continuity?: number;
+  motion_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
   continuity_quality_indicators: CinematicGovernedPreviewQualityIndicator[];
   artifact_diagnostics: string[];
   frame_diagnostics: CinematicGovernedPreviewFrameDiagnostic[];
@@ -2275,6 +2306,15 @@ export type CinematicGovernedPreviewDiagnostics = {
     eyebrow_readability_score?: number;
     expression_frame_consistency?: number;
     face_liveliness_score?: number;
+    hair_motion_score?: number;
+    bang_motion_readability?: number;
+    side_lock_continuity?: number;
+    rear_hair_settle_score?: number;
+    cloth_motion_score?: number;
+    jacket_sway_readability?: number;
+    lower_fabric_motion_score?: number;
+    secondary_motion_continuity?: number;
+    motion_jitter_risk?: "LOW" | "MEDIUM" | "HIGH";
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };

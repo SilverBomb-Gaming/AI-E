@@ -10,6 +10,7 @@ import { buildAnimeBodyPlan } from "./animeBodyRenderer";
 import { buildAnimeLowerBodyPlan } from "./animeLowerBodyRenderer";
 import { buildAnimeMotionContinuityPlan } from "./animeMotionContinuity";
 import { buildAnimeExpressionState } from "./animeExpressionRenderer";
+import { buildAnimeSecondaryMotionState } from "./animeSecondaryMotion";
 import { resolveAnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, classifyAnimeVisualFidelity } from "./animeVisualFidelityDiagnostics";
 import type { AnimeCharacterTruthCheck } from "./governedAnimeCharacterState";
@@ -40,6 +41,7 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
   const motionPlan = buildAnimeMotionContinuityPlan({ frameIndex: 2, frameCount: 5, posePreset });
   const lowerBodyPlan = buildAnimeLowerBodyPlan({ profile, bodyPlan, posePreset, motionPlan });
   const expressionState = buildAnimeExpressionState({ profile, expression, frameIndex: 1, frameCount: 5 });
+  const secondaryMotionState = buildAnimeSecondaryMotionState({ profile, frameIndex: 2, frameCount: 5, expressionState, motionPlan });
 
   const diagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile, expression }),
@@ -49,6 +51,7 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
     lowerBodyPlan,
     motionPlan,
     expressionState,
+    secondaryMotionState,
     truthCheck: truthCheck(),
     outfitReadability: bodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
@@ -87,6 +90,15 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
   assert.equal(diagnostics.eyebrow_readability_score >= 85, true);
   assert.equal(diagnostics.expression_frame_consistency >= 90, true);
   assert.equal(diagnostics.face_liveliness_score >= 85, true);
+  assert.equal(diagnostics.hair_motion_score >= 88, true);
+  assert.equal(diagnostics.bang_motion_readability >= 88, true);
+  assert.equal(diagnostics.side_lock_continuity >= 90, true);
+  assert.equal(diagnostics.rear_hair_settle_score >= 88, true);
+  assert.equal(diagnostics.cloth_motion_score >= 86, true);
+  assert.equal(diagnostics.jacket_sway_readability >= 86, true);
+  assert.equal(diagnostics.lower_fabric_motion_score >= 88, true);
+  assert.equal(diagnostics.secondary_motion_continuity >= 90, true);
+  assert.equal(diagnostics.motion_jitter_risk, "LOW");
 });
 
 test("anime visual fidelity diagnostics block fallback dominance", () => {
