@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { getApprovedAnimeCharacterProfileById } from "./animeCharacterProfileRegistry";
-import { selectDefaultAnimeCharacterExpression } from "./animeCharacterPoseTemplates";
+import { selectDefaultAnimeCharacterExpression, selectDefaultAnimeCharacterPose } from "./animeCharacterPoseTemplates";
 import { buildAnimeEyeRenderPlan } from "./animeEyeRenderer";
 import { buildAnimeFaceRenderPlan } from "./animeFaceRenderer";
 import { buildAnimeHairRenderPlan } from "./animeHairRenderer";
+import { buildAnimeBodyPlan } from "./animeBodyRenderer";
+import { resolveAnimePoseLanguagePreset } from "./animePoseLanguage";
 import { buildAnimeVisualFidelityDiagnostics, classifyAnimeVisualFidelity } from "./animeVisualFidelityDiagnostics";
 import type { AnimeCharacterTruthCheck } from "./governedAnimeCharacterState";
 
@@ -22,18 +24,28 @@ function truthCheck(overrides?: Partial<AnimeCharacterTruthCheck>): AnimeCharact
 }
 
 test("anime visual fidelity diagnostics classify early anime tier", () => {
-  const profile = getApprovedAnimeCharacterProfileById("CHARACTER_001");
+  const profile = getApprovedAnimeCharacterProfileById("CHARACTER_005");
   assert.ok(profile);
   const expression = selectDefaultAnimeCharacterExpression(profile.expressionDefault);
+  const poseTemplate = selectDefaultAnimeCharacterPose(profile.poseDefault);
+  const bodyPlan = buildAnimeBodyPlan({
+    profile,
+    posePreset: resolveAnimePoseLanguagePreset({ profile, poseTemplate }),
+    frameIndex: 2,
+  });
 
   const diagnostics = buildAnimeVisualFidelityDiagnostics({
     facePlan: buildAnimeFaceRenderPlan({ profile, expression }),
     eyePlan: buildAnimeEyeRenderPlan({ profile, expression }),
     hairPlan: buildAnimeHairRenderPlan({ profile, frameIndex: 2 }),
+    bodyPlan,
     truthCheck: truthCheck(),
-    outfitReadability: 94,
+    outfitReadability: bodyPlan.outfitFlowScore,
     backgroundSeparation: 94,
-    poseReadability: 92,
+    poseReadability: bodyPlan.stanceBalanceScore,
+    limbContinuityScore: 94,
+    handPositionStability: 93,
+    poseFrameConsistency: 95,
   });
 
   assert.equal(diagnostics.fidelity_tier, "EARLY_ANIME");
@@ -41,6 +53,15 @@ test("anime visual fidelity diagnostics classify early anime tier", () => {
   assert.equal(diagnostics.anime_face_readability >= 95, true);
   assert.equal(diagnostics.anime_eye_quality >= 95, true);
   assert.equal(diagnostics.layered_hair_quality >= 94, true);
+  assert.equal(diagnostics.body_silhouette_score >= 88, true);
+  assert.equal(diagnostics.torso_readability_score >= 88, true);
+  assert.equal(diagnostics.arm_readability_score >= 85, true);
+  assert.equal(diagnostics.hand_readability_score >= 80, true);
+  assert.equal(diagnostics.pose_language_score >= 88, true);
+  assert.equal(diagnostics.outfit_flow_score >= 88, true);
+  assert.equal(diagnostics.limb_continuity_score >= 90, true);
+  assert.equal(diagnostics.hand_position_stability >= 90, true);
+  assert.equal(diagnostics.pose_frame_consistency >= 90, true);
 });
 
 test("anime visual fidelity diagnostics block fallback dominance", () => {

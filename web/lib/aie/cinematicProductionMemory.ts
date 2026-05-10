@@ -1780,6 +1780,8 @@ export type CinematicGovernedPreviewQualityIndicatorId =
   | "staging-camera-compatibility"
   | "focus-continuity"
   | "subject-readability"
+  | "body-silhouette"
+  | "outfit-flow"
   | "reveal-focus-preservation"
   | "drone-response-focus"
   | "aftermath-focus-balance"
@@ -1971,6 +1973,16 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
   environment_coherence_score: number;
   silhouette_score: number;
   readability_score: number;
+  body_silhouette_score?: number;
+  torso_readability_score?: number;
+  arm_readability_score?: number;
+  hand_readability_score?: number;
+  pose_language_score?: number;
+  outfit_flow_score?: number;
+  stance_balance_score?: number;
+  limb_continuity_score?: number;
+  hand_position_stability?: number;
+  pose_frame_consistency?: number;
   lighting_stability_score: number;
   lighting_consistency_score: number;
   coherence_anchor_strength: number;
@@ -1995,6 +2007,16 @@ export type CinematicGovernedPreviewFrameDiagnostic = {
     outfit_readability: number;
     background_separation: number;
     pose_readability: number;
+    body_silhouette_score?: number;
+    torso_readability_score?: number;
+    arm_readability_score?: number;
+    hand_readability_score?: number;
+    pose_language_score?: number;
+    outfit_flow_score?: number;
+    stance_balance_score?: number;
+    limb_continuity_score?: number;
+    hand_position_stability?: number;
+    pose_frame_consistency?: number;
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };
@@ -2145,6 +2167,16 @@ export type CinematicGovernedPreviewDiagnostics = {
   object_fidelity_score: number;
   scene_composition_score: number;
   scene_believability_score: number;
+  body_silhouette_score?: number;
+  torso_readability_score?: number;
+  arm_readability_score?: number;
+  hand_readability_score?: number;
+  pose_language_score?: number;
+  outfit_flow_score?: number;
+  stance_balance_score?: number;
+  limb_continuity_score?: number;
+  hand_position_stability?: number;
+  pose_frame_consistency?: number;
   continuity_quality_indicators: CinematicGovernedPreviewQualityIndicator[];
   artifact_diagnostics: string[];
   frame_diagnostics: CinematicGovernedPreviewFrameDiagnostic[];
@@ -2165,6 +2197,16 @@ export type CinematicGovernedPreviewDiagnostics = {
     outfit_readability: number;
     background_separation: number;
     pose_readability: number;
+    body_silhouette_score?: number;
+    torso_readability_score?: number;
+    arm_readability_score?: number;
+    hand_readability_score?: number;
+    pose_language_score?: number;
+    outfit_flow_score?: number;
+    stance_balance_score?: number;
+    limb_continuity_score?: number;
+    hand_position_stability?: number;
+    pose_frame_consistency?: number;
     visual_fidelity_score: number;
     fidelity_tier: "BLOCKED" | "PRIMITIVE" | "EARLY_ANIME";
   };

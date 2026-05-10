@@ -194,6 +194,12 @@ test("approved character render executes bounded preview and reports anime diagn
   assert.equal(report.diagnostics?.active_focus_subject, "CHARACTER_FACE");
   assert.equal(report.diagnostics?.anime_visual_fidelity_diagnostics?.fidelity_tier, "EARLY_ANIME");
   assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.visual_fidelity_score ?? 0) >= 90, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.body_silhouette_score ?? 0) >= 88, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.torso_readability_score ?? 0) >= 88, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.arm_readability_score ?? 0) >= 85, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.hand_readability_score ?? 0) >= 80, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.outfit_flow_score ?? 0) >= 88, true);
+  assert.equal((report.diagnostics?.anime_visual_fidelity_diagnostics?.pose_frame_consistency ?? 0) >= 90, true);
   assert.equal(report.diagnostics?.artifact_diagnostics.some((entry) => entry === "fidelity_tier=EARLY_ANIME"), true);
   assert.equal(report.visualReviewPackage?.reviewLabel, "USER_VISUAL_CHECK_READY");
   assert.equal(report.characterApproved, true);
@@ -246,7 +252,41 @@ test("character-first renderer writes inspectable PNG GIF manifest diagnostics a
   assert.equal(manifest.anime_character_truth_check.fallback_primitive_dominance, false);
   assert.equal(manifest.anime_visual_fidelity_diagnostics.fidelity_tier, "EARLY_ANIME");
   assert.equal(manifest.anime_visual_fidelity_diagnostics.visual_fidelity_score >= 90, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.body_silhouette_score >= 88, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.torso_readability_score >= 88, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.arm_readability_score >= 85, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.hand_readability_score >= 80, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.pose_language_score >= 88, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.outfit_flow_score >= 88, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.limb_continuity_score >= 90, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.hand_position_stability >= 90, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.pose_frame_consistency >= 90, true);
   assert.equal(manifest.first_png_to_inspect.endsWith("anime_character_frame_001.png"), true);
+});
+
+test("solar crimson render exports confident body pose polish diagnostics", async () => {
+  const root = await createTempRoot();
+  const profile = getApprovedAnimeCharacterProfileById("CHARACTER_005");
+  assert.ok(profile);
+  const result = await executeAnimeCharacterPrimitiveRender({
+    root,
+    profile,
+    poseTemplate: selectDefaultAnimeCharacterPose(profile.poseDefault),
+    expressionTemplate: selectDefaultAnimeCharacterExpression(profile.expressionDefault),
+    packageGifPreview: true,
+  });
+
+  const manifest = JSON.parse(await readFile(path.join(root, result.manifestPath ?? ""), "utf8"));
+  assert.equal(manifest.character_profile_id, "CHARACTER_005");
+  assert.equal(manifest.character_label, "SOLAR_CRIMSON_SENTINEL");
+  assert.equal(manifest.anime_character_truth_check.fallback_primitive_dominance, false);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.body_silhouette_score >= 88, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.torso_readability_score >= 88, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.arm_readability_score >= 85, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.hand_readability_score >= 80, true);
+  assert.equal(manifest.anime_visual_fidelity_diagnostics.outfit_flow_score >= 88, true);
+  assert.equal(result.diagnostics.frame_diagnostics.every((entry) => (entry.pose_frame_consistency ?? 0) >= 90), true);
+  assert.equal(result.visualReviewPackage.visualReviewNotes.some((entry) => entry.includes("planned shoulders")), true);
 });
 
 test("fallback primitive truth check cannot pass anime character compatibility", () => {
