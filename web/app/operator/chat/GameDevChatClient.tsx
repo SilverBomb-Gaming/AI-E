@@ -34,6 +34,16 @@ function renderMarkdownLite(content: string) {
   });
 }
 
+function routingLabel(route: GameDevChatMessage["route"]): string {
+  if (!route) {
+    return "Conversational";
+  }
+  if (route.conversationMode && route.conversationMode !== "GAME_DEV_TASK" && route.conversationMode !== "CODEX_HANDOFF_REQUEST") {
+    return "Conversational";
+  }
+  return route.unityFirst ? "Unity-first" : "General";
+}
+
 export function GameDevChatClient() {
   const [messages, setMessages] = useState<GameDevChatMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -41,7 +51,7 @@ export function GameDevChatClient() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
   const latestRoute = latestAssistant?.route;
-  const scaffoldStatus = latestAssistant ? "✅ REAL CHAT MODE ACTIVE" : "Ready for natural game-dev chat";
+  const scaffoldStatus = latestAssistant ? "✅ CONVERSATIONAL_ORCHESTRATION_ACTIVE" : "Ready for natural game-dev chat";
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -50,9 +60,10 @@ export function GameDevChatClient() {
   const canSend = draft.trim().length > 0 && !isThinking;
 
   const modeSummary = useMemo(() => ({
-    mode: latestRoute?.mode ?? "Waiting for message",
+    conversationMode: latestRoute?.conversationMode ?? latestRoute?.mode ?? "Waiting for message",
+    taskMode: latestRoute?.taskMode,
     intent: latestRoute?.detectedIntent ?? "No intent classified yet",
-    route: latestRoute?.unityFirst ? "Unity-first routing" : "General game-dev routing",
+    route: latestRoute ? routingLabel(latestRoute) : "Conversational",
     safety: latestRoute?.safetyStatus ?? "SAFE_PLANNING_ONLY",
     next: latestRoute?.suggestedNextAction ?? "Send a natural game-development message.",
   }), [latestRoute]);
@@ -73,9 +84,10 @@ export function GameDevChatClient() {
     setMessages((current) => [...current, userMessage]);
     setDraft("");
     setIsThinking(true);
+    const previousRoute = latestAssistant?.route;
 
     window.setTimeout(() => {
-      const response = planGameDevChatResponse(content);
+      const response = planGameDevChatResponse(content, { previousRoute });
       const assistantMessage: GameDevChatMessage = {
         id: createId("assistant"),
         role: "assistant",
@@ -110,7 +122,7 @@ export function GameDevChatClient() {
             <div className="mt-1 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Talk naturally. Build safely.</h1>
-                <p className="mt-1 max-w-2xl text-sm text-slate-600">AI-E classifies your game-dev request, routes Unity-first when appropriate, and prepares safe next steps without pretending it edited files.</p>
+                <p className="mt-1 max-w-2xl text-sm text-slate-600">AI-E understands conversational state first, then routes game-dev tasks Unity-first when appropriate without pretending it edited files.</p>
               </div>
               <span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">{scaffoldStatus}</span>
             </div>
@@ -121,7 +133,7 @@ export function GameDevChatClient() {
               <div className="mx-auto flex h-full max-w-3xl flex-col justify-center py-16">
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-5">
                   <h2 className="text-lg font-semibold text-slate-950">What are we making today?</h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">Ask like you would in ChatGPT: tuning, bugs, systems, design ideas, Unity planning, or a Codex handoff. This mode plans and routes; it does not fake implementation.</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">Say hello, ask what AI-E can do, continue a thread, report a failed attempt, or ask for tuning, bugs, design ideas, Unity planning, or a Codex handoff.</p>
                   <div className="mt-4 grid gap-2 md:grid-cols-2">
                     {starterPrompts.map((prompt) => (
                       <button
@@ -146,9 +158,10 @@ export function GameDevChatClient() {
                       </div>
                       {message.route && (
                         <div className="mt-3 grid gap-2 rounded-md border border-slate-200 bg-white p-3 text-xs text-slate-700 md:grid-cols-2">
-                          <div><span className="font-semibold text-slate-950">Mode:</span> {message.route.mode}</div>
+                          <div><span className="font-semibold text-slate-950">Conversation Mode:</span> {message.route.conversationMode ?? message.route.mode}</div>
+                          {message.route.taskMode && <div><span className="font-semibold text-slate-950">Task Mode:</span> {message.route.taskMode}</div>}
                           <div><span className="font-semibold text-slate-950">Intent:</span> {message.route.detectedIntent}</div>
-                          <div><span className="font-semibold text-slate-950">Routing:</span> {message.route.unityFirst ? "Unity-first" : "General"}</div>
+                          <div><span className="font-semibold text-slate-950">Routing:</span> {routingLabel(message.route)}</div>
                           <div><span className="font-semibold text-slate-950">Safety:</span> {message.route.safetyStatus}</div>
                         </div>
                       )}
@@ -198,15 +211,25 @@ export function GameDevChatClient() {
                 Send
               </button>
             </div>
-            <p className="mx-auto mt-2 max-w-3xl text-xs text-slate-500">Enter sends. Shift+Enter adds a new line. Chat mode plans and prepares handoffs; implementation still needs explicit action.</p>
+            <p className="mx-auto mt-2 max-w-3xl text-xs text-slate-500">Enter sends. Shift+Enter adds a new line. Conversation mode answers safely; implementation still needs explicit action.</p>
           </form>
         </section>
 
         <aside className="hidden w-80 flex-col gap-3 lg:flex">
           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-sky-700">Current Mode</p>
-            <h2 className="mt-2 text-lg font-semibold text-slate-950">{modeSummary.mode}</h2>
+            <h2 className="mt-2 text-lg font-semibold text-slate-950">{modeSummary.conversationMode}</h2>
             <dl className="mt-4 space-y-3 text-sm">
+              <div>
+                <dt className="font-semibold text-slate-950">Conversation Mode</dt>
+                <dd className="mt-1 text-slate-600">{modeSummary.conversationMode}</dd>
+              </div>
+              {modeSummary.taskMode && (
+                <div>
+                  <dt className="font-semibold text-slate-950">Task Mode</dt>
+                  <dd className="mt-1 text-slate-600">{modeSummary.taskMode}</dd>
+                </div>
+              )}
               <div>
                 <dt className="font-semibold text-slate-950">Detected Intent</dt>
                 <dd className="mt-1 text-slate-600">{modeSummary.intent}</dd>
@@ -227,7 +250,7 @@ export function GameDevChatClient() {
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-600 shadow-sm">
             <p className="font-semibold text-slate-950">Truthful Scope</p>
-            <p className="mt-2">This page is a real chat UI with deterministic classification and planning. It does not autonomously edit files, control Unity, run playtests, or claim implementation.</p>
+            <p className="mt-2">This page is a real chat UI with conversational orchestration, deterministic task classification, and planning. It does not autonomously edit files, control Unity, run playtests, or claim implementation.</p>
           </div>
         </aside>
       </div>

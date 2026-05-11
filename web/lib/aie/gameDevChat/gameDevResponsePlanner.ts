@@ -1,9 +1,9 @@
 import { generateGameDevCodexHandoff } from "./gameDevHandoffGenerator";
-import { classifyGameDevIntent } from "./gameDevIntentClassifier";
+import { orchestrateGameDevChat, type GameDevConversationContext } from "./gameDevConversationalOrchestrator";
 import type { GameDevChatResponse, GameDevChatRoute } from "./gameDevChatTypes";
 
 function openingFor(route: GameDevChatRoute): string {
-  switch (route.mode) {
+  switch (route.taskMode ?? route.mode) {
     case "UNITY_IMPLEMENTATION_PLAN":
       return "Got it — this sounds like a Unity implementation planning task.";
     case "GAME_DESIGN_IDEA":
@@ -73,10 +73,10 @@ function bulletsFor(message: string, route: GameDevChatRoute): string[] {
   if (lower.includes("collectible")) {
     return collectibleAdvice();
   }
-  if (route.mode === "GAME_DESIGN_IDEA" || route.mode === "CLARIFICATION_NEEDED") {
+  if (route.taskMode === "GAME_DESIGN_IDEA" || route.taskMode === "CLARIFICATION_NEEDED" || route.mode === "CLARIFICATION_NEEDED") {
     return ideaAdvice();
   }
-  if (route.mode === "BUG_FIX_REQUEST") {
+  if (route.taskMode === "BUG_FIX_REQUEST" || route.mode === "BUG_FIX_REQUEST") {
     return [
       "Capture the exact symptom, when it started, and whether it reproduces from a clean scene load.",
       "Identify the smallest script or prefab likely involved before editing.",
@@ -98,17 +98,63 @@ function clarificationFor(message: string, route: GameDevChatRoute): string {
   if (lower.includes("enemy") || lower.includes("patrol")) {
     return "One useful question: should the enemy patrol fixed waypoints, a NavMesh path, or a simple left-right platform route?";
   }
-  if (route.mode === "GAME_DESIGN_IDEA" || route.mode === "CLARIFICATION_NEEDED") {
+  if (route.taskMode === "GAME_DESIGN_IDEA" || route.taskMode === "CLARIFICATION_NEEDED" || route.mode === "CLARIFICATION_NEEDED") {
     return "One useful question: what should the player do every 30 seconds in the first playable prototype?";
   }
-  if (route.mode === "BUG_FIX_REQUEST") {
+  if (route.taskMode === "BUG_FIX_REQUEST" || route.mode === "BUG_FIX_REQUEST") {
     return "One useful question: what exact action reproduces the bug, and what error appears in the Unity Console?";
   }
   return "One useful question: are you working in Unity, and which script or scene should this connect to?";
 }
 
+function formatConversationalResponse(route: GameDevChatRoute): string | undefined {
+  switch (route.mode) {
+    case "GREETING":
+      return "Hey — I’m here. What are we working on today: game design, Unity implementation, debugging, or a Codex handoff?";
+    case "THANKS":
+      return "You’re welcome. When you’re ready, send the next game idea, Unity issue, bug report, or handoff request and I’ll route it safely.";
+    case "SESSION_CLOSE":
+      return "Goodnight — we can pick this back up later. I won’t claim any files changed or Unity validation happened from this chat alone.";
+    case "CAPABILITY_HELP":
+      return [
+        "I can help as a game-dev planning assistant.",
+        "",
+        "- Shape game ideas into a first playable loop.",
+        "- Plan Unity implementation steps without pretending to edit files.",
+        "- Turn bugs or playtest feedback into reproduction and validation steps.",
+        "- Prepare bounded Codex handoffs when you explicitly ask for implementation handoff.",
+        "",
+        "What do you want to work on first: design, Unity implementation, debugging, or a Codex handoff?",
+      ].join("\n");
+    case "CONTINUE_PREVIOUS":
+      return "Yes — we can continue from the previous thread. Tell me whether you want the next planning step, a tighter validation checklist, or a Codex handoff. I’ll keep it non-executing unless you explicitly move into an implementation flow.";
+    case "TROUBLESHOOT_PREVIOUS":
+      return "Got it — let’s troubleshoot the previous attempt. What did you expect, what happened instead, and did Unity show any Console error? I’ll use that to narrow the fix plan before suggesting edits.";
+    case "FRUSTRATION_OR_CONFUSION":
+      return "No problem — let’s slow it down. Tell me the smallest visible symptom or the game feature you were trying to change, and I’ll help turn it into one safe next step.";
+    case "CLARIFICATION_NEEDED":
+      if (!route.taskMode) {
+        if (route.detectedIntent.includes("Continue")) {
+          return "I can continue, but I need the thread first. Tell me what we were working on, or paste the last plan/result, and I’ll pick it up safely from there.";
+        }
+        if (route.detectedIntent.includes("Troubleshooting")) {
+          return "I can troubleshoot that, but I need the missing context first. What did you try, what happened instead, and did Unity show any Console error?";
+        }
+        return "I’m here, but I need one more detail before routing this safely. Are we talking game design, Unity implementation, debugging, playtest feedback, or a Codex handoff?";
+      }
+      return undefined;
+    default:
+      return undefined;
+  }
+}
+
 function formatResponse(message: string, route: GameDevChatRoute, includeHandoff: boolean): string {
-  if (route.mode === "BLOCKED_OR_UNSAFE") {
+  const conversationalResponse = formatConversationalResponse(route);
+  if (conversationalResponse) {
+    return conversationalResponse;
+  }
+
+  if (route.mode === "BLOCKED_OR_UNSAFE" || route.taskMode === "BLOCKED_OR_UNSAFE") {
     return `${openingFor(route)} I can still help reframe it as a safe Unity planning, debugging, or learning task.`;
   }
 
@@ -128,12 +174,12 @@ function formatResponse(message: string, route: GameDevChatRoute, includeHandoff
   ].join("\n");
 }
 
-export function planGameDevChatResponse(message: string): GameDevChatResponse {
-  const route = classifyGameDevIntent(message);
-  const shouldGenerateHandoff = route.mode === "CODEX_HANDOFF_REQUEST";
+export function planGameDevChatResponse(message: string, context?: GameDevConversationContext): GameDevChatResponse {
+  const route = orchestrateGameDevChat(message, context);
+  const shouldGenerateHandoff = route.mode === "CODEX_HANDOFF_REQUEST" || route.taskMode === "CODEX_HANDOFF_REQUEST";
   const codexHandoff = shouldGenerateHandoff ? generateGameDevCodexHandoff(message, route) : undefined;
   const assistantMessage = formatResponse(message, route, shouldGenerateHandoff);
-  const scaffoldStatus = route.safetyStatus === "BLOCKED" ? "PARTIAL_CHAT_MODE" : "REAL_CHAT_MODE_ACTIVE";
+  const scaffoldStatus = route.safetyStatus === "BLOCKED" ? "PARTIAL_CHAT_MODE" : "CONVERSATIONAL_ORCHESTRATION_ACTIVE";
 
   return {
     route,
