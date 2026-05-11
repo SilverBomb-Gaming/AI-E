@@ -98,6 +98,18 @@ export const defaultDevelopmentCampaignLayers: DevelopmentCampaignLayer[] = [
     nextActions: ["Use scoped execution for approved low-risk local commands", "Keep Unity execution deferred until Unity workflow awareness is implemented"],
   },
   {
+    layerId: "APPROVED_EXECUTION_PIPELINE_PHASE1",
+    layerName: "Approved execution pipeline Phase 1",
+    status: "real",
+    priority: 92,
+    dependencyLayerIds: ["SCOPED_SUPERVISED_EXECUTION_RUNTIME_PHASE1", "SAFE_EXECUTION_GUARDRAILS_PHASE1"],
+    riskLevel: "HIGH",
+    truthfulnessRequirements: ["Browser clients may request approval but never spawn commands", "Trusted server runtime must re-check approval, scope, allowlist, timeout, and rollback before dispatch", "Disabled runtime, simulated approval, blocked execution, and real execution must be labeled separately", "Captured stdout, stderr, exit code, elapsed time, and lifecycle states must be shown without inventing success"],
+    completionCriteria: ["Approved execution pipeline controller exists", "Node API route invokes the controller", "Operator chat can approve, reject, and retry prepared requests", "Trusted adapter dispatch remains explicitly enabled only", "Tests cover approval, rejection, blocking, timeout, failure, lifecycle, boundary protection, and real execution"],
+    verificationCommands: ["./node_modules/.bin/tsx.cmd --test lib/aie/approvedExecutionPipeline.test.ts lib/aie/scopedSupervisedExecutionRuntime.test.ts lib/aie/gameDevChat/gameDevChat.test.ts", "npm run build"],
+    nextActions: ["Use approved pipeline only for allowlisted local commands", "Keep unattended autonomy and Unity execution blocked"],
+  },
+  {
     layerId: "UNITY_WORKFLOW_AWARENESS_PHASE1",
     layerName: "Unity workflow awareness Phase 1",
     status: "missing",

@@ -51,6 +51,7 @@ export function GameDevChatClient() {
   const [sessionContext, setSessionContext] = useState<GameDevSessionContext>(() => createInitialGameDevSessionContext());
   const [draft, setDraft] = useState("");
   const [isThinking, setIsThinking] = useState(false);
+  const [executionRequestInFlight, setExecutionRequestInFlight] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
   const latestRoute = latestAssistant?.route;
@@ -129,6 +130,67 @@ export function GameDevChatClient() {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       submitMessage();
+    }
+  }
+
+  async function handleExecutionApproval(messageId: string, approvalStatus: "approved" | "rejected") {
+    const message = messages.find((entry) => entry.id === messageId);
+    if (!message?.scopedExecution || executionRequestInFlight) {
+      return;
+    }
+
+    const requestId = message.scopedExecution.request.executionRequestId;
+    setExecutionRequestInFlight(requestId);
+    try {
+      const response = await fetch("/api/operator/approved-execution", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          request: message.scopedExecution.request,
+          approval: {
+            approvalStatus,
+            approvalSource: "operator_chat",
+            approvedBy: "local-operator",
+            approvedAt: new Date().toISOString(),
+            simulated: true,
+          },
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof payload?.error === "string" ? payload.error : "Execution request failed.");
+      }
+
+      setMessages((current) => current.map((entry) => {
+        if (entry.id !== messageId || !entry.scopedExecution) {
+          return entry;
+        }
+        return {
+          ...entry,
+          scopedExecution: {
+            ...entry.scopedExecution,
+            request: {
+              ...entry.scopedExecution.request,
+              approvalStatus: payload.log.approvalStatus,
+              workingDirectory: payload.log.workingDirectory,
+              executionStatus: payload.log.executionStatus,
+              stdoutSummary: payload.log.stdoutSummary,
+              stderrSummary: payload.log.stderrSummary,
+              exitCode: payload.log.exitCode,
+              startedAt: payload.log.startedAt,
+              completedAt: payload.log.completedAt,
+            },
+            decision: payload.decision,
+            log: payload.log,
+            report: payload,
+          },
+        };
+      }));
+    } catch (error) {
+      const failureMessage = error instanceof Error ? error.message : "Execution request failed.";
+      setMessages((current) => current.map((entry) => entry.id === messageId ? { ...entry, content: `${entry.content}\n\nExecution pipeline error: ${failureMessage}` } : entry));
+    } finally {
+      setExecutionRequestInFlight(null);
     }
   }
 
@@ -223,8 +285,30 @@ export function GameDevChatClient() {
                       )}
                       {message.scopedExecution && (
                         <div className="mt-3 overflow-hidden rounded-md border border-amber-400/30 bg-[#0b1220]">
-                          <div className="border-b border-amber-400/20 px-3 py-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-400/20 px-3 py-2">
                             <span className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-200">Scoped Execution Request</span>
+                            {(!message.scopedExecution.report || message.scopedExecution.report.finalState === "failed" || message.scopedExecution.report.finalState === "timed_out" || message.scopedExecution.report.finalState === "adapter_disabled") && (
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  disabled={executionRequestInFlight === message.scopedExecution.request.executionRequestId}
+                                  onClick={() => handleExecutionApproval(message.id, "approved")}
+                                  className="rounded-md border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+                                >
+                                  {message.scopedExecution.report ? "Retry Approved" : "Approve & Execute"}
+                                </button>
+                                {!message.scopedExecution.report && (
+                                  <button
+                                    type="button"
+                                    disabled={executionRequestInFlight === message.scopedExecution.request.executionRequestId}
+                                    onClick={() => handleExecutionApproval(message.id, "rejected")}
+                                    className="rounded-md border border-rose-300/40 bg-rose-500/10 px-2 py-1 text-xs font-semibold text-rose-100 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-300"
+                                  >
+                                    Reject
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </div>
                           <div className="grid gap-2 p-3 text-xs leading-5 text-zinc-300 md:grid-cols-2">
                             <p><span className="font-semibold text-zinc-100">Request:</span> {message.scopedExecution.request.executionRequestId}</p>
@@ -233,6 +317,18 @@ export function GameDevChatClient() {
                             <p><span className="font-semibold text-zinc-100">Approval:</span> {message.scopedExecution.request.approvalStatus}</p>
                             <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Truthfulness:</span> {message.scopedExecution.log.truthfulnessLabel}</p>
                             {message.scopedExecution.decision.blockedReason && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Blocked:</span> {message.scopedExecution.decision.blockedReason}</p>}
+                            {message.scopedExecution.report && (
+                              <>
+                                <p><span className="font-semibold text-zinc-100">Final State:</span> {message.scopedExecution.report.finalState}</p>
+                                <p><span className="font-semibold text-zinc-100">Runtime:</span> {message.scopedExecution.report.runtimeEnabled ? "enabled" : "disabled"}</p>
+                                <p><span className="font-semibold text-zinc-100">Exit Code:</span> {message.scopedExecution.report.exitCode ?? "none"}</p>
+                                <p><span className="font-semibold text-zinc-100">Elapsed:</span> {message.scopedExecution.report.elapsedMs}ms</p>
+                                <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Approval Source:</span> {message.scopedExecution.report.approvalSourceLabel}</p>
+                                <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Next:</span> {message.scopedExecution.report.recommendedNextAction}</p>
+                                <pre className="md:col-span-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{message.scopedExecution.report.lifecycle.map((event) => `${event.timestamp} ${event.state}: ${event.summary}`).join("\n")}</pre>
+                                {(message.scopedExecution.report.stdout || message.scopedExecution.report.stderr) && <pre className="md:col-span-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{[`stdout:\n${message.scopedExecution.report.stdout || "(empty)"}`, `stderr:\n${message.scopedExecution.report.stderr || "(empty)"}`].join("\n\n")}</pre>}
+                              </>
+                            )}
                           </div>
                         </div>
                       )}

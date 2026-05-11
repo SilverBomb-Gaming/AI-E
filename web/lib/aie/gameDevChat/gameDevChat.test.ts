@@ -145,8 +145,8 @@ test("repo status prompt creates a scoped execution request without running it",
   assert.ok(response.scopedExecution);
   assert.equal(response.scopedExecution.request.command, "git status --short");
   assert.equal(response.scopedExecution.request.approvalStatus, "pending");
-  assert.equal(response.scopedExecution.log.executionStatus, "blocked");
-  assert.equal(response.scopedExecution.log.truthfulnessLabel, "blocked_no_execution");
+  assert.equal(response.scopedExecution.log.executionStatus, "awaiting_approval");
+  assert.equal(response.scopedExecution.log.truthfulnessLabel, "prepared_no_execution");
   assert.match(response.assistantMessage, /did not run the command/i);
   assert.doesNotMatch(response.assistantMessage, /I executed|I ran/i);
 });
@@ -170,7 +170,7 @@ test("build prompt prepares rollback-aware scoped execution request", () => {
   assert.equal(response.scopedExecution.request.command, "npm run build");
   assert.equal(response.scopedExecution.request.mutationPossible, true);
   assert.match(response.scopedExecution.request.rollbackPlan ?? "", /Remove generated .next/);
-  assert.equal(response.scopedExecution.log.executionStatus, "blocked");
+  assert.equal(response.scopedExecution.log.executionStatus, "awaiting_approval");
 });
 
 test("destructive execution prompt is blocked as scoped execution", () => {

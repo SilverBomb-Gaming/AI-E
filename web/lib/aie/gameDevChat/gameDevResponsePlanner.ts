@@ -392,8 +392,8 @@ export function planGameDevChatResponse(message: string, context?: GameDevConver
   if (executionRequest) {
     const decision = evaluateScopedExecutionRequest(executionRequest);
     const log = createScopedExecutionLog(executionRequest, decision, {
-      executionStatus: decision.executable ? "prepared" : "blocked",
-      truthfulnessLabel: decision.executable ? "prepared_no_execution" : "blocked_no_execution",
+      executionStatus: decision.executable ? "prepared" : decision.blockedReason?.includes("approval") ? "awaiting_approval" : "blocked",
+      truthfulnessLabel: decision.executable || decision.blockedReason?.includes("approval") ? "prepared_no_execution" : "blocked_no_execution",
     });
     const route = scopedExecutionRoute(executionRequest.intent, ["scoped-execution", executionRequest.command.split(" ")[0] ?? "command"]);
     const scopedExecution = { request: executionRequest, decision, log };

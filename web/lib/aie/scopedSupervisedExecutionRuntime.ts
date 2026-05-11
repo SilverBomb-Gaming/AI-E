@@ -1,7 +1,7 @@
 export type ScopedExecutionRiskLevel = "LOW" | "MEDIUM" | "HIGH";
 export type ScopedExecutionApprovalStatus = "missing" | "pending" | "approved" | "rejected";
-export type ScopedExecutionStatus = "prepared" | "blocked" | "running" | "completed" | "failed" | "timed_out" | "adapter_disabled";
-export type ScopedExecutionTruthfulnessLabel = "real_execution_completed" | "real_execution_failed" | "blocked_no_execution" | "prepared_no_execution" | "adapter_disabled_no_execution";
+export type ScopedExecutionStatus = "prepared" | "awaiting_approval" | "approved" | "rejected" | "executing" | "blocked" | "completed" | "failed" | "timed_out" | "adapter_disabled";
+export type ScopedExecutionTruthfulnessLabel = "real_execution_completed" | "real_execution_failed" | "blocked_no_execution" | "prepared_no_execution" | "rejected_no_execution" | "simulated_approval" | "adapter_disabled_no_execution";
 
 export type ScopedExecutionAllowedScope = {
   scopeId: string;
@@ -157,7 +157,7 @@ export function evaluateScopedExecutionRequest(request: ScopedExecutionRequest):
 
 export function createScopedExecutionLog(request: ScopedExecutionRequest, decision: ScopedExecutionDecision, output: Partial<Pick<ScopedExecutionLog, "stdoutSummary" | "stderrSummary" | "exitCode" | "startedAt" | "completedAt" | "elapsedMs" | "executionStatus" | "truthfulnessLabel">> = {}): ScopedExecutionLog {
   const executionStatus = output.executionStatus ?? (decision.executable ? "prepared" : "blocked");
-  const commandWasAttempted = executionStatus === "running" || executionStatus === "completed" || executionStatus === "failed" || executionStatus === "timed_out";
+  const commandWasAttempted = executionStatus === "executing" || executionStatus === "completed" || executionStatus === "failed" || executionStatus === "timed_out";
   return {
     ...request,
     executionStatus,

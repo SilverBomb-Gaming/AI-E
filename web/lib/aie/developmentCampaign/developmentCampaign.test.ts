@@ -29,6 +29,7 @@ test("labels scaffolded and missing capabilities truthfully", () => {
   const outcomeLearning = result.capabilityMap.find((layer) => layer.layerId === "OUTCOME_LEARNING_AND_RETROSPECTIVE_MEMORY_PHASE1");
   const longRunningRuntime = result.capabilityMap.find((layer) => layer.layerId === "LONG_RUNNING_CAMPAIGN_RUNTIME_PHASE1");
   const scopedExecution = result.capabilityMap.find((layer) => layer.layerId === "SCOPED_SUPERVISED_EXECUTION_RUNTIME_PHASE1");
+  const approvedPipeline = result.capabilityMap.find((layer) => layer.layerId === "APPROVED_EXECUTION_PIPELINE_PHASE1");
   const safeGuardrails = result.capabilityMap.find((layer) => layer.layerId === "SAFE_EXECUTION_GUARDRAILS_PHASE1");
   const supervisedQueue = result.capabilityMap.find((layer) => layer.layerId === "SUPERVISED_MULTI_STEP_EXECUTION_PHASE1");
   const fullStudio = result.capabilityMap.find((layer) => layer.layerId === "FULL_HANDS_OFF_STUDIO_OPERATION");
@@ -39,6 +40,7 @@ test("labels scaffolded and missing capabilities truthfully", () => {
   assert.equal(outcomeLearning?.status, "real");
   assert.equal(longRunningRuntime?.status, "real");
   assert.equal(scopedExecution?.status, "real");
+  assert.equal(approvedPipeline?.status, "real");
   assert.equal(safeGuardrails?.status, "real");
   assert.equal(supervisedQueue?.status, "real");
   assert.equal(fullStudio?.status, "future");

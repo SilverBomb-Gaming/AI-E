@@ -86,6 +86,7 @@ export type GameDevChatResponse = {
     request: import("../scopedSupervisedExecutionRuntime").ScopedExecutionRequest;
     decision: import("../scopedSupervisedExecutionRuntime").ScopedExecutionDecision;
     log: import("../scopedSupervisedExecutionRuntime").ScopedExecutionLog;
+    report?: import("../approvedExecutionPipeline").ApprovedExecutionReport;
   };
   sessionContext: GameDevSessionContext;
   scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1" | "CONVERSATIONAL_ORCHESTRATION_ACTIVE" | "REAL_CHAT_MODE_ACTIVE" | "PARTIAL_CHAT_MODE" | "CHAT_UI_SCAFFOLD_ACTIVE";
