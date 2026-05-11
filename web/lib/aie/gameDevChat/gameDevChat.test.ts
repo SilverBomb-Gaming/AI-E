@@ -151,6 +151,19 @@ test("repo status prompt creates a scoped execution request without running it",
   assert.doesNotMatch(response.assistantMessage, /I executed|I ran/i);
 });
 
+test("bounded work cycle prompt prepares an operator cycle without running it", () => {
+  const response = planGameDevChatResponse("run the bounded work cycle");
+
+  assert.equal(response.route.mode, "OPERATOR_WORK_CYCLE_REQUEST");
+  assert.ok(response.workCycle);
+  assert.equal(response.workCycle.request.approvalStatus, "pending");
+  assert.equal(response.workCycle.request.cycleStatus, "prepared");
+  assert.equal(response.workCycle.request.retryLimit, 1);
+  assert.equal(response.workCycle.request.targetFiles[0], "runner_artifacts/operator_work_cycle/latest_cycle_request.txt");
+  assert.match(response.assistantMessage, /no cycle ran from the chat planner/i);
+  assert.doesNotMatch(response.assistantMessage, /I executed|I mutated|I validated/i);
+});
+
 test("test run prompt prepares an approved-runtime request rather than fake execution", () => {
   const response = planGameDevChatResponse("run the tests");
 

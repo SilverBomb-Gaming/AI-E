@@ -2,7 +2,7 @@ export type DevelopmentCapabilityStatus = "real" | "scaffolded" | "partial" | "m
 
 export type DevelopmentRiskLevel = "LOW" | "MEDIUM" | "HIGH" | "FUTURE_ONLY";
 
-export type DevelopmentCampaignMilestoneKind = "planning" | "execution" | "mutation" | "validation" | "rollback" | "retry";
+export type DevelopmentCampaignMilestoneKind = "planning" | "execution" | "mutation" | "validation" | "rollback" | "retry" | "checkpoint";
 
 export type DevelopmentCampaignLayer = {
   layerId: string;

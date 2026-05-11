@@ -4,6 +4,7 @@ import { generateGameDevCodexHandoff } from "./gameDevHandoffGenerator";
 import { orchestrateGameDevChat, type GameDevConversationContext } from "./gameDevConversationalOrchestrator";
 import { createInitialGameDevSessionContext, summarizeGameDevSessionContext, updateGameDevSessionContext } from "./gameDevSessionContext";
 import type { GameDevChatResponse, GameDevChatRoute } from "./gameDevChatTypes";
+import type { OperatorWorkCycleRequest } from "../operatorWorkCycleLauncher";
 
 function campaignRoute(): GameDevChatRoute {
   return {
@@ -31,6 +32,68 @@ function scopedExecutionRoute(intent: string, keywords: string[]): GameDevChatRo
     suggestedNextAction: "Approve the prepared scoped execution request in a trusted runtime before running it.",
     keywords,
   };
+}
+
+function workCycleRoute(intent: string): GameDevChatRoute {
+  return {
+    mode: "OPERATOR_WORK_CYCLE_REQUEST",
+    conversationMode: "OPERATOR_WORK_CYCLE_REQUEST",
+    detectedIntent: intent,
+    confidence: "HIGH",
+    unityFirst: false,
+    needsClarification: false,
+    safetyStatus: "SAFE_RESPONSE_ONLY",
+    suggestedNextAction: "Approve the bounded work cycle to launch it through the trusted operator runtime.",
+    keywords: ["operator-work-cycle", "iterative-cycle", "supervised-runtime"],
+  };
+}
+
+function detectOperatorWorkCycleRequest(message: string): OperatorWorkCycleRequest | undefined {
+  if (!/\b(fix the failing tests|continue the repo work|apply the approved patch|run the bounded work cycle|continue the supervised cycle)\b/i.test(message)) {
+    return undefined;
+  }
+  const normalized = message.toLowerCase();
+  const cycleRequestId = `work-cycle-${Math.abs(Array.from(normalized).reduce((hash, char) => ((hash << 5) - hash) + char.charCodeAt(0), 0)).toString(16)}`;
+  const filePath = "runner_artifacts/operator_work_cycle/latest_cycle_request.txt";
+
+  return {
+    cycleRequestId,
+    cycleIntent: "launch bounded supervised operator work cycle",
+    targetFiles: [filePath],
+    validationPlan: { commands: [] },
+    rollbackPlan: "Restore the pre-cycle artifact snapshot captured by the scoped patch runtime.",
+    retryLimit: 1,
+    mutationScope: {
+      approvedDirectories: ["runner_artifacts/operator_work_cycle"],
+      approvedFiles: [filePath],
+    },
+    requiresApproval: true,
+    approvalStatus: "pending",
+    cycleStatus: "prepared",
+    proposedChanges: [{
+      filePath,
+      proposedContent: [`cycleRequestId=${cycleRequestId}`, "intent=launch bounded supervised operator work cycle", "status=prepared", ""].join("\n"),
+    }],
+    retryMode: "supervised_retry",
+    rollbackOnValidationFailure: true,
+    stageHistory: [],
+    checkpointHistory: [],
+  };
+}
+
+function formatWorkCycleResponse(workCycle: NonNullable<GameDevChatResponse["workCycle"]>): string {
+  const request = workCycle.request;
+  return [
+    "I prepared a bounded operator work-cycle request.",
+    "",
+    `Cycle request id: ${request.cycleRequestId}`,
+    `Intent: ${request.cycleIntent}`,
+    `Target files: ${request.targetFiles.join(", ")}`,
+    `Retry limit: ${request.retryLimit}`,
+    `Approval status: ${request.approvalStatus}`,
+    `Cycle status: ${request.cycleStatus}`,
+    "Truthfulness: no cycle ran from the chat planner; approval launches the trusted operator runtime API.",
+  ].join("\n");
 }
 
 function detectScopedExecutionRequest(message: string): ScopedExecutionRequest | undefined {
@@ -388,6 +451,23 @@ function formatCampaignResponse(campaign: ReturnType<typeof runDevelopmentCampai
 }
 
 export function planGameDevChatResponse(message: string, context?: GameDevConversationContext): GameDevChatResponse {
+  const workCycleRequest = detectOperatorWorkCycleRequest(message);
+  if (workCycleRequest) {
+    const route = workCycleRoute(workCycleRequest.cycleIntent);
+    const workCycle = { request: workCycleRequest };
+    const assistantMessage = formatWorkCycleResponse(workCycle);
+    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage);
+
+    return {
+      route,
+      assistantMessage,
+      workCycle,
+      sessionContext,
+      scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1",
+      changedFilesClaimed: false,
+    };
+  }
+
   const executionRequest = detectScopedExecutionRequest(message);
   if (executionRequest) {
     const decision = evaluateScopedExecutionRequest(executionRequest);

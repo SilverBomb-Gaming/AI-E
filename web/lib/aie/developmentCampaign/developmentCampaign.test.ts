@@ -32,6 +32,7 @@ test("labels scaffolded and missing capabilities truthfully", () => {
   const approvedPipeline = result.capabilityMap.find((layer) => layer.layerId === "APPROVED_EXECUTION_PIPELINE_PHASE1");
   const scopedMutation = result.capabilityMap.find((layer) => layer.layerId === "SCOPED_REPO_MUTATION_AND_PATCH_RUNTIME_PHASE1");
   const iterativeCycle = result.capabilityMap.find((layer) => layer.layerId === "ITERATIVE_AUTONOMOUS_WORK_CYCLE_PHASE1");
+  const operatorLauncher = result.capabilityMap.find((layer) => layer.layerId === "OPERATOR_WORK_CYCLE_LAUNCHER_PHASE1");
   const safeGuardrails = result.capabilityMap.find((layer) => layer.layerId === "SAFE_EXECUTION_GUARDRAILS_PHASE1");
   const supervisedQueue = result.capabilityMap.find((layer) => layer.layerId === "SUPERVISED_MULTI_STEP_EXECUTION_PHASE1");
   const fullStudio = result.capabilityMap.find((layer) => layer.layerId === "FULL_HANDS_OFF_STUDIO_OPERATION");
@@ -45,6 +46,7 @@ test("labels scaffolded and missing capabilities truthfully", () => {
   assert.equal(approvedPipeline?.status, "real");
   assert.equal(scopedMutation?.status, "real");
   assert.equal(iterativeCycle?.status, "real");
+  assert.equal(operatorLauncher?.status, "real");
   assert.equal(safeGuardrails?.status, "real");
   assert.equal(supervisedQueue?.status, "real");
   assert.equal(fullStudio?.status, "future");
@@ -80,8 +82,11 @@ test("campaign map distinguishes execution mutation validation rollback and retr
   const result = runDevelopmentCampaignEngine();
   const scopedMutation = result.capabilityMap.find((layer) => layer.layerId === "SCOPED_REPO_MUTATION_AND_PATCH_RUNTIME_PHASE1");
   const iterativeCycle = result.capabilityMap.find((layer) => layer.layerId === "ITERATIVE_AUTONOMOUS_WORK_CYCLE_PHASE1");
+  const operatorLauncher = result.capabilityMap.find((layer) => layer.layerId === "OPERATOR_WORK_CYCLE_LAUNCHER_PHASE1");
 
   assert.deepEqual(scopedMutation?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry"]);
   assert.deepEqual(iterativeCycle?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry"]);
+  assert.deepEqual(operatorLauncher?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry", "checkpoint"]);
+  assert.match(operatorLauncher?.truthfulnessRequirements.join(" ") ?? "", /independentExclusiveExecutionStatus/);
   assert.equal(result.plan.selectedLayer.layerId, "UNITY_WORKFLOW_AWARENESS_PHASE1");
 });

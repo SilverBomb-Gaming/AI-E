@@ -52,6 +52,7 @@ export function GameDevChatClient() {
   const [draft, setDraft] = useState("");
   const [isThinking, setIsThinking] = useState(false);
   const [executionRequestInFlight, setExecutionRequestInFlight] = useState<string | null>(null);
+  const [workCycleInFlight, setWorkCycleInFlight] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
   const latestRoute = latestAssistant?.route;
@@ -110,6 +111,7 @@ export function GameDevChatClient() {
         codexHandoff: response.codexHandoff,
         developmentCampaign: response.developmentCampaign,
         scopedExecution: response.scopedExecution,
+        workCycle: response.workCycle,
         sessionContext: response.sessionContext,
         createdAt: new Date().toISOString(),
       };
@@ -191,6 +193,45 @@ export function GameDevChatClient() {
       setMessages((current) => current.map((entry) => entry.id === messageId ? { ...entry, content: `${entry.content}\n\nExecution pipeline error: ${failureMessage}` } : entry));
     } finally {
       setExecutionRequestInFlight(null);
+    }
+  }
+
+  async function handleWorkCycleApproval(messageId: string, approvalStatus: "approved" | "rejected") {
+    const message = messages.find((entry) => entry.id === messageId);
+    if (!message?.workCycle || workCycleInFlight) {
+      return;
+    }
+
+    const cycleRequestId = message.workCycle.request.cycleRequestId;
+    setWorkCycleInFlight(cycleRequestId);
+    try {
+      const response = await fetch("/api/operator/work-cycle-launch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          request: {
+            ...message.workCycle.request,
+            approvalStatus,
+            cycleStatus: approvalStatus === "approved" ? "approved" : "blocked",
+          },
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof payload?.error === "string" ? payload.error : "Work cycle launch failed.");
+      }
+      setMessages((current) => current.map((entry) => entry.id === messageId && entry.workCycle ? {
+        ...entry,
+        workCycle: {
+          request: payload,
+          summaryReport: payload.summaryReport,
+        },
+      } : entry));
+    } catch (error) {
+      const failureMessage = error instanceof Error ? error.message : "Work cycle launch failed.";
+      setMessages((current) => current.map((entry) => entry.id === messageId ? { ...entry, content: `${entry.content}\n\nWork cycle launcher error: ${failureMessage}` } : entry));
+    } finally {
+      setWorkCycleInFlight(null);
     }
   }
 
@@ -327,6 +368,53 @@ export function GameDevChatClient() {
                                 <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Next:</span> {message.scopedExecution.report.recommendedNextAction}</p>
                                 <pre className="md:col-span-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{message.scopedExecution.report.lifecycle.map((event) => `${event.timestamp} ${event.state}: ${event.summary}`).join("\n")}</pre>
                                 {(message.scopedExecution.report.stdout || message.scopedExecution.report.stderr) && <pre className="md:col-span-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{[`stdout:\n${message.scopedExecution.report.stdout || "(empty)"}`, `stderr:\n${message.scopedExecution.report.stderr || "(empty)"}`].join("\n\n")}</pre>}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {message.workCycle && (
+                        <div className="mt-3 overflow-hidden rounded-md border border-violet-400/30 bg-[#0b1220]">
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-400/20 px-3 py-2">
+                            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-violet-200">Operator Work Cycle</span>
+                            {!message.workCycle.summaryReport && (
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  disabled={workCycleInFlight === message.workCycle.request.cycleRequestId}
+                                  onClick={() => handleWorkCycleApproval(message.id, "approved")}
+                                  className="rounded-md border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+                                >
+                                  Approve Cycle
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={workCycleInFlight === message.workCycle.request.cycleRequestId}
+                                  onClick={() => handleWorkCycleApproval(message.id, "rejected")}
+                                  className="rounded-md border border-rose-300/40 bg-rose-500/10 px-2 py-1 text-xs font-semibold text-rose-100 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-300"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <div className="grid gap-2 p-3 text-xs leading-5 text-zinc-300 md:grid-cols-2">
+                            <p><span className="font-semibold text-zinc-100">Cycle:</span> {message.workCycle.request.cycleRequestId}</p>
+                            <p><span className="font-semibold text-zinc-100">Status:</span> {message.workCycle.summaryReport?.cycleStatus ?? message.workCycle.request.cycleStatus}</p>
+                            <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Intent:</span> {message.workCycle.request.cycleIntent}</p>
+                            <p><span className="font-semibold text-zinc-100">Retry Limit:</span> {message.workCycle.request.retryLimit}</p>
+                            <p><span className="font-semibold text-zinc-100">Targets:</span> {message.workCycle.request.targetFiles.length}</p>
+                            {message.workCycle.summaryReport && (
+                              <>
+                                <p><span className="font-semibold text-zinc-100">Independent Status:</span> {message.workCycle.summaryReport.independentExclusiveExecutionStatus}</p>
+                                <p><span className="font-semibold text-zinc-100">Truthfulness:</span> {message.workCycle.summaryReport.truthfulnessLabel}</p>
+                                <p><span className="font-semibold text-zinc-100">Stages:</span> {message.workCycle.summaryReport.operationalStageCount}</p>
+                                <p><span className="font-semibold text-zinc-100">Checkpoints:</span> {message.workCycle.summaryReport.checkpointCount}</p>
+                                <p><span className="font-semibold text-zinc-100">Retries:</span> {message.workCycle.summaryReport.retryCount}</p>
+                                <p><span className="font-semibold text-zinc-100">Rollbacks:</span> {message.workCycle.summaryReport.rollbackCount}</p>
+                                <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Validation:</span> {message.workCycle.summaryReport.validationState}</p>
+                                <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Summary:</span> {message.workCycle.summaryReport.summary}</p>
+                                <pre className="md:col-span-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{message.workCycle.summaryReport.completedStages.join(" -> ") || "No completed stages reported."}</pre>
                               </>
                             )}
                           </div>

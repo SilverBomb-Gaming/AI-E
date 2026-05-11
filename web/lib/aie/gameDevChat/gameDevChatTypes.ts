@@ -22,6 +22,7 @@ export type GameDevConversationMode =
   | "SESSION_RECAP"
   | "DEVELOPMENT_CAMPAIGN"
   | "SCOPED_EXECUTION_REQUEST"
+  | "OPERATOR_WORK_CYCLE_REQUEST"
   | "FRUSTRATION_OR_CONFUSION"
   | "GAME_DEV_TASK"
   | "CODEX_HANDOFF_REQUEST"
@@ -88,6 +89,10 @@ export type GameDevChatResponse = {
     log: import("../scopedSupervisedExecutionRuntime").ScopedExecutionLog;
     report?: import("../approvedExecutionPipeline").ApprovedExecutionReport;
   };
+  workCycle?: {
+    request: import("../operatorWorkCycleLauncher").OperatorWorkCycleRequest;
+    summaryReport?: import("../operatorWorkCycleLauncher").OperatorWorkCycleSummaryReport;
+  };
   sessionContext: GameDevSessionContext;
   scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1" | "CONVERSATIONAL_ORCHESTRATION_ACTIVE" | "REAL_CHAT_MODE_ACTIVE" | "PARTIAL_CHAT_MODE" | "CHAT_UI_SCAFFOLD_ACTIVE";
   changedFilesClaimed: false;
@@ -101,6 +106,7 @@ export type GameDevChatMessage = {
   codexHandoff?: GameDevCodexHandoff;
   developmentCampaign?: import("../developmentCampaign/developmentCampaignTypes").DevelopmentCampaignEngineResult;
   scopedExecution?: GameDevChatResponse["scopedExecution"];
+  workCycle?: GameDevChatResponse["workCycle"];
   sessionContext?: GameDevSessionContext;
   createdAt: string;
 };
