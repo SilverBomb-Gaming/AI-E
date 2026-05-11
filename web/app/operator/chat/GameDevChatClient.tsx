@@ -2,8 +2,9 @@
 
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
+import { createInitialGameDevSessionContext } from "@/lib/aie/gameDevChat/gameDevSessionContext";
 import { planGameDevChatResponse } from "@/lib/aie/gameDevChat/gameDevResponsePlanner";
-import type { GameDevChatMessage } from "./gameDevChatTypes";
+import type { GameDevChatMessage, GameDevSessionContext } from "./gameDevChatTypes";
 
 const starterPrompts = [
   "I want my player jump to feel less floaty.",
@@ -46,12 +47,13 @@ function routingLabel(route: GameDevChatMessage["route"]): string {
 
 export function GameDevChatClient() {
   const [messages, setMessages] = useState<GameDevChatMessage[]>([]);
+  const [sessionContext, setSessionContext] = useState<GameDevSessionContext>(() => createInitialGameDevSessionContext());
   const [draft, setDraft] = useState("");
   const [isThinking, setIsThinking] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
   const latestRoute = latestAssistant?.route;
-  const scaffoldStatus = latestAssistant ? "✅ CONVERSATIONAL_ORCHESTRATION_ACTIVE" : "Ready for natural game-dev chat";
+  const scaffoldStatus = latestAssistant ? "✅ SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1" : "Ready for session-scoped chat";
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -66,7 +68,12 @@ export function GameDevChatClient() {
     route: latestRoute ? routingLabel(latestRoute) : "Conversational",
     safety: latestRoute?.safetyStatus ?? "SAFE_PLANNING_ONLY",
     next: latestRoute?.suggestedNextAction ?? "Send a natural game-development message.",
-  }), [latestRoute]);
+    memoryStatus: sessionContext.scaffoldStatus,
+    memoryScope: sessionContext.memoryScope,
+    activeSystem: sessionContext.activeGameplaySystem ?? "No active gameplay system yet",
+    currentTask: sessionContext.currentImplementationTask ?? "No active task yet",
+    latestHandoff: sessionContext.latestCodexHandoffTopic ?? "No Codex handoff in this session yet",
+  }), [latestRoute, sessionContext]);
 
   function submitMessage(nextMessage?: string) {
     const content = (nextMessage ?? draft).trim();
@@ -85,17 +92,20 @@ export function GameDevChatClient() {
     setDraft("");
     setIsThinking(true);
     const previousRoute = latestAssistant?.route;
+    const currentSessionContext = sessionContext;
 
     window.setTimeout(() => {
-      const response = planGameDevChatResponse(content, { previousRoute });
+      const response = planGameDevChatResponse(content, { previousRoute, sessionContext: currentSessionContext });
       const assistantMessage: GameDevChatMessage = {
         id: createId("assistant"),
         role: "assistant",
         content: response.assistantMessage,
         route: response.route,
         codexHandoff: response.codexHandoff,
+        sessionContext: response.sessionContext,
         createdAt: new Date().toISOString(),
       };
+      setSessionContext(response.sessionContext);
       setMessages((current) => [...current, assistantMessage]);
       setIsThinking(false);
     }, 220);
@@ -122,7 +132,7 @@ export function GameDevChatClient() {
             <div className="mt-1 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Talk naturally. Build safely.</h1>
-                <p className="mt-1 max-w-2xl text-sm text-slate-600">AI-E understands conversational state first, then routes game-dev tasks Unity-first when appropriate without pretending it edited files.</p>
+                <p className="mt-1 max-w-2xl text-sm text-slate-600">AI-E understands conversational state first, keeps session-scoped context in memory, then routes game-dev tasks Unity-first without pretending it edited files.</p>
               </div>
               <span className="w-fit rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">{scaffoldStatus}</span>
             </div>
@@ -133,7 +143,7 @@ export function GameDevChatClient() {
               <div className="mx-auto flex h-full max-w-3xl flex-col justify-center py-16">
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-5">
                   <h2 className="text-lg font-semibold text-slate-950">What are we making today?</h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">Say hello, ask what AI-E can do, continue a thread, report a failed attempt, or ask for tuning, bugs, design ideas, Unity planning, or a Codex handoff.</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">Say hello, ask what AI-E can do, continue a thread, refine the last idea, use the last handoff, report a failed attempt, or ask for tuning, bugs, design ideas, Unity planning, or a Codex handoff.</p>
                   <div className="mt-4 grid gap-2 md:grid-cols-2">
                     {starterPrompts.map((prompt) => (
                       <button
@@ -163,6 +173,7 @@ export function GameDevChatClient() {
                           <div><span className="font-semibold text-slate-950">Intent:</span> {message.route.detectedIntent}</div>
                           <div><span className="font-semibold text-slate-950">Routing:</span> {routingLabel(message.route)}</div>
                           <div><span className="font-semibold text-slate-950">Safety:</span> {message.route.safetyStatus}</div>
+                          {message.sessionContext && <div><span className="font-semibold text-slate-950">Memory:</span> {message.sessionContext.scaffoldStatus}</div>}
                         </div>
                       )}
                       {message.codexHandoff && (
@@ -211,7 +222,7 @@ export function GameDevChatClient() {
                 Send
               </button>
             </div>
-            <p className="mx-auto mt-2 max-w-3xl text-xs text-slate-500">Enter sends. Shift+Enter adds a new line. Conversation mode answers safely; implementation still needs explicit action.</p>
+            <p className="mx-auto mt-2 max-w-3xl text-xs text-slate-500">Enter sends. Shift+Enter adds a new line. Memory is in-memory and session-scoped; implementation still needs explicit action.</p>
           </form>
         </section>
 
@@ -246,11 +257,36 @@ export function GameDevChatClient() {
                 <dt className="font-semibold text-slate-950">Suggested Next Action</dt>
                 <dd className="mt-1 text-slate-600">{modeSummary.next}</dd>
               </div>
+              <div>
+                <dt className="font-semibold text-slate-950">Scaffold Status</dt>
+                <dd className="mt-1 text-slate-600">{modeSummary.memoryStatus}</dd>
+              </div>
+            </dl>
+          </div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-sky-700">Session Context</p>
+            <dl className="mt-4 space-y-3 text-sm">
+              <div>
+                <dt className="font-semibold text-slate-950">Scope</dt>
+                <dd className="mt-1 text-slate-600">{modeSummary.memoryScope}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-slate-950">Active System</dt>
+                <dd className="mt-1 text-slate-600">{modeSummary.activeSystem}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-slate-950">Current Task</dt>
+                <dd className="mt-1 text-slate-600">{modeSummary.currentTask}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-slate-950">Latest Handoff</dt>
+                <dd className="mt-1 text-slate-600">{modeSummary.latestHandoff}</dd>
+              </div>
             </dl>
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-600 shadow-sm">
             <p className="font-semibold text-slate-950">Truthful Scope</p>
-            <p className="mt-2">This page is a real chat UI with conversational orchestration, deterministic task classification, and planning. It does not autonomously edit files, control Unity, run playtests, or claim implementation.</p>
+            <p className="mt-2">This page is a real chat UI with conversational orchestration, deterministic task classification, and in-memory session context. It does not persist long-term memory, autonomously edit files, control Unity, run playtests, or claim implementation.</p>
           </div>
         </aside>
       </div>

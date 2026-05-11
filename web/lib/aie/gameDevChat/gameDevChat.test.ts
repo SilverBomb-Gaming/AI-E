@@ -15,6 +15,15 @@ test("hello is handled as a greeting before game-dev classification", () => {
   assert.doesNotMatch(response.assistantMessage, /game-development question/);
 });
 
+test("session context starts session-only after a greeting without routing as game-dev help", () => {
+  const response = planGameDevChatResponse("hello?");
+
+  assert.equal(response.route.mode, "GREETING");
+  assert.equal(response.sessionContext.memoryScope, "in-memory-session");
+  assert.equal(response.sessionContext.scaffoldStatus, "SESSION_CONTEXT_MEMORY_PHASE1_SESSION_ONLY");
+  assert.equal(response.changedFilesClaimed, false);
+});
+
 test("thanks is handled as social acknowledgement", () => {
   const response = planGameDevChatResponse("thanks");
 
@@ -46,10 +55,22 @@ test("continue asks for context when no previous task exists", () => {
 
 test("continue uses previous task context when available", () => {
   const previous = planGameDevChatResponse("I want my player jump to feel less floaty.");
-  const response = planGameDevChatResponse("continue", { previousRoute: previous.route });
+  const response = planGameDevChatResponse("continue", { previousRoute: previous.route, sessionContext: previous.sessionContext });
 
   assert.equal(response.route.mode, "CONTINUE_PREVIOUS");
   assert.equal(response.route.safetyStatus, "SAFE_RESPONSE_ONLY");
+  assert.match(response.assistantMessage, /player movement and jump feel|jump/i);
+  assert.match(response.assistantMessage, /session-scoped chat context only/);
+});
+
+test("continue after a Codex handoff resumes the same topic", () => {
+  const handoff = planGameDevChatResponse("Make me a Codex handoff for adding collectibles in Unity.");
+  const response = planGameDevChatResponse("continue", { previousRoute: handoff.route, sessionContext: handoff.sessionContext });
+
+  assert.equal(response.route.mode, "CONTINUE_PREVIOUS");
+  assert.match(response.assistantMessage, /collectible/i);
+  assert.match(response.assistantMessage, /Latest handoff/i);
+  assert.equal(response.sessionContext.latestCodexHandoffTopic?.includes("collectible"), true);
 });
 
 test("that did not work asks for troubleshooting context when no prior task exists", () => {
@@ -61,10 +82,49 @@ test("that did not work asks for troubleshooting context when no prior task exis
 
 test("that did not work troubleshoots previous task when context exists", () => {
   const previous = planGameDevChatResponse("Help me add a basic enemy patrol system.");
-  const response = planGameDevChatResponse("that didn't work", { previousRoute: previous.route });
+  const response = planGameDevChatResponse("that didn't work", { previousRoute: previous.route, sessionContext: previous.sessionContext });
 
   assert.equal(response.route.mode, "TROUBLESHOOT_PREVIOUS");
   assert.equal(response.route.safetyStatus, "SAFE_RESPONSE_ONLY");
+  assert.match(response.assistantMessage, /enemy patrol/i);
+  assert.match(response.assistantMessage, /Console error|log line/i);
+});
+
+test("make it more atmospheric refines the prior design prompt", () => {
+  const design = planGameDevChatResponse("I have an idea for a small exploration game in Unity.");
+  const response = planGameDevChatResponse("make it more atmospheric", { previousRoute: design.route, sessionContext: design.sessionContext });
+
+  assert.equal(response.route.mode, "REFINE_PREVIOUS");
+  assert.match(response.assistantMessage, /atmospheric/i);
+  assert.match(response.assistantMessage, /planning only/i);
+  assert.equal(response.sessionContext.activeGameplaySystem, "game atmosphere and tone");
+});
+
+test("use the last handoff references session handoff when available", () => {
+  const handoff = planGameDevChatResponse("Make me a Codex handoff for adding a basic collectible system in Unity.");
+  const response = planGameDevChatResponse("use the last handoff", { previousRoute: handoff.route, sessionContext: handoff.sessionContext });
+
+  assert.equal(response.route.mode, "USE_LAST_HANDOFF");
+  assert.match(response.assistantMessage, /latest handoff topic/i);
+  assert.match(response.assistantMessage, /collectible/i);
+});
+
+test("what were we doing recaps session context", () => {
+  const previous = planGameDevChatResponse("I want my player jump to feel less floaty.");
+  const response = planGameDevChatResponse("what were we doing?", { previousRoute: previous.route, sessionContext: previous.sessionContext });
+
+  assert.equal(response.route.mode, "SESSION_RECAP");
+  assert.match(response.assistantMessage, /Here’s what I have in this chat session/);
+  assert.match(response.assistantMessage, /jump|player movement/i);
+});
+
+test("no context available produces truthful clarification for vague follow-up", () => {
+  const response = planGameDevChatResponse("make it more atmospheric");
+
+  assert.equal(response.route.mode, "CLARIFICATION_NEEDED");
+  assert.equal(response.route.needsClarification, true);
+  assert.match(response.assistantMessage, /don’t have the earlier idea|session context/i);
+  assert.match(response.assistantMessage, /session-scoped chat context only/);
 });
 
 test("jump tuning request is classified as a Unity implementation plan", () => {
@@ -129,14 +189,16 @@ test("responses do not claim files were edited", () => {
   assert.equal(response.route.mode, "GAME_DEV_TASK");
   assert.equal(response.route.taskMode, "UNITY_IMPLEMENTATION_PLAN");
   assert.equal(response.changedFilesClaimed, false);
-  assert.doesNotMatch(response.assistantMessage, /I (changed|edited|updated|created) .*file/i);
+  assert.doesNotMatch(response.assistantMessage, /I (changed|edited|updated|created|modified) .*file/i);
+  assert.doesNotMatch(response.assistantMessage, /I ran Unity|I validated the scene|I executed/i);
   assert.match(response.assistantMessage, /If you want implementation, I can prepare a Codex handoff/);
 });
 
 test("scaffold status is truthful for active planning chat", () => {
   const response = planGameDevChatResponse("I want my player jump to feel less floaty.");
 
-  assert.equal(response.scaffoldStatus, "CONVERSATIONAL_ORCHESTRATION_ACTIVE");
+  assert.equal(response.scaffoldStatus, "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1");
+  assert.equal(response.sessionContext.scaffoldStatus, "SESSION_CONTEXT_MEMORY_PHASE1_SESSION_ONLY");
   assert.equal(response.route.mode, "GAME_DEV_TASK");
   assert.equal(response.route.taskMode, "UNITY_IMPLEMENTATION_PLAN");
   assert.equal(response.route.safetyStatus, "SAFE_PLANNING_ONLY");

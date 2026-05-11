@@ -1,5 +1,6 @@
 import { generateGameDevCodexHandoff } from "./gameDevHandoffGenerator";
 import { orchestrateGameDevChat, type GameDevConversationContext } from "./gameDevConversationalOrchestrator";
+import { createInitialGameDevSessionContext, summarizeGameDevSessionContext, updateGameDevSessionContext } from "./gameDevSessionContext";
 import type { GameDevChatResponse, GameDevChatRoute } from "./gameDevChatTypes";
 
 function openingFor(route: GameDevChatRoute): string {
@@ -107,7 +108,12 @@ function clarificationFor(message: string, route: GameDevChatRoute): string {
   return "One useful question: are you working in Unity, and which script or scene should this connect to?";
 }
 
-function formatConversationalResponse(route: GameDevChatRoute): string | undefined {
+function scopedMemoryLine(): string {
+  return "I’m using session-scoped chat context only; I do not have durable long-term memory from this page.";
+}
+
+function formatConversationalResponse(route: GameDevChatRoute, context?: GameDevConversationContext): string | undefined {
+  const sessionSummary = summarizeGameDevSessionContext(context?.sessionContext);
   switch (route.mode) {
     case "GREETING":
       return "Hey — I’m here. What are we working on today: game design, Unity implementation, debugging, or a Codex handoff?";
@@ -127,20 +133,75 @@ function formatConversationalResponse(route: GameDevChatRoute): string | undefin
         "What do you want to work on first: design, Unity implementation, debugging, or a Codex handoff?",
       ].join("\n");
     case "CONTINUE_PREVIOUS":
-      return "Yes — we can continue from the previous thread. Tell me whether you want the next planning step, a tighter validation checklist, or a Codex handoff. I’ll keep it non-executing unless you explicitly move into an implementation flow.";
+      return [
+        "Yes — I can continue from the current session context.",
+        "",
+        sessionSummary,
+        "",
+        "A good next step is to tighten the plan into one small validation loop, or ask me to prepare a Codex handoff for that same topic.",
+        scopedMemoryLine(),
+      ].join("\n");
     case "TROUBLESHOOT_PREVIOUS":
-      return "Got it — let’s troubleshoot the previous attempt. What did you expect, what happened instead, and did Unity show any Console error? I’ll use that to narrow the fix plan before suggesting edits.";
+      return [
+        "Got it — let’s troubleshoot the previous attempt in this session.",
+        "",
+        sessionSummary,
+        "",
+        "What did you expect, what happened instead, and did Unity show any Console error or log line? I’ll use that to narrow the fix plan before suggesting edits.",
+        scopedMemoryLine(),
+      ].join("\n");
+    case "REFINE_PREVIOUS":
+      return [
+        "Yes — I can refine the previous direction using this session’s context.",
+        "",
+        sessionSummary,
+        "",
+        "For a more atmospheric pass, I would tune mood first: lighting language, pacing, ambient sound targets, environmental silhouettes, and one strong player-facing emotional goal. This is planning only; no assets, scenes, or files were changed.",
+        scopedMemoryLine(),
+      ].join("\n");
+    case "RETRY_PREVIOUS":
+      return [
+        "Yes — I can try a different planning pass from the current session context.",
+        "",
+        sessionSummary,
+        "",
+        "I would change one lever at a time, preserve the original goal, and define a clearer validation check before any implementation handoff.",
+        scopedMemoryLine(),
+      ].join("\n");
+    case "USE_LAST_HANDOFF":
+      return [
+        "Yes — I can reuse the latest handoff topic from this chat session.",
+        "",
+        sessionSummary,
+        "",
+        "I can turn that topic into a revised handoff, a validation checklist, or a safer implementation brief. This chat has not run Codex or edited files.",
+        scopedMemoryLine(),
+      ].join("\n");
+    case "SESSION_RECAP":
+      return [
+        "Here’s what I have in this chat session:",
+        "",
+        sessionSummary,
+        "",
+        scopedMemoryLine(),
+      ].join("\n");
     case "FRUSTRATION_OR_CONFUSION":
       return "No problem — let’s slow it down. Tell me the smallest visible symptom or the game feature you were trying to change, and I’ll help turn it into one safe next step.";
     case "CLARIFICATION_NEEDED":
       if (!route.taskMode) {
         if (route.detectedIntent.includes("Continue")) {
-          return "I can continue, but I need the thread first. Tell me what we were working on, or paste the last plan/result, and I’ll pick it up safely from there.";
+          return `I can continue, but I don’t have usable session context yet. Tell me what we were working on, or paste the last plan/result, and I’ll pick it up safely from there. ${scopedMemoryLine()}`;
         }
         if (route.detectedIntent.includes("Troubleshooting")) {
-          return "I can troubleshoot that, but I need the missing context first. What did you try, what happened instead, and did Unity show any Console error?";
+          return `I can troubleshoot that, but I don’t have the prior task in this session context yet. What did you try, what happened instead, and did Unity show any Console error? ${scopedMemoryLine()}`;
         }
-        return "I’m here, but I need one more detail before routing this safely. Are we talking game design, Unity implementation, debugging, playtest feedback, or a Codex handoff?";
+        if (route.detectedIntent.includes("handoff")) {
+          return `I don’t have a latest handoff stored in this chat session yet. Ask for a new Codex handoff or paste the handoff you want to reuse. ${scopedMemoryLine()}`;
+        }
+        if (route.detectedIntent.includes("Refinement")) {
+          return `I can refine it, but I don’t have the earlier idea or plan in this session context yet. Send the idea, plan, or target feature and I’ll make a focused refinement pass. ${scopedMemoryLine()}`;
+        }
+        return `I’m here, but I need one more detail before routing this safely. Are we talking game design, Unity implementation, debugging, playtest feedback, or a Codex handoff? ${scopedMemoryLine()}`;
       }
       return undefined;
     default:
@@ -148,8 +209,8 @@ function formatConversationalResponse(route: GameDevChatRoute): string | undefin
   }
 }
 
-function formatResponse(message: string, route: GameDevChatRoute, includeHandoff: boolean): string {
-  const conversationalResponse = formatConversationalResponse(route);
+function formatResponse(message: string, route: GameDevChatRoute, includeHandoff: boolean, context?: GameDevConversationContext): string {
+  const conversationalResponse = formatConversationalResponse(route, context);
   if (conversationalResponse) {
     return conversationalResponse;
   }
@@ -178,13 +239,15 @@ export function planGameDevChatResponse(message: string, context?: GameDevConver
   const route = orchestrateGameDevChat(message, context);
   const shouldGenerateHandoff = route.mode === "CODEX_HANDOFF_REQUEST" || route.taskMode === "CODEX_HANDOFF_REQUEST";
   const codexHandoff = shouldGenerateHandoff ? generateGameDevCodexHandoff(message, route) : undefined;
-  const assistantMessage = formatResponse(message, route, shouldGenerateHandoff);
-  const scaffoldStatus = route.safetyStatus === "BLOCKED" ? "PARTIAL_CHAT_MODE" : "CONVERSATIONAL_ORCHESTRATION_ACTIVE";
+  const assistantMessage = formatResponse(message, route, shouldGenerateHandoff, context);
+  const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage, codexHandoff);
+  const scaffoldStatus = route.safetyStatus === "BLOCKED" ? "PARTIAL_CHAT_MODE" : "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1";
 
   return {
     route,
     assistantMessage,
     codexHandoff,
+    sessionContext,
     scaffoldStatus,
     changedFilesClaimed: false,
   };

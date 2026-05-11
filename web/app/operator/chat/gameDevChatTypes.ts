@@ -1,1 +1,1 @@
-export type { GameDevChatMessage } from "@/lib/aie/gameDevChat/gameDevChatTypes";
+export type { GameDevChatMessage, GameDevSessionContext } from "@/lib/aie/gameDevChat/gameDevChatTypes";

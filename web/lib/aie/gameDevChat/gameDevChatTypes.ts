@@ -16,6 +16,10 @@ export type GameDevConversationMode =
   | "CAPABILITY_HELP"
   | "CONTINUE_PREVIOUS"
   | "TROUBLESHOOT_PREVIOUS"
+  | "REFINE_PREVIOUS"
+  | "RETRY_PREVIOUS"
+  | "USE_LAST_HANDOFF"
+  | "SESSION_RECAP"
   | "FRUSTRATION_OR_CONFUSION"
   | "GAME_DEV_TASK"
   | "CODEX_HANDOFF_REQUEST"
@@ -37,6 +41,27 @@ export type GameDevChatRoute = {
   keywords: string[];
 };
 
+export type GameDevSessionScaffoldStatus =
+  | "SESSION_CONTEXT_MEMORY_PHASE1_SESSION_ONLY"
+  | "SESSION_CONTEXT_MEMORY_PHASE1_EMPTY"
+  | "DURABLE_SESSION_MEMORY_NOT_IMPLEMENTED";
+
+export type GameDevSessionContext = {
+  currentProject?: string;
+  activeUnityContext?: string;
+  activeGameplaySystem?: string;
+  currentImplementationTask?: string;
+  recentUserIntent?: string;
+  unresolvedBlockers: string[];
+  latestCodexHandoffTopic?: string;
+  latestAssistantResponseSummary?: string;
+  lastClarificationQuestion?: string;
+  lastKnownRoute?: GameDevChatRoute;
+  scaffoldStatus: GameDevSessionScaffoldStatus;
+  memoryScope: "in-memory-session";
+  updatedAt?: string;
+};
+
 export type GameDevCodexHandoff = {
   title: string;
   summary: string;
@@ -53,7 +78,8 @@ export type GameDevChatResponse = {
   route: GameDevChatRoute;
   assistantMessage: string;
   codexHandoff?: GameDevCodexHandoff;
-  scaffoldStatus: "CONVERSATIONAL_ORCHESTRATION_ACTIVE" | "REAL_CHAT_MODE_ACTIVE" | "PARTIAL_CHAT_MODE" | "CHAT_UI_SCAFFOLD_ACTIVE";
+  sessionContext: GameDevSessionContext;
+  scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1" | "CONVERSATIONAL_ORCHESTRATION_ACTIVE" | "REAL_CHAT_MODE_ACTIVE" | "PARTIAL_CHAT_MODE" | "CHAT_UI_SCAFFOLD_ACTIVE";
   changedFilesClaimed: false;
 };
 
@@ -63,5 +89,6 @@ export type GameDevChatMessage = {
   content: string;
   route?: GameDevChatRoute;
   codexHandoff?: GameDevCodexHandoff;
+  sessionContext?: GameDevSessionContext;
   createdAt: string;
 };
