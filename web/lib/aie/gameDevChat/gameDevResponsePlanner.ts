@@ -48,6 +48,48 @@ function workCycleRoute(intent: string): GameDevChatRoute {
   };
 }
 
+function durableContinuityRoute(intent: string): GameDevChatRoute {
+  return {
+    mode: "DURABLE_RUNTIME_CONTINUITY_REQUEST",
+    conversationMode: "DURABLE_RUNTIME_CONTINUITY_REQUEST",
+    detectedIntent: intent,
+    confidence: "HIGH",
+    unityFirst: false,
+    needsClarification: false,
+    safetyStatus: "SAFE_RESPONSE_ONLY",
+    suggestedNextAction: "Restore local durable runtime state through the trusted server route before deciding whether to continue.",
+    keywords: ["durable-runtime", "restore", "resume", "checkpoint"],
+  };
+}
+
+function detectDurableContinuityRequest(message: string): NonNullable<GameDevChatResponse["durableContinuity"]>["request"] | undefined {
+  if (/\b(resume previous campaign|continue yesterday's work|continue yesterdays work)\b/i.test(message)) {
+    return { action: "restore_previous_campaign", projectId: "AI-E", requiresOperatorReview: true };
+  }
+  if (/\b(continue interrupted cycle|resume interrupted cycle)\b/i.test(message)) {
+    return { action: "continue_interrupted_cycle", projectId: "AI-E", requiresOperatorReview: true };
+  }
+  if (/\b(restore last checkpoint|recover last checkpoint)\b/i.test(message)) {
+    return { action: "restore_last_checkpoint", projectId: "AI-E", requiresOperatorReview: true };
+  }
+  if (/\b(what was ai-e working on|what was aie working on|what were you working on)\b/i.test(message)) {
+    return { action: "summarize_prior_work", projectId: "AI-E", requiresOperatorReview: true };
+  }
+  return undefined;
+}
+
+function formatDurableContinuityResponse(durableContinuity: NonNullable<GameDevChatResponse["durableContinuity"]>): string {
+  const request = durableContinuity.request;
+  return [
+    "I prepared a durable runtime continuity request.",
+    "",
+    `Action: ${request.action}`,
+    `Project: ${request.projectId}`,
+    "Persistence boundary: local JSON file-backed runtime state only.",
+    "Truthfulness: this chat planner did not restore state itself; the trusted server route must load the local durable store and report whether restoration really occurred.",
+  ].join("\n");
+}
+
 function detectOperatorWorkCycleRequest(message: string): OperatorWorkCycleRequest | undefined {
   if (!/\b(fix the failing tests|continue the repo work|apply the approved patch|run the bounded work cycle|continue the supervised cycle)\b/i.test(message)) {
     return undefined;
@@ -451,6 +493,23 @@ function formatCampaignResponse(campaign: ReturnType<typeof runDevelopmentCampai
 }
 
 export function planGameDevChatResponse(message: string, context?: GameDevConversationContext): GameDevChatResponse {
+  const durableContinuityRequest = detectDurableContinuityRequest(message);
+  if (durableContinuityRequest) {
+    const route = durableContinuityRoute(durableContinuityRequest.action);
+    const durableContinuity = { request: durableContinuityRequest };
+    const assistantMessage = formatDurableContinuityResponse(durableContinuity);
+    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage);
+
+    return {
+      route,
+      assistantMessage,
+      durableContinuity,
+      sessionContext,
+      scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1",
+      changedFilesClaimed: false,
+    };
+  }
+
   const workCycleRequest = detectOperatorWorkCycleRequest(message);
   if (workCycleRequest) {
     const route = workCycleRoute(workCycleRequest.cycleIntent);

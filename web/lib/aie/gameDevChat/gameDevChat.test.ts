@@ -164,6 +164,27 @@ test("bounded work cycle prompt prepares an operator cycle without running it", 
   assert.doesNotMatch(response.assistantMessage, /I executed|I mutated|I validated/i);
 });
 
+test("durable continuity prompt prepares restore request without fake persistence claims", () => {
+  const response = planGameDevChatResponse("resume previous campaign");
+
+  assert.equal(response.route.mode, "DURABLE_RUNTIME_CONTINUITY_REQUEST");
+  assert.ok(response.durableContinuity);
+  assert.equal(response.durableContinuity.request.action, "restore_previous_campaign");
+  assert.equal(response.durableContinuity.request.projectId, "AI-E");
+  assert.equal(response.durableContinuity.request.requiresOperatorReview, true);
+  assert.match(response.assistantMessage, /local JSON file-backed runtime state only/);
+  assert.match(response.assistantMessage, /chat planner did not restore state itself/);
+  assert.doesNotMatch(response.assistantMessage, /autonomous_real execution is available|unattended background agent is running/i);
+});
+
+test("restore last checkpoint prompt uses durable continuity route", () => {
+  const response = planGameDevChatResponse("restore last checkpoint");
+
+  assert.equal(response.route.mode, "DURABLE_RUNTIME_CONTINUITY_REQUEST");
+  assert.equal(response.durableContinuity?.request.action, "restore_last_checkpoint");
+  assert.equal(response.changedFilesClaimed, false);
+});
+
 test("test run prompt prepares an approved-runtime request rather than fake execution", () => {
   const response = planGameDevChatResponse("run the tests");
 

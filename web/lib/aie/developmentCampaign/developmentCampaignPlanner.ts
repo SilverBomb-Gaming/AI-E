@@ -99,7 +99,7 @@ export function planDevelopmentCampaign(layers: DevelopmentCampaignLayer[]): Dev
   const scaffoldWarnings = [
     "This is a planning engine, not a hands-off execution engine.",
     "It does not edit files or run Unity by itself.",
-    "Durable project memory is still missing unless selected and implemented as a later layer.",
+    "Durable multi-cycle state is local JSON file-backed only; it is not cloud persistence, distributed orchestration, or a background agent.",
   ];
 
   return {

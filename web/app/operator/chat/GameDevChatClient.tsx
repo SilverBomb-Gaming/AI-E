@@ -53,6 +53,7 @@ export function GameDevChatClient() {
   const [isThinking, setIsThinking] = useState(false);
   const [executionRequestInFlight, setExecutionRequestInFlight] = useState<string | null>(null);
   const [workCycleInFlight, setWorkCycleInFlight] = useState<string | null>(null);
+  const [durableContinuityInFlight, setDurableContinuityInFlight] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
   const latestRoute = latestAssistant?.route;
@@ -112,6 +113,7 @@ export function GameDevChatClient() {
         developmentCampaign: response.developmentCampaign,
         scopedExecution: response.scopedExecution,
         workCycle: response.workCycle,
+        durableContinuity: response.durableContinuity,
         sessionContext: response.sessionContext,
         createdAt: new Date().toISOString(),
       };
@@ -232,6 +234,39 @@ export function GameDevChatClient() {
       setMessages((current) => current.map((entry) => entry.id === messageId ? { ...entry, content: `${entry.content}\n\nWork cycle launcher error: ${failureMessage}` } : entry));
     } finally {
       setWorkCycleInFlight(null);
+    }
+  }
+
+  async function handleDurableContinuityRestore(messageId: string) {
+    const message = messages.find((entry) => entry.id === messageId);
+    if (!message?.durableContinuity || durableContinuityInFlight) {
+      return;
+    }
+
+    const requestAction = message.durableContinuity.request.action;
+    setDurableContinuityInFlight(requestAction);
+    try {
+      const response = await fetch("/api/operator/durable-runtime", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(message.durableContinuity.request),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof payload?.error === "string" ? payload.error : "Durable runtime restore failed.");
+      }
+      setMessages((current) => current.map((entry) => entry.id === messageId && entry.durableContinuity ? {
+        ...entry,
+        durableContinuity: {
+          ...entry.durableContinuity,
+          report: payload.report,
+        },
+      } : entry));
+    } catch (error) {
+      const failureMessage = error instanceof Error ? error.message : "Durable runtime restore failed.";
+      setMessages((current) => current.map((entry) => entry.id === messageId ? { ...entry, content: `${entry.content}\n\nDurable runtime error: ${failureMessage}` } : entry));
+    } finally {
+      setDurableContinuityInFlight(null);
     }
   }
 
@@ -415,6 +450,43 @@ export function GameDevChatClient() {
                                 <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Validation:</span> {message.workCycle.summaryReport.validationState}</p>
                                 <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Summary:</span> {message.workCycle.summaryReport.summary}</p>
                                 <pre className="md:col-span-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{message.workCycle.summaryReport.completedStages.join(" -> ") || "No completed stages reported."}</pre>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {message.durableContinuity && (
+                        <div className="mt-3 overflow-hidden rounded-md border border-teal-400/30 bg-[#0b1220]">
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-teal-400/20 px-3 py-2">
+                            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-teal-200">Durable Runtime Continuity</span>
+                            {!message.durableContinuity.report && (
+                              <button
+                                type="button"
+                                disabled={durableContinuityInFlight === message.durableContinuity.request.action}
+                                onClick={() => handleDurableContinuityRestore(message.id)}
+                                className="rounded-md border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+                              >
+                                Restore State
+                              </button>
+                            )}
+                          </div>
+                          <div className="grid gap-2 p-3 text-xs leading-5 text-zinc-300 md:grid-cols-2">
+                            <p><span className="font-semibold text-zinc-100">Action:</span> {message.durableContinuity.request.action}</p>
+                            <p><span className="font-semibold text-zinc-100">Project:</span> {message.durableContinuity.request.projectId}</p>
+                            <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Persistence:</span> local JSON file-backed runtime state only</p>
+                            {message.durableContinuity.report && (
+                              <>
+                                <p><span className="font-semibold text-zinc-100">Durable Restore:</span> {String(message.durableContinuity.report.durableRestorationOccurred)}</p>
+                                <p><span className="font-semibold text-zinc-100">Restart Continuity:</span> {String(message.durableContinuity.report.runtimeContinuitySurvivedRestart)}</p>
+                                <p><span className="font-semibold text-zinc-100">Cycles:</span> {message.durableContinuity.report.totalCycleCount}</p>
+                                <p><span className="font-semibold text-zinc-100">Resumed:</span> {message.durableContinuity.report.cycleCountResumed}</p>
+                                <p><span className="font-semibold text-zinc-100">Checkpoints:</span> {message.durableContinuity.report.checkpointCountRestored}</p>
+                                <p><span className="font-semibold text-zinc-100">Safely Resumable:</span> {String(message.durableContinuity.report.safelyResumable)}</p>
+                                <p><span className="font-semibold text-zinc-100">Independent Status:</span> {message.durableContinuity.report.independentExclusiveExecutionStatus}</p>
+                                <p><span className="font-semibold text-zinc-100">Truthfulness:</span> {message.durableContinuity.report.runtimeTruthfulnessLabel}</p>
+                                {message.durableContinuity.report.blockedReason && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Blocked:</span> {message.durableContinuity.report.blockedReason}</p>}
+                                <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Summary:</span> {message.durableContinuity.report.summary}</p>
+                                <pre className="md:col-span-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{message.durableContinuity.report.persistenceLimitations.join("\n")}</pre>
                               </>
                             )}
                           </div>

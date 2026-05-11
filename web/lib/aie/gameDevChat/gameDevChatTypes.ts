@@ -23,6 +23,7 @@ export type GameDevConversationMode =
   | "DEVELOPMENT_CAMPAIGN"
   | "SCOPED_EXECUTION_REQUEST"
   | "OPERATOR_WORK_CYCLE_REQUEST"
+  | "DURABLE_RUNTIME_CONTINUITY_REQUEST"
   | "FRUSTRATION_OR_CONFUSION"
   | "GAME_DEV_TASK"
   | "CODEX_HANDOFF_REQUEST"
@@ -93,6 +94,14 @@ export type GameDevChatResponse = {
     request: import("../operatorWorkCycleLauncher").OperatorWorkCycleRequest;
     summaryReport?: import("../operatorWorkCycleLauncher").OperatorWorkCycleSummaryReport;
   };
+  durableContinuity?: {
+    request: {
+      action: "restore_previous_campaign" | "continue_interrupted_cycle" | "restore_last_checkpoint" | "summarize_prior_work";
+      projectId: string;
+      requiresOperatorReview: true;
+    };
+    report?: import("../durableProjectMemoryStore").DurableRuntimeContinuityReport;
+  };
   sessionContext: GameDevSessionContext;
   scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1" | "CONVERSATIONAL_ORCHESTRATION_ACTIVE" | "REAL_CHAT_MODE_ACTIVE" | "PARTIAL_CHAT_MODE" | "CHAT_UI_SCAFFOLD_ACTIVE";
   changedFilesClaimed: false;
@@ -107,6 +116,7 @@ export type GameDevChatMessage = {
   developmentCampaign?: import("../developmentCampaign/developmentCampaignTypes").DevelopmentCampaignEngineResult;
   scopedExecution?: GameDevChatResponse["scopedExecution"];
   workCycle?: GameDevChatResponse["workCycle"];
+  durableContinuity?: GameDevChatResponse["durableContinuity"];
   sessionContext?: GameDevSessionContext;
   createdAt: string;
 };

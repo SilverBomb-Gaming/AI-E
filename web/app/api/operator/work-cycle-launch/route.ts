@@ -1,6 +1,7 @@
 import path from "node:path";
 import { NextResponse } from "next/server";
 
+import { createFileBackedDurableProjectMemoryStore } from "@/lib/aie/durableProjectMemoryStore";
 import { launchOperatorWorkCycle, restoreOperatorWorkCycleCheckpoint, type OperatorWorkCycleRequest } from "@/lib/aie/operatorWorkCycleLauncher";
 
 export const runtime = "nodejs";
@@ -59,23 +60,30 @@ function normalizeRequest(value: unknown): OperatorWorkCycleRequest | null {
 
 export async function POST(request: Request) {
   const body = (await request.json()) as Record<string, unknown>;
+  const trustedWebRoot = process.cwd();
+  const trustedRepoRoot = path.resolve(trustedWebRoot, "..");
+  const durableStore = createFileBackedDurableProjectMemoryStore({
+    storageRoot: path.join(trustedRepoRoot, ".aie", "durable_project_memory"),
+    projectId: typeof body.projectId === "string" ? body.projectId : "AI-E",
+  });
+
   if (body.restore === true && typeof body.cycleRequestId === "string") {
     const restored = restoreOperatorWorkCycleCheckpoint(body.cycleRequestId, typeof body.checkpointId === "string" ? body.checkpointId : undefined);
-    if (!restored) {
-      return NextResponse.json({ error: "No restorable checkpoint found for that cycle." }, { status: 404 });
+    const durableContinuity = await durableStore.restoreRuntimeContinuity();
+    if (!restored && !durableContinuity.durableRestorationOccurred) {
+      return NextResponse.json({ error: "No restorable checkpoint or durable runtime state found for that cycle." }, { status: 404 });
     }
-    return NextResponse.json({ summaryReport: restored });
+    return NextResponse.json({ summaryReport: restored, durableContinuity });
   }
 
   const cycleRequest = normalizeRequest(body.request);
   if (!cycleRequest) {
     return NextResponse.json({ error: "The operator work cycle request is invalid." }, { status: 400 });
   }
-  const trustedWebRoot = process.cwd();
-  const trustedRepoRoot = path.resolve(trustedWebRoot, "..");
   const launched = await launchOperatorWorkCycle(cycleRequest, {
     trustedRepoRoot,
     enableMutation: process.env.AIE_ENABLE_SCOPED_REPO_MUTATION === "true",
   });
-  return NextResponse.json(launched);
+  const durableState = await durableStore.recordOperatorCycle(launched, typeof body.previousCycleId === "string" ? body.previousCycleId : undefined);
+  return NextResponse.json({ ...launched, durableState });
 }

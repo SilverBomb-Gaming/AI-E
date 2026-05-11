@@ -33,6 +33,7 @@ test("labels scaffolded and missing capabilities truthfully", () => {
   const scopedMutation = result.capabilityMap.find((layer) => layer.layerId === "SCOPED_REPO_MUTATION_AND_PATCH_RUNTIME_PHASE1");
   const iterativeCycle = result.capabilityMap.find((layer) => layer.layerId === "ITERATIVE_AUTONOMOUS_WORK_CYCLE_PHASE1");
   const operatorLauncher = result.capabilityMap.find((layer) => layer.layerId === "OPERATOR_WORK_CYCLE_LAUNCHER_PHASE1");
+  const durableMultiCycle = result.capabilityMap.find((layer) => layer.layerId === "DURABLE_PROJECT_MEMORY_AND_MULTI_CYCLE_RUNTIME_PHASE1");
   const safeGuardrails = result.capabilityMap.find((layer) => layer.layerId === "SAFE_EXECUTION_GUARDRAILS_PHASE1");
   const supervisedQueue = result.capabilityMap.find((layer) => layer.layerId === "SUPERVISED_MULTI_STEP_EXECUTION_PHASE1");
   const fullStudio = result.capabilityMap.find((layer) => layer.layerId === "FULL_HANDS_OFF_STUDIO_OPERATION");
@@ -47,6 +48,7 @@ test("labels scaffolded and missing capabilities truthfully", () => {
   assert.equal(scopedMutation?.status, "real");
   assert.equal(iterativeCycle?.status, "real");
   assert.equal(operatorLauncher?.status, "real");
+  assert.equal(durableMultiCycle?.status, "real");
   assert.equal(safeGuardrails?.status, "real");
   assert.equal(supervisedQueue?.status, "real");
   assert.equal(fullStudio?.status, "future");
@@ -83,10 +85,20 @@ test("campaign map distinguishes execution mutation validation rollback and retr
   const scopedMutation = result.capabilityMap.find((layer) => layer.layerId === "SCOPED_REPO_MUTATION_AND_PATCH_RUNTIME_PHASE1");
   const iterativeCycle = result.capabilityMap.find((layer) => layer.layerId === "ITERATIVE_AUTONOMOUS_WORK_CYCLE_PHASE1");
   const operatorLauncher = result.capabilityMap.find((layer) => layer.layerId === "OPERATOR_WORK_CYCLE_LAUNCHER_PHASE1");
+  const durableMultiCycle = result.capabilityMap.find((layer) => layer.layerId === "DURABLE_PROJECT_MEMORY_AND_MULTI_CYCLE_RUNTIME_PHASE1");
 
   assert.deepEqual(scopedMutation?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry"]);
   assert.deepEqual(iterativeCycle?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry"]);
   assert.deepEqual(operatorLauncher?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry", "checkpoint"]);
+  assert.deepEqual(durableMultiCycle?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry", "checkpoint"]);
   assert.match(operatorLauncher?.truthfulnessRequirements.join(" ") ?? "", /independentExclusiveExecutionStatus/);
+  assert.match(durableMultiCycle?.truthfulnessRequirements.join(" ") ?? "", /local JSON file-backed/);
   assert.equal(result.plan.selectedLayer.layerId, "UNITY_WORKFLOW_AWARENESS_PHASE1");
+});
+
+test("campaign warnings do not imply cloud or background durable runtime", () => {
+  const result = runDevelopmentCampaignEngine();
+
+  assert.match(result.plan.scaffoldWarnings.join(" "), /local JSON file-backed only/);
+  assert.doesNotMatch(result.plan.scaffoldWarnings.join(" "), /cloud persistence is available|background agent is running/i);
 });
