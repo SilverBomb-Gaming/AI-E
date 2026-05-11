@@ -2,6 +2,7 @@ import { isDevelopmentCampaignRequest, runDevelopmentCampaignEngine } from "../d
 import { createScopedExecutionLog, evaluateScopedExecutionRequest, type ScopedExecutionRequest } from "../scopedSupervisedExecutionRuntime";
 import { generateGameDevCodexHandoff } from "./gameDevHandoffGenerator";
 import { orchestrateGameDevChat, type GameDevConversationContext } from "./gameDevConversationalOrchestrator";
+import { formatReasoningPreface, runConversationalReasoning, type ConversationalReasoningResult } from "./conversationalReasoningEngine";
 import { createInitialGameDevSessionContext, summarizeGameDevSessionContext, updateGameDevSessionContext } from "./gameDevSessionContext";
 import type { GameDevChatResponse, GameDevChatRoute } from "./gameDevChatTypes";
 import type { OperatorWorkCycleRequest } from "../operatorWorkCycleLauncher";
@@ -109,6 +110,10 @@ function formatMeaningfulLongRunResponse(meaningfulLongRun: NonNullable<GameDevC
   ].join("\n");
 }
 
+function withReasoning(assistantMessage: string, reasoning: ConversationalReasoningResult): string {
+  return [formatReasoningPreface(reasoning), "", assistantMessage].join("\n");
+}
+
 function detectDurableContinuityRequest(message: string): NonNullable<GameDevChatResponse["durableContinuity"]>["request"] | undefined {
   if (/\b(resume previous campaign|continue yesterday's work|continue yesterdays work)\b/i.test(message)) {
     return { action: "restore_previous_campaign", projectId: "AI-E", requiresOperatorReview: true };
@@ -134,6 +139,22 @@ function formatDurableContinuityResponse(durableContinuity: NonNullable<GameDevC
     `Project: ${request.projectId}`,
     "Persistence boundary: local JSON file-backed runtime state only.",
     "Truthfulness: this chat planner did not restore state itself; the trusted server route must load the local durable store and report whether restoration really occurred.",
+  ].join("\n");
+}
+
+function formatRuntimeIntrospectionResponse(reasoning: ConversationalReasoningResult): string {
+  return [
+    "Here is the truthful runtime picture I can infer from the current chat surface.",
+    "",
+    `Selected route: ${reasoning.selectedCapabilityRoute}`,
+    `Confidence: ${reasoning.confidence}`,
+    `Runtime availability: ${reasoning.runtimeAwareness.runtimeAvailability}`,
+    "Real right now:",
+    ...reasoning.runtimeAwareness.realCapabilities.map((capability) => `- ${capability}`),
+    "Still blocked or limited:",
+    ...reasoning.runtimeAwareness.blockedCapabilities.map((capability) => `- ${capability}`),
+    reasoning.runtimeAwareness.missingCapabilityExplanation ? `Why: ${reasoning.runtimeAwareness.missingCapabilityExplanation}` : "Why: this response does not need a blocked runtime capability.",
+    `Next: ${reasoning.nextUsefulStep}`,
   ].join("\n");
 }
 
@@ -338,6 +359,22 @@ function formatScopedExecutionResponse(scopedExecution: NonNullable<GameDevChatR
   ].join("\n");
 }
 
+function formatUnityRuntimeBlockedResponse(reasoning: ConversationalReasoningResult): string {
+  return [
+    "I can explain why that cannot run directly from this chat yet.",
+    "",
+    reasoning.runtimeAwareness.missingCapabilityExplanation ?? reasoning.limitationExplanation,
+    "",
+    "Closest supported workflow today:",
+    "- prepare a bounded supervised repo workflow in /operator/chat",
+    "- require operator approval",
+    "- show diff/checkpoint/validation evidence when the trusted server runtime acts",
+    "- keep Unity Editor control as a separate future bridge, not a hidden claim",
+    "",
+    `Next useful step: ${reasoning.nextUsefulStep}`,
+  ].join("\n");
+}
+
 function openingFor(route: GameDevChatRoute): string {
   switch (route.taskMode ?? route.mode) {
     case "UNITY_IMPLEMENTATION_PLAN":
@@ -424,6 +461,22 @@ function bulletsFor(message: string, route: GameDevChatRoute): string[] {
     "Prefer Unity project conventions over a new architecture.",
     "Ask for implementation only after the target script or system is clear.",
   ];
+}
+
+function dynamicReasoningBullets(message: string, route: GameDevChatRoute, reasoning: ConversationalReasoningResult): string[] {
+  const lower = message.toLowerCase();
+  if (/tense|tension|suspense|atmosphere|atmospheric|mood/.test(lower)) {
+    return reasoning.dynamicDecomposition;
+  }
+  if (reasoning.confidence === "LOW" || route.needsClarification) {
+    return [
+      `I am not fully confident because ${reasoning.ambiguity.join(" ") || "the target is underspecified"}`,
+      "I would avoid pretending there is enough context to edit or execute.",
+      reasoning.nextUsefulStep,
+    ];
+  }
+  const generic = bulletsFor(message, route);
+  return generic[0] === "Keep the next step small and testable." ? reasoning.dynamicDecomposition : generic;
 }
 
 function clarificationFor(message: string, route: GameDevChatRoute): string {
@@ -544,22 +597,22 @@ function formatConversationalResponse(route: GameDevChatRoute, context?: GameDev
   }
 }
 
-function formatResponse(message: string, route: GameDevChatRoute, includeHandoff: boolean, context?: GameDevConversationContext): string {
+function formatResponse(message: string, route: GameDevChatRoute, includeHandoff: boolean, context: GameDevConversationContext | undefined, reasoning: ConversationalReasoningResult): string {
   const conversationalResponse = formatConversationalResponse(route, context);
   if (conversationalResponse) {
-    return conversationalResponse;
+    return withReasoning(conversationalResponse, reasoning);
   }
 
   if (route.mode === "BLOCKED_OR_UNSAFE" || route.taskMode === "BLOCKED_OR_UNSAFE") {
-    return `${openingFor(route)} I can still help reframe it as a safe Unity planning, debugging, or learning task.`;
+    return withReasoning(`${openingFor(route)} ${reasoning.limitationExplanation} I can still help reframe it as a safe Unity planning, debugging, or supervised repo workflow task.`, reasoning);
   }
 
-  const bullets = bulletsFor(message, route).map((entry) => `- ${entry}`).join("\n");
+  const bullets = dynamicReasoningBullets(message, route, reasoning).map((entry) => `- ${entry}`).join("\n");
   const handoffLine = includeHandoff
     ? "I prepared a Codex handoff below. It is a handoff only; chat mode did not edit files, run Unity, or execute an agent."
     : "If you want implementation, I can prepare a Codex handoff that tells an implementation agent exactly what to inspect and how to validate it.";
 
-  return [
+  return withReasoning([
     openingFor(route),
     "",
     bullets,
@@ -567,7 +620,15 @@ function formatResponse(message: string, route: GameDevChatRoute, includeHandoff
     clarificationFor(message, route),
     "",
     handoffLine,
-  ].join("\n");
+  ].join("\n"), reasoning);
+}
+
+function isRuntimeIntrospectionRequest(message: string): boolean {
+  return /\b(what is real|what can you actually do|runtime state|what is scaffolded|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
+}
+
+function isUnityRuntimeBlockedRequest(message: string): boolean {
+  return /\b(run unity|open unity|control unity|playtest in unity|unity editor)\b/i.test(message);
 }
 
 function formatCampaignResponse(campaign: ReturnType<typeof runDevelopmentCampaignEngine>): string {
@@ -591,16 +652,36 @@ function formatCampaignResponse(campaign: ReturnType<typeof runDevelopmentCampai
 }
 
 export function planGameDevChatResponse(message: string, context?: GameDevConversationContext): GameDevChatResponse {
+  if (isUnityRuntimeBlockedRequest(message)) {
+    const route: GameDevChatRoute = {
+      mode: "BLOCKED_OR_UNSAFE",
+      conversationMode: "BLOCKED_OR_UNSAFE",
+      detectedIntent: "Request direct Unity Editor runtime control",
+      confidence: "HIGH",
+      unityFirst: true,
+      needsClarification: false,
+      safetyStatus: "BLOCKED",
+      suggestedNextAction: "Use a planning-only Unity handoff or a bounded supervised repo workflow instead.",
+      keywords: ["unity", "runtime", "blocked-capability"],
+    };
+    const reasoning = runConversationalReasoning({ message, route, sessionContext: context?.sessionContext, subsystem: "conversation" });
+    const assistantMessage = withReasoning(formatUnityRuntimeBlockedResponse(reasoning), reasoning);
+    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage, undefined, reasoning);
+    return { route, assistantMessage, reasoning, sessionContext, scaffoldStatus: "PARTIAL_CHAT_MODE", changedFilesClaimed: false };
+  }
+
   const meaningfulLongRunRequest = detectMeaningfulLongRunRequest(message);
   if (meaningfulLongRunRequest) {
     const route = meaningfulLongRunRoute("Prepare meaningful supervised long-run operation");
     const meaningfulLongRun = { request: meaningfulLongRunRequest };
-    const assistantMessage = formatMeaningfulLongRunResponse(meaningfulLongRun);
-    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage);
+    const reasoning = runConversationalReasoning({ message, route, sessionContext: context?.sessionContext, subsystem: "meaningful_long_run" });
+    const assistantMessage = withReasoning(formatMeaningfulLongRunResponse(meaningfulLongRun), reasoning);
+    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage, undefined, reasoning);
 
     return {
       route,
       assistantMessage,
+      reasoning,
       meaningfulLongRun,
       sessionContext,
       scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1",
@@ -612,12 +693,14 @@ export function planGameDevChatResponse(message: string, context?: GameDevConver
   if (durableContinuityRequest) {
     const route = durableContinuityRoute(durableContinuityRequest.action);
     const durableContinuity = { request: durableContinuityRequest };
-    const assistantMessage = formatDurableContinuityResponse(durableContinuity);
-    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage);
+    const reasoning = runConversationalReasoning({ message, route, sessionContext: context?.sessionContext, subsystem: "durable_runtime" });
+    const assistantMessage = withReasoning(formatDurableContinuityResponse(durableContinuity), reasoning);
+    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage, undefined, reasoning);
 
     return {
       route,
       assistantMessage,
+      reasoning,
       durableContinuity,
       sessionContext,
       scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1",
@@ -629,12 +712,14 @@ export function planGameDevChatResponse(message: string, context?: GameDevConver
   if (workCycleRequest) {
     const route = workCycleRoute(workCycleRequest.cycleIntent);
     const workCycle = { request: workCycleRequest };
-    const assistantMessage = formatWorkCycleResponse(workCycle);
-    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage);
+    const reasoning = runConversationalReasoning({ message, route, sessionContext: context?.sessionContext, subsystem: "operator_work_cycle" });
+    const assistantMessage = withReasoning(formatWorkCycleResponse(workCycle), reasoning);
+    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage, undefined, reasoning);
 
     return {
       route,
       assistantMessage,
+      reasoning,
       workCycle,
       sessionContext,
       scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1",
@@ -651,12 +736,14 @@ export function planGameDevChatResponse(message: string, context?: GameDevConver
     });
     const route = scopedExecutionRoute(executionRequest.intent, ["scoped-execution", executionRequest.command.split(" ")[0] ?? "command"]);
     const scopedExecution = { request: executionRequest, decision, log };
-    const assistantMessage = formatScopedExecutionResponse(scopedExecution);
-    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage);
+    const reasoning = runConversationalReasoning({ message, route, sessionContext: context?.sessionContext, subsystem: "scoped_execution" });
+    const assistantMessage = withReasoning(formatScopedExecutionResponse(scopedExecution), reasoning);
+    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage, undefined, reasoning);
 
     return {
       route,
       assistantMessage,
+      reasoning,
       scopedExecution,
       sessionContext,
       scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1",
@@ -666,15 +753,18 @@ export function planGameDevChatResponse(message: string, context?: GameDevConver
 
   const campaign = isDevelopmentCampaignRequest(message) ? runDevelopmentCampaignEngine() : undefined;
   const route = campaign ? campaignRoute() : orchestrateGameDevChat(message, context);
+  const reasoning = runConversationalReasoning({ message, route, sessionContext: context?.sessionContext, subsystem: campaign ? "development_campaign" : "conversation" });
   const shouldGenerateHandoff = route.mode === "CODEX_HANDOFF_REQUEST" || route.taskMode === "CODEX_HANDOFF_REQUEST";
   const codexHandoff = shouldGenerateHandoff ? generateGameDevCodexHandoff(message, route) : undefined;
-  const assistantMessage = campaign ? formatCampaignResponse(campaign) : formatResponse(message, route, shouldGenerateHandoff, context);
-  const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage, codexHandoff);
+  const baseMessage = isRuntimeIntrospectionRequest(message) ? formatRuntimeIntrospectionResponse(reasoning) : campaign ? formatCampaignResponse(campaign) : formatResponse(message, route, shouldGenerateHandoff, context, reasoning);
+  const assistantMessage = isRuntimeIntrospectionRequest(message) ? withReasoning(baseMessage, reasoning) : campaign ? withReasoning(baseMessage, reasoning) : baseMessage;
+  const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage, codexHandoff, reasoning);
   const scaffoldStatus = route.safetyStatus === "BLOCKED" ? "PARTIAL_CHAT_MODE" : "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1";
 
   return {
     route,
     assistantMessage,
+    reasoning,
     codexHandoff,
     developmentCampaign: campaign,
     sessionContext,

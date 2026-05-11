@@ -173,8 +173,47 @@ test("repo workflow prompt dynamically prepares visible supervised work", () => 
   assert.deepEqual(response.workCycle.request.validationPlan.commands, ["git diff --name-only"]);
   assert.match(response.workCycle.request.proposedChanges[0]?.proposedContent ?? "", /requiredCapabilities=/);
   assert.match(response.assistantMessage, /Visible lifecycle: preparing, approval requested, executing, mutating, validating, checkpointing, completed or blocked/);
+  assert.match(response.assistantMessage, /Reasoning summary:/);
+  assert.equal(response.reasoning?.runtimeAwareness.runtimeAvailability, "available_supervised");
   assert.match(response.assistantMessage, /chat planner; approval launches the trusted operator runtime API/);
   assert.doesNotMatch(response.assistantMessage, /I executed|I mutated|I validated|autonomous_real/i);
+});
+
+test("vague tension prompt receives dynamic decomposition instead of generic fallback", () => {
+  const response = planGameDevChatResponse("make the game feel more tense");
+
+  assert.ok(response.reasoning);
+  assert.match(response.assistantMessage, /Pacing pressure/);
+  assert.match(response.assistantMessage, /Audio pressure/);
+  assert.match(response.assistantMessage, /Enemy pressure/);
+  assert.doesNotMatch(response.assistantMessage, /Keep the next step small and testable/);
+});
+
+test("direct Unity runtime request gets blocked capability reasoning", () => {
+  const response = planGameDevChatResponse("run Unity and playtest the scene");
+
+  assert.equal(response.route.mode, "BLOCKED_OR_UNSAFE");
+  assert.equal(response.reasoning?.runtimeAwareness.runtimeAvailability, "blocked_not_implemented");
+  assert.match(response.assistantMessage, /Unity Editor control is not implemented/);
+  assert.match(response.assistantMessage, /trusted editor automation bridge/);
+  assert.doesNotMatch(response.assistantMessage, /I ran Unity|autonomous_real/);
+});
+
+test("blocked tangent does not overwrite active task context", () => {
+  const previous = planGameDevChatResponse("I want my player jump to feel less floaty.");
+  const blocked = planGameDevChatResponse("run Unity and playtest the scene", { previousRoute: previous.route, sessionContext: previous.sessionContext });
+
+  assert.equal(blocked.sessionContext.activeGameplaySystem, "player movement and jump feel");
+  assert.equal(blocked.reasoning?.shouldPreservePreviousTaskContext, true);
+});
+
+test("runtime introspection response exposes reasoning and capability status", () => {
+  const response = planGameDevChatResponse("what is real and what is scaffolded in your runtime state?");
+
+  assert.ok(response.reasoning);
+  assert.match(response.assistantMessage, /truthful runtime picture/i);
+  assert.match(response.assistantMessage, /Runtime availability:/);
+  assert.match(response.assistantMessage, /Still blocked or limited:/);
 });
 
 test("UI atmosphere request routes to generalized repo workflow instead of hardcoded domain lane", () => {

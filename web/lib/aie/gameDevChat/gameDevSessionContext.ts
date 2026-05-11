@@ -1,4 +1,5 @@
 import type { GameDevChatRoute, GameDevCodexHandoff, GameDevSessionContext } from "./gameDevChatTypes";
+import type { ConversationalReasoningResult } from "./conversationalReasoningEngine";
 
 export function createInitialGameDevSessionContext(): GameDevSessionContext {
   return {
@@ -104,11 +105,13 @@ export function updateGameDevSessionContext(
   route: GameDevChatRoute,
   assistantMessage: string,
   codexHandoff?: GameDevCodexHandoff,
+  reasoning?: ConversationalReasoningResult,
 ): GameDevSessionContext {
   const base = previousContext ?? createInitialGameDevSessionContext();
-  const currentProject = inferProject(message, route) ?? base.currentProject;
-  const activeGameplaySystem = inferGameplaySystem(message) ?? base.activeGameplaySystem;
-  const currentImplementationTask = inferImplementationTask(message, route) ?? base.currentImplementationTask;
+  const preserveTaskContext = reasoning?.shouldPreservePreviousTaskContext === true;
+  const currentProject = preserveTaskContext ? base.currentProject : inferProject(message, route) ?? base.currentProject;
+  const activeGameplaySystem = preserveTaskContext ? base.activeGameplaySystem : inferGameplaySystem(message) ?? base.activeGameplaySystem;
+  const currentImplementationTask = preserveTaskContext ? base.currentImplementationTask : inferImplementationTask(message, route) ?? base.currentImplementationTask;
   const latestCodexHandoffTopic = inferHandoffTopic(message, codexHandoff) ?? base.latestCodexHandoffTopic;
   const blocker = route.mode === "TROUBLESHOOT_PREVIOUS" || route.mode === "CLARIFICATION_NEEDED" ? route.detectedIntent : undefined;
   const unresolvedBlockers = blocker ? Array.from(new Set([...base.unresolvedBlockers, blocker])) : base.unresolvedBlockers;

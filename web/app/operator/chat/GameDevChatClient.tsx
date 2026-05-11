@@ -130,6 +130,7 @@ export function GameDevChatClient() {
         role: "assistant",
         content: response.assistantMessage,
         route: response.route,
+        reasoning: response.reasoning,
         codexHandoff: response.codexHandoff,
         developmentCampaign: response.developmentCampaign,
         scopedExecution: response.scopedExecution,
@@ -415,6 +416,22 @@ export function GameDevChatClient() {
                           <div><span className="font-semibold text-zinc-100">Safety:</span> {message.route.safetyStatus}</div>
                           {message.sessionContext && <div><span className="font-semibold text-zinc-100">Memory:</span> {message.sessionContext.scaffoldStatus}</div>}
                         </div>
+                      )}
+                      {message.reasoning && (
+                        <details className="mt-3 overflow-hidden rounded-md border border-cyan-400/25 bg-[#08111d]">
+                          <summary className="cursor-pointer px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200">Reasoning Visibility</summary>
+                          <div className="grid gap-2 border-t border-cyan-400/15 p-3 text-xs leading-5 text-zinc-300 md:grid-cols-2">
+                            <p><span className="font-semibold text-zinc-100">Inferred Intent:</span> {message.reasoning.inferredIntent}</p>
+                            <p><span className="font-semibold text-zinc-100">Confidence:</span> {message.reasoning.confidence}</p>
+                            <p><span className="font-semibold text-zinc-100">Route:</span> {message.reasoning.selectedCapabilityRoute}</p>
+                            <p><span className="font-semibold text-zinc-100">Runtime:</span> {message.reasoning.runtimeAwareness.runtimeAvailability}</p>
+                            <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Why:</span> {message.reasoning.routeRationale}</p>
+                            {message.reasoning.ambiguity.length > 0 && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Ambiguity:</span> {message.reasoning.ambiguity.join(" ")}</p>}
+                            <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Limitation:</span> {message.reasoning.limitationExplanation}</p>
+                            <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Next:</span> {message.reasoning.nextUsefulStep}</p>
+                            <pre className="md:col-span-2 max-h-36 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{message.reasoning.dynamicDecomposition.map((entry) => `- ${entry}`).join("\n")}</pre>
+                          </div>
+                        </details>
                       )}
                       {message.codexHandoff && (
                         <div className="mt-3 overflow-hidden rounded-md border border-white/10 bg-[#0b1220]">

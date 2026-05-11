@@ -83,6 +83,7 @@ export type GameDevCodexHandoff = {
 export type GameDevChatResponse = {
   route: GameDevChatRoute;
   assistantMessage: string;
+  reasoning?: import("./conversationalReasoningEngine").ConversationalReasoningResult;
   codexHandoff?: GameDevCodexHandoff;
   developmentCampaign?: import("../developmentCampaign/developmentCampaignTypes").DevelopmentCampaignEngineResult;
   scopedExecution?: {
@@ -124,6 +125,7 @@ export type GameDevChatMessage = {
   role: "user" | "assistant";
   content: string;
   route?: GameDevChatRoute;
+  reasoning?: GameDevChatResponse["reasoning"];
   codexHandoff?: GameDevCodexHandoff;
   developmentCampaign?: import("../developmentCampaign/developmentCampaignTypes").DevelopmentCampaignEngineResult;
   scopedExecution?: GameDevChatResponse["scopedExecution"];
