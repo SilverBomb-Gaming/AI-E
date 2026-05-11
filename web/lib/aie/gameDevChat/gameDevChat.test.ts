@@ -132,7 +132,7 @@ test("development campaign prompt returns a campaign plan instead of fake execut
 
   assert.equal(response.route.mode, "DEVELOPMENT_CAMPAIGN");
   assert.ok(response.developmentCampaign);
-  assert.equal(response.developmentCampaign.plan.selectedLayer.layerId, "SAFE_EXECUTION_GUARDRAILS_PHASE1");
+  assert.equal(response.developmentCampaign.plan.selectedLayer.layerId, "UNITY_WORKFLOW_AWARENESS_PHASE1");
   assert.equal(response.developmentCampaign.plan.claimsAutonomousExecution, false);
   assert.match(response.assistantMessage, /selected the next highest-impact unblocked development layer/i);
   assert.doesNotMatch(response.assistantMessage, /I edited|I ran Unity|I executed/i);
