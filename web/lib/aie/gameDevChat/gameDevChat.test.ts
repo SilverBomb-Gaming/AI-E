@@ -127,6 +127,17 @@ test("no context available produces truthful clarification for vague follow-up",
   assert.match(response.assistantMessage, /session-scoped chat context only/);
 });
 
+test("development campaign prompt returns a campaign plan instead of fake execution", () => {
+  const response = planGameDevChatResponse("what should AI-E build next to get closer to hands-off operation?");
+
+  assert.equal(response.route.mode, "DEVELOPMENT_CAMPAIGN");
+  assert.ok(response.developmentCampaign);
+  assert.equal(response.developmentCampaign.plan.selectedLayer.layerId, "AUTONOMOUS_DEVELOPMENT_CAMPAIGN_ENGINE_PHASE1");
+  assert.equal(response.developmentCampaign.plan.claimsAutonomousExecution, false);
+  assert.match(response.assistantMessage, /selected the next highest-impact unblocked development layer/i);
+  assert.doesNotMatch(response.assistantMessage, /I edited|I ran Unity|I executed/i);
+});
+
 test("jump tuning request is classified as a Unity implementation plan", () => {
   const route = classifyGameDevIntent("I want my player jump to feel less floaty.");
 

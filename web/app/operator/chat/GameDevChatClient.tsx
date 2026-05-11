@@ -102,6 +102,7 @@ export function GameDevChatClient() {
         content: response.assistantMessage,
         route: response.route,
         codexHandoff: response.codexHandoff,
+        developmentCampaign: response.developmentCampaign,
         sessionContext: response.sessionContext,
         createdAt: new Date().toISOString(),
       };
@@ -189,6 +190,27 @@ export function GameDevChatClient() {
                             </button>
                           </div>
                           <pre className="max-h-72 overflow-auto whitespace-pre-wrap p-3 text-xs leading-5 text-slate-800">{message.codexHandoff.markdown}</pre>
+                        </div>
+                      )}
+                      {message.developmentCampaign && (
+                        <div className="mt-3 overflow-hidden rounded-md border border-sky-200 bg-white">
+                          <div className="flex items-center justify-between border-b border-sky-100 px-3 py-2">
+                            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-sky-700">Campaign Plan</span>
+                            <button
+                              type="button"
+                              onClick={() => navigator.clipboard?.writeText(message.developmentCampaign?.plan.handoffMarkdown ?? "")}
+                              className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                            >
+                              Copy Handoff
+                            </button>
+                          </div>
+                          <div className="space-y-2 p-3 text-xs leading-5 text-slate-700">
+                            <p><span className="font-semibold text-slate-950">Engine:</span> {message.developmentCampaign.engineStatus}</p>
+                            <p><span className="font-semibold text-slate-950">Selected:</span> {message.developmentCampaign.plan.selectedLayer.layerId}</p>
+                            <p><span className="font-semibold text-slate-950">Reason:</span> {message.developmentCampaign.plan.selectedReason}</p>
+                            <p><span className="font-semibold text-slate-950">Next Layer:</span> {message.developmentCampaign.nextLayerAfterSelected ?? "Depends on selected layer completion"}</p>
+                            <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 text-xs leading-5 text-slate-800">{message.developmentCampaign.plan.handoffMarkdown}</pre>
+                          </div>
                         </div>
                       )}
                     </div>

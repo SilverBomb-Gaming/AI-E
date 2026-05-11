@@ -1,7 +1,22 @@
+import { isDevelopmentCampaignRequest, runDevelopmentCampaignEngine } from "../developmentCampaign/developmentCampaignEngine";
 import { generateGameDevCodexHandoff } from "./gameDevHandoffGenerator";
 import { orchestrateGameDevChat, type GameDevConversationContext } from "./gameDevConversationalOrchestrator";
 import { createInitialGameDevSessionContext, summarizeGameDevSessionContext, updateGameDevSessionContext } from "./gameDevSessionContext";
 import type { GameDevChatResponse, GameDevChatRoute } from "./gameDevChatTypes";
+
+function campaignRoute(): GameDevChatRoute {
+  return {
+    mode: "DEVELOPMENT_CAMPAIGN",
+    conversationMode: "DEVELOPMENT_CAMPAIGN",
+    detectedIntent: "Plan AI-E's next development layer",
+    confidence: "HIGH",
+    unityFirst: false,
+    needsClarification: false,
+    safetyStatus: "SAFE_PLANNING_ONLY",
+    suggestedNextAction: "Review the selected layer and handoff before any implementation work.",
+    keywords: ["development", "campaign", "capability", "handoff"],
+  };
+}
 
 function openingFor(route: GameDevChatRoute): string {
   switch (route.taskMode ?? route.mode) {
@@ -235,11 +250,32 @@ function formatResponse(message: string, route: GameDevChatRoute, includeHandoff
   ].join("\n");
 }
 
+function formatCampaignResponse(campaign: ReturnType<typeof runDevelopmentCampaignEngine>): string {
+  const { selectedLayer } = campaign.plan;
+  return [
+    "I reviewed AI-E’s current capability layer map and selected the next highest-impact unblocked development layer.",
+    "",
+    `Selected layer: ${selectedLayer.layerId}`,
+    `Status: ${selectedLayer.status}`,
+    `Risk: ${selectedLayer.riskLevel}`,
+    `Why: ${campaign.plan.selectedReason}`,
+    "",
+    "Next bounded milestone:",
+    ...campaign.plan.milestonePlan.map((step) => `- ${step}`),
+    "",
+    "Scaffold warnings:",
+    ...campaign.plan.scaffoldWarnings.map((warning) => `- ${warning}`),
+    "",
+    campaign.truthfulnessSummary,
+  ].join("\n");
+}
+
 export function planGameDevChatResponse(message: string, context?: GameDevConversationContext): GameDevChatResponse {
-  const route = orchestrateGameDevChat(message, context);
+  const campaign = isDevelopmentCampaignRequest(message) ? runDevelopmentCampaignEngine() : undefined;
+  const route = campaign ? campaignRoute() : orchestrateGameDevChat(message, context);
   const shouldGenerateHandoff = route.mode === "CODEX_HANDOFF_REQUEST" || route.taskMode === "CODEX_HANDOFF_REQUEST";
   const codexHandoff = shouldGenerateHandoff ? generateGameDevCodexHandoff(message, route) : undefined;
-  const assistantMessage = formatResponse(message, route, shouldGenerateHandoff, context);
+  const assistantMessage = campaign ? formatCampaignResponse(campaign) : formatResponse(message, route, shouldGenerateHandoff, context);
   const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage, codexHandoff);
   const scaffoldStatus = route.safetyStatus === "BLOCKED" ? "PARTIAL_CHAT_MODE" : "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1";
 
@@ -247,6 +283,7 @@ export function planGameDevChatResponse(message: string, context?: GameDevConver
     route,
     assistantMessage,
     codexHandoff,
+    developmentCampaign: campaign,
     sessionContext,
     scaffoldStatus,
     changedFilesClaimed: false,
