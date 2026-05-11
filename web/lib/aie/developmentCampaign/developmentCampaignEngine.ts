@@ -14,7 +14,9 @@ export function runDevelopmentCampaignEngine(layers: DevelopmentCampaignLayer[] 
   const plan = planDevelopmentCampaign(capabilityMap);
   const nextLayerAfterSelected = plan.selectedLayer.layerId === "AUTONOMOUS_DEVELOPMENT_CAMPAIGN_ENGINE_PHASE1"
     ? "DURABLE_PROJECT_MEMORY_AND_TASK_STATE_PHASE1"
-    : undefined;
+    : plan.selectedLayer.layerId === "SAFE_EXECUTION_GUARDRAILS_PHASE1"
+      ? "PROJECT_STATE_INSPECTION_PHASE1"
+      : undefined;
 
   return {
     engineStatus: "AUTONOMOUS_DEVELOPMENT_CAMPAIGN_ENGINE_PHASE1",

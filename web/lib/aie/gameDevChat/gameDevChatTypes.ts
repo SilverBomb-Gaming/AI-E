@@ -44,6 +44,7 @@ export type GameDevChatRoute = {
 
 export type GameDevSessionScaffoldStatus =
   | "SESSION_CONTEXT_MEMORY_PHASE1_SESSION_ONLY"
+  | "LOCAL_BROWSER_PROJECT_MEMORY_PHASE1"
   | "SESSION_CONTEXT_MEMORY_PHASE1_EMPTY"
   | "DURABLE_SESSION_MEMORY_NOT_IMPLEMENTED";
 
@@ -59,7 +60,7 @@ export type GameDevSessionContext = {
   lastClarificationQuestion?: string;
   lastKnownRoute?: GameDevChatRoute;
   scaffoldStatus: GameDevSessionScaffoldStatus;
-  memoryScope: "in-memory-session";
+  memoryScope: "in-memory-session" | "local-browser-storage";
   updatedAt?: string;
 };
 

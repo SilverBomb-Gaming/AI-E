@@ -2,6 +2,7 @@
 
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
+import { loadGameDevSessionContext, saveGameDevSessionContext } from "@/lib/aie/gameDevChat/gameDevDurableSessionStore";
 import { createInitialGameDevSessionContext } from "@/lib/aie/gameDevChat/gameDevSessionContext";
 import { planGameDevChatResponse } from "@/lib/aie/gameDevChat/gameDevResponsePlanner";
 import type { GameDevChatMessage, GameDevSessionContext } from "./gameDevChatTypes";
@@ -56,6 +57,10 @@ export function GameDevChatClient() {
   const scaffoldStatus = latestAssistant ? "✅ SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1" : "Ready for session-scoped chat";
 
   useEffect(() => {
+    setSessionContext(loadGameDevSessionContext(window.localStorage));
+  }, []);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, isThinking]);
 
@@ -106,7 +111,9 @@ export function GameDevChatClient() {
         sessionContext: response.sessionContext,
         createdAt: new Date().toISOString(),
       };
-      setSessionContext(response.sessionContext);
+      const persistedContext = saveGameDevSessionContext(window.localStorage, response.sessionContext);
+      assistantMessage.sessionContext = persistedContext;
+      setSessionContext(persistedContext);
       setMessages((current) => [...current, assistantMessage]);
       setIsThinking(false);
     }, 220);
@@ -244,7 +251,7 @@ export function GameDevChatClient() {
                 Send
               </button>
             </div>
-            <p className="mx-auto mt-2 max-w-3xl text-xs text-slate-500">Enter sends. Shift+Enter adds a new line. Memory is in-memory and session-scoped; implementation still needs explicit action.</p>
+            <p className="mx-auto mt-2 max-w-3xl text-xs text-slate-500">Enter sends. Shift+Enter adds a new line. Memory is local-browser storage for this device/browser only; implementation still needs explicit action.</p>
           </form>
         </section>
 
@@ -308,7 +315,7 @@ export function GameDevChatClient() {
           </div>
           <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-600 shadow-sm">
             <p className="font-semibold text-slate-950">Truthful Scope</p>
-            <p className="mt-2">This page is a real chat UI with conversational orchestration, deterministic task classification, and in-memory session context. It does not persist long-term memory, autonomously edit files, control Unity, run playtests, or claim implementation.</p>
+            <p className="mt-2">This page is a real chat UI with conversational orchestration, deterministic task classification, and local-browser project/task context. It does not provide cross-browser or long-term AI memory, autonomously edit files, control Unity, run playtests, or claim implementation.</p>
           </div>
         </aside>
       </div>
