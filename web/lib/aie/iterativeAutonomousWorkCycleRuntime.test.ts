@@ -97,6 +97,9 @@ test("multi-stage work cycle executes inspect mutate validate checkpoint and sum
     assert.equal(state.continuationOccurred, true);
     assert.equal(state.iterativeLoopExecuted, false);
     assert.equal(state.longRunningClaimAllowed, false);
+    assert.equal(state.mutationReports.length, 1);
+    assert.match(state.mutationReports[0]?.diffPreview ?? "", /diff -- src\/example.ts/);
+    assert.equal(state.mutationReports[0]?.validationResults[0]?.truthfulnessLabel, "real_validation_executed");
     assert.match(state.finalSummary, /Completed rapidly|do not describe this as a long-running campaign/i);
     assert.ok(state.completedStages.some((stage) => stage.stageKind === "inspect"));
     assert.ok(state.completedStages.some((stage) => stage.stageKind === "mutation"));

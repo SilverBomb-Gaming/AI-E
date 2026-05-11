@@ -52,6 +52,7 @@ export type IterativeWorkCycleState = {
   activeWorkItem: string;
   completedStages: IterativeWorkCycleStage[];
   failedStages: IterativeWorkCycleStage[];
+  mutationReports: ScopedRepoPatchReport[];
   retryHistory: ScopedRepoPatchReport[];
   rollbackHistory: ScopedRepoPatchReport[];
   checkpoints: IterativeWorkCycleCheckpoint[];
@@ -146,6 +147,7 @@ export async function runIterativeAutonomousWorkCycle(input: IterativeWorkCycleI
   const startTime = now();
   const completedStages: IterativeWorkCycleStage[] = [];
   const failedStages: IterativeWorkCycleStage[] = [];
+  const mutationReports: ScopedRepoPatchReport[] = [];
   const checkpoints: IterativeWorkCycleCheckpoint[] = [];
   const retryHistory: ScopedRepoPatchReport[] = [];
   const rollbackHistory: ScopedRepoPatchReport[] = [];
@@ -186,6 +188,7 @@ export async function runIterativeAutonomousWorkCycle(input: IterativeWorkCycleI
     validationRunner: options.validationRunner,
     now,
   });
+  mutationReports.push(firstReport);
   latestMutationSummary = firstReport.proposedChangesSummary;
   completedStages.push(stage(`${input.cycleId}-execution-1`, "execution", firstReport.blockedReason ? "blocked" : "completed", now(), firstReport.blockedReason ?? "Initial supervised patch execution completed.", firstReport.mutationTrulyExecuted ? "real_mutation_stage" : "simulated_stage"));
   if (firstReport.mutationTrulyExecuted) {
@@ -233,6 +236,7 @@ export async function runIterativeAutonomousWorkCycle(input: IterativeWorkCycleI
         validationRunner: options.validationRunner,
         now,
       });
+      mutationReports.push(retryReport);
       retryHistory.push(retryReport);
       latestReport = retryReport;
       latestMutationSummary = retryReport.proposedChangesSummary;
@@ -264,6 +268,7 @@ export async function runIterativeAutonomousWorkCycle(input: IterativeWorkCycleI
     activeWorkItem: input.activeWorkItem,
     completedStages,
     failedStages,
+    mutationReports,
     retryHistory,
     rollbackHistory,
     checkpoints,

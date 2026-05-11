@@ -1,8 +1,31 @@
 import { runIterativeAutonomousWorkCycle, type IterativeRetryMode, type IterativeWorkCycleCheckpoint, type IterativeWorkCycleState } from "./iterativeAutonomousWorkCycleRuntime";
-import type { PatchMutationScope, PatchValidationPlan, ScopedRepoPatchRequest } from "./scopedRepoMutationRuntime";
+import type { PatchMutationScope, PatchValidationPlan, PatchValidationRunner, ScopedRepoPatchRequest } from "./scopedRepoMutationRuntime";
 
 export type OperatorWorkCycleStatus = "prepared" | "awaiting_approval" | "approved" | "running" | "completed" | "failed" | "blocked" | "interrupted" | "restored";
 export type IndependentExclusiveExecutionStatus = "not_real" | "partial" | "supervised_real" | "autonomous_real";
+export type OperatorWorkflowLifecycleStatus = "preparing" | "approval_requested" | "executing" | "mutating" | "validating" | "retrying" | "rollback" | "checkpointing" | "completed" | "blocked";
+
+export type OperatorWorkflowFeedEntry = {
+  status: OperatorWorkflowLifecycleStatus;
+  summary: string;
+  timestamp?: string;
+};
+
+export type OperatorWorkflowDiffPreview = {
+  filePath: string;
+  diffPreview: string;
+  mutationTrulyExecuted: boolean;
+};
+
+export type OperatorWorkflowRuntimeTransparency = {
+  independentExclusiveExecutionStatus: IndependentExclusiveExecutionStatus;
+  runtimeActuallyExecuted: boolean;
+  mutationTrulyOccurred: boolean;
+  validationTrulyExecuted: boolean;
+  rollbackAvailable: boolean;
+  simulatedRuntime: boolean;
+  blockedCapabilities: string[];
+};
 
 export type OperatorWorkCycleRequest = {
   cycleRequestId: string;
@@ -42,6 +65,21 @@ export type OperatorWorkCycleSummaryReport = {
   validationState: string;
   blockedState?: string;
   truthfulnessLabel: "operator_workflow_executed" | "operator_workflow_partial" | "operator_workflow_blocked" | "operator_workflow_not_real";
+  activeCycleDisplay: {
+    cycleRequestId: string;
+    currentStage: string;
+    elapsedRuntimeMs: number;
+    activeWorkItem: string;
+  };
+  visibleLifecycle: OperatorWorkflowFeedEntry[];
+  checkpointFeed: IterativeWorkCycleCheckpoint[];
+  mutationSummaryFeed: string[];
+  diffPreviews: OperatorWorkflowDiffPreview[];
+  changedFiles: string[];
+  validationFeed: NonNullable<IterativeWorkCycleState["mutationReports"][number]>["validationResults"];
+  rollbackFeed: string[];
+  retryFeed: string[];
+  runtimeTransparency: OperatorWorkflowRuntimeTransparency;
   summary: string;
 };
 
@@ -49,6 +87,7 @@ export type OperatorWorkCycleLaunchOptions = {
   trustedRepoRoot: string;
   enableMutation?: boolean;
   now?: () => string;
+  validationRunner?: PatchValidationRunner;
 };
 
 const activeCycles = new Map<string, OperatorWorkCycleSummaryReport>();
@@ -91,13 +130,59 @@ function independentStatus(request: OperatorWorkCycleRequest, state?: IterativeW
   return realMutation ? "supervised_real" : "partial";
 }
 
+function visibleLifecycleFor(request: OperatorWorkCycleRequest, state: IterativeWorkCycleState | undefined, blockedState?: string): OperatorWorkflowFeedEntry[] {
+  const lifecycle: OperatorWorkflowFeedEntry[] = [
+    { status: "preparing", summary: `Prepared bounded plan for ${request.cycleIntent}.` },
+    { status: "approval_requested", summary: `Approval status: ${request.approvalStatus}.` },
+  ];
+  if (blockedState) {
+    lifecycle.push({ status: "blocked", summary: blockedState });
+    return lifecycle;
+  }
+  if (!state) {
+    return lifecycle;
+  }
+  lifecycle.push({ status: "executing", summary: "Trusted operator runtime launched the bounded work cycle." });
+  if (state.mutationReports.some((report) => report.mutationTrulyExecuted)) {
+    lifecycle.push({ status: "mutating", summary: `Applied ${state.mutationReports.flatMap((report) => report.snapshots).length} approved file mutation snapshot(s).` });
+  }
+  if (state.mutationReports.some((report) => report.validationResults.length > 0)) {
+    lifecycle.push({ status: "validating", summary: state.validationOutcomes.at(-1) ?? "Validation results captured." });
+  }
+  if (state.retryCount > 0) {
+    lifecycle.push({ status: "retrying", summary: `Prepared or executed ${state.retryCount} supervised retry attempt(s).` });
+  }
+  if (state.rollbackCount > 0) {
+    lifecycle.push({ status: "rollback", summary: `Executed ${state.rollbackCount} rollback operation(s).` });
+  }
+  if (state.checkpointCount > 0) {
+    lifecycle.push({ status: "checkpointing", summary: `Persisted ${state.checkpointCount} checkpoint(s).` });
+  }
+  lifecycle.push({ status: state.failedStages.length > 0 ? "blocked" : "completed", summary: state.finalSummary });
+  return lifecycle;
+}
+
 function summaryFor(request: OperatorWorkCycleRequest, state: IterativeWorkCycleState | undefined, blockedState?: string): OperatorWorkCycleSummaryReport {
-  const status = state ? statusFromState(state) : blockedState ? "blocked" : request.approvalStatus === "approved" ? "approved" : "awaiting_approval";
+  const status = state ? statusFromState(state) : blockedState ? "blocked" : request.approvalStatus === "approved" ? "approved" : request.approvalStatus === "rejected" ? "blocked" : "awaiting_approval";
   const runtimeExecutedThroughOperatorWorkflow = Boolean(state);
   const independentExclusiveExecutionStatus = independentStatus(request, state, blockedState);
   const completedStages = state?.completedStages.map((stage) => stage.stageKind) ?? [];
   const failedStages = state?.failedStages.map((stage) => stage.stageKind) ?? [];
   const validationState = state?.validationOutcomes.at(-1) ?? "No validation executed.";
+  const mutationReports = state?.mutationReports ?? [];
+  const validationFeed = mutationReports.flatMap((report) => report.validationResults);
+  const changedFiles = Array.from(new Set(mutationReports.flatMap((report) => report.snapshots.map((snapshot) => snapshot.filePath))));
+  const diffPreviews = mutationReports.flatMap((report) => report.snapshots.map((snapshot) => ({
+    filePath: snapshot.filePath,
+    diffPreview: report.diffPreview,
+    mutationTrulyExecuted: report.mutationTrulyExecuted,
+  })));
+  const mutationSummaryFeed = mutationReports.map((report) => `${report.patchStatus}: ${report.proposedChangesSummary} (${report.mutationTruthfulnessLabel})`);
+  const rollbackFeed = state?.rollbackHistory.map((report) => `${report.patchStatus}: ${report.recommendedNextAction}`) ?? [];
+  const retryFeed = state?.retryHistory.map((report) => `${report.patchStatus}: ${report.recommendedNextAction}`) ?? [];
+  const mutationTrulyOccurred = mutationReports.some((report) => report.mutationTrulyExecuted);
+  const validationTrulyExecuted = validationFeed.some((result) => result.truthfulnessLabel === "real_validation_executed");
+  const rollbackAvailable = mutationReports.some((report) => report.rollbackAvailable);
   const truthfulnessLabel = blockedState
     ? "operator_workflow_blocked"
     : independentExclusiveExecutionStatus === "supervised_real"
@@ -128,6 +213,34 @@ function summaryFor(request: OperatorWorkCycleRequest, state: IterativeWorkCycle
     validationState,
     blockedState,
     truthfulnessLabel,
+    activeCycleDisplay: {
+      cycleRequestId: request.cycleRequestId,
+      currentStage: state?.completedStages.at(-1)?.stageKind ?? status,
+      elapsedRuntimeMs: state?.elapsedRuntimeMs ?? 0,
+      activeWorkItem: request.cycleIntent,
+    },
+    visibleLifecycle: visibleLifecycleFor(request, state, blockedState),
+    checkpointFeed: state?.checkpoints ?? [],
+    mutationSummaryFeed,
+    diffPreviews,
+    changedFiles,
+    validationFeed,
+    rollbackFeed,
+    retryFeed,
+    runtimeTransparency: {
+      independentExclusiveExecutionStatus,
+      runtimeActuallyExecuted: runtimeExecutedThroughOperatorWorkflow,
+      mutationTrulyOccurred,
+      validationTrulyExecuted,
+      rollbackAvailable,
+      simulatedRuntime: false,
+      blockedCapabilities: [
+        "unrestricted repo control",
+        "unattended background autonomy",
+        "arbitrary shell execution",
+        "Unity Editor control from this workflow",
+      ],
+    },
     summary,
   };
 }
@@ -165,8 +278,10 @@ export function prepareOperatorWorkCycleRequest(input: {
 
 export async function launchOperatorWorkCycle(request: OperatorWorkCycleRequest, options: OperatorWorkCycleLaunchOptions): Promise<OperatorWorkCycleRequest> {
   if (request.requiresApproval && request.approvalStatus !== "approved") {
-    const summaryReport = summaryFor(request, undefined, "Operator work cycle requires approval before launch.");
-    return { ...request, cycleStatus: "awaiting_approval", summaryReport };
+    const summaryReport = request.approvalStatus === "rejected"
+      ? summaryFor(request, undefined, "Operator rejected the work cycle; no runtime stages executed.")
+      : summaryFor(request, undefined);
+    return { ...request, cycleStatus: summaryReport.cycleStatus, summaryReport };
   }
   if (request.retryLimit < 0 || request.retryLimit > 2) {
     const summaryReport = summaryFor(request, undefined, "Retry limit must be between 0 and 2 for Phase 1 operator work cycles.");
@@ -185,6 +300,7 @@ export async function launchOperatorWorkCycle(request: OperatorWorkCycleRequest,
     trustedRepoRoot: options.trustedRepoRoot,
     enableMutation: options.enableMutation,
     now: options.now,
+    validationRunner: options.validationRunner,
   });
   const summaryReport = summaryFor(request, state);
   activeCycles.set(request.cycleRequestId, summaryReport);

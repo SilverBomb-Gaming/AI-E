@@ -10,6 +10,8 @@ import type { GameDevChatMessage, GameDevSessionContext } from "./gameDevChatTyp
 const starterPrompts = [
   "I want my player jump to feel less floaty.",
   "Help me add a basic enemy patrol system.",
+  "Fix the failing tests.",
+  "Inspect the interaction system.",
   "I have an idea for a game but I don't know how to explain it.",
   "Make me a Codex handoff for adding a basic collectible system in Unity.",
 ];
@@ -46,6 +48,19 @@ function routingLabel(route: GameDevChatMessage["route"]): string {
   return route.unityFirst ? "Unity-first" : "General";
 }
 
+function statusPillClass(status: string): string {
+  if (["completed", "validated", "supervised_real"].includes(status)) {
+    return "border-emerald-300/40 bg-emerald-400/10 text-emerald-100";
+  }
+  if (["blocked", "failed", "validation_failed", "rejected"].includes(status)) {
+    return "border-rose-300/40 bg-rose-400/10 text-rose-100";
+  }
+  if (["running", "executing", "mutating", "validating", "checkpointing"].includes(status)) {
+    return "border-cyan-300/40 bg-cyan-400/10 text-cyan-100";
+  }
+  return "border-white/15 bg-white/5 text-zinc-200";
+}
+
 export function GameDevChatClient() {
   const [messages, setMessages] = useState<GameDevChatMessage[]>([]);
   const [sessionContext, setSessionContext] = useState<GameDevSessionContext>(() => createInitialGameDevSessionContext());
@@ -57,6 +72,7 @@ export function GameDevChatClient() {
   const [meaningfulLongRunInFlight, setMeaningfulLongRunInFlight] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+  const latestWorkflow = [...messages].reverse().find((message) => message.workCycle)?.workCycle;
   const latestRoute = latestAssistant?.route;
   const scaffoldStatus = latestAssistant ? "✅ SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1" : "Ready for session-scoped chat";
 
@@ -82,7 +98,11 @@ export function GameDevChatClient() {
     activeSystem: sessionContext.activeGameplaySystem ?? "No active gameplay system yet",
     currentTask: sessionContext.currentImplementationTask ?? "No active task yet",
     latestHandoff: sessionContext.latestCodexHandoffTopic ?? "No Codex handoff in this session yet",
-  }), [latestRoute, sessionContext]);
+    activeCycle: latestWorkflow?.summaryReport?.activeCycleDisplay.cycleRequestId ?? latestWorkflow?.request.cycleRequestId ?? "No active repo workflow yet",
+    activeStage: latestWorkflow?.summaryReport?.activeCycleDisplay.currentStage ?? latestWorkflow?.request.cycleStatus ?? "idle",
+    activeRuntime: latestWorkflow?.summaryReport?.activeCycleDisplay.elapsedRuntimeMs ?? 0,
+    activeIndependentStatus: latestWorkflow?.summaryReport?.independentExclusiveExecutionStatus ?? "not_real",
+  }), [latestRoute, sessionContext, latestWorkflow]);
 
   function submitMessage(nextMessage?: string) {
     const content = (nextMessage ?? draft).trim();
@@ -237,6 +257,44 @@ export function GameDevChatClient() {
     } finally {
       setWorkCycleInFlight(null);
     }
+  }
+
+  async function handleWorkCycleRestore(messageId: string) {
+    const message = messages.find((entry) => entry.id === messageId);
+    if (!message?.workCycle || workCycleInFlight) {
+      return;
+    }
+
+    const cycleRequestId = message.workCycle.request.cycleRequestId;
+    setWorkCycleInFlight(cycleRequestId);
+    try {
+      const response = await fetch("/api/operator/work-cycle-launch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ restore: true, cycleRequestId }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof payload?.error === "string" ? payload.error : "Checkpoint restore failed.");
+      }
+      setMessages((current) => current.map((entry) => entry.id === messageId && entry.workCycle ? {
+        ...entry,
+        workCycle: {
+          ...entry.workCycle,
+          summaryReport: payload.summaryReport ?? entry.workCycle.summaryReport,
+        },
+      } : entry));
+    } catch (error) {
+      const failureMessage = error instanceof Error ? error.message : "Checkpoint restore failed.";
+      setMessages((current) => current.map((entry) => entry.id === messageId ? { ...entry, content: `${entry.content}\n\nCheckpoint restore error: ${failureMessage}` } : entry));
+    } finally {
+      setWorkCycleInFlight(null);
+    }
+  }
+
+  function handleWorkCycleLocalAction(messageId: string, action: "cancel" | "stop" | "retry") {
+    const label = action === "cancel" ? "Operator canceled the prepared workflow before execution." : action === "stop" ? "Stop requested. Phase 1 cycles are short server requests, so no unattended background run was left active." : "Retry requested. Use Approve Cycle again to submit another supervised request.";
+    setMessages((current) => current.map((entry) => entry.id === messageId ? { ...entry, content: `${entry.content}\n\n${label}` } : entry));
   }
 
   async function handleDurableContinuityRestore(messageId: string) {
@@ -447,8 +505,9 @@ export function GameDevChatClient() {
                         <div className="mt-3 overflow-hidden rounded-md border border-violet-400/30 bg-[#0b1220]">
                           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-400/20 px-3 py-2">
                             <span className="text-xs font-semibold uppercase tracking-[0.12em] text-violet-200">Operator Work Cycle</span>
-                            {!message.workCycle.summaryReport && (
-                              <div className="flex gap-2">
+                            <div className="flex flex-wrap gap-2">
+                              {!message.workCycle.summaryReport && (
+                                <>
                                 <button
                                   type="button"
                                   disabled={workCycleInFlight === message.workCycle.request.cycleRequestId}
@@ -465,8 +524,44 @@ export function GameDevChatClient() {
                                 >
                                   Reject
                                 </button>
-                              </div>
-                            )}
+                                <button
+                                  type="button"
+                                  disabled={workCycleInFlight === message.workCycle.request.cycleRequestId}
+                                  onClick={() => handleWorkCycleLocalAction(message.id, "cancel")}
+                                  className="rounded-md border border-white/15 bg-white/5 px-2 py-1 text-xs font-semibold text-zinc-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyan-300"
+                                >
+                                  Cancel
+                                </button>
+                                </>
+                              )}
+                              {message.workCycle.summaryReport && (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={workCycleInFlight === message.workCycle.request.cycleRequestId}
+                                    onClick={() => handleWorkCycleRestore(message.id)}
+                                    className="rounded-md border border-teal-300/40 bg-teal-500/10 px-2 py-1 text-xs font-semibold text-teal-100 hover:bg-teal-500/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-300"
+                                  >
+                                    Restore Checkpoint
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={workCycleInFlight === message.workCycle.request.cycleRequestId}
+                                    onClick={() => handleWorkCycleApproval(message.id, "approved")}
+                                    className="rounded-md border border-amber-300/40 bg-amber-500/10 px-2 py-1 text-xs font-semibold text-amber-100 hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300"
+                                  >
+                                    Request Retry
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleWorkCycleLocalAction(message.id, "stop")}
+                                    className="rounded-md border border-rose-300/40 bg-rose-500/10 px-2 py-1 text-xs font-semibold text-rose-100 hover:bg-rose-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-300"
+                                  >
+                                    Stop Active Run
+                                  </button>
+                                </>
+                              )}
+                            </div>
                           </div>
                           <div className="grid gap-2 p-3 text-xs leading-5 text-zinc-300 md:grid-cols-2">
                             <p><span className="font-semibold text-zinc-100">Cycle:</span> {message.workCycle.request.cycleRequestId}</p>
@@ -484,7 +579,47 @@ export function GameDevChatClient() {
                                 <p><span className="font-semibold text-zinc-100">Rollbacks:</span> {message.workCycle.summaryReport.rollbackCount}</p>
                                 <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Validation:</span> {message.workCycle.summaryReport.validationState}</p>
                                 <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Summary:</span> {message.workCycle.summaryReport.summary}</p>
-                                <pre className="md:col-span-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{message.workCycle.summaryReport.completedStages.join(" -> ") || "No completed stages reported."}</pre>
+                                <div className="md:col-span-2 rounded-md border border-white/10 bg-[#070b12] p-3">
+                                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-violet-200">Visible Lifecycle</p>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {message.workCycle.summaryReport.visibleLifecycle.map((event, index) => (
+                                      <span key={`${event.status}-${index}`} title={event.summary} className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${statusPillClass(event.status)}`}>{event.status}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="md:col-span-2 grid gap-2 md:grid-cols-2">
+                                  <div className="rounded-md border border-white/10 bg-[#070b12] p-3">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200">Checkpoint Feed</p>
+                                    <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-zinc-200">{message.workCycle.summaryReport.checkpointFeed.map((checkpoint) => `${checkpoint.checkpointId}: ${checkpoint.completedStages.join(" -> ")} | ${checkpoint.validationOutcomeSummary}`).join("\n") || "No checkpoints reported."}</pre>
+                                  </div>
+                                  <div className="rounded-md border border-white/10 bg-[#070b12] p-3">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-emerald-200">Mutation Summary</p>
+                                    <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-zinc-200">{message.workCycle.summaryReport.mutationSummaryFeed.join("\n") || "No mutation summary reported."}</pre>
+                                  </div>
+                                  <div className="rounded-md border border-white/10 bg-[#070b12] p-3">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-200">Validation Feed</p>
+                                    <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-zinc-200">{message.workCycle.summaryReport.validationFeed.map((result) => `${result.command}: ${result.status} exit=${result.exitCode ?? "none"} ${result.truthfulnessLabel}`).join("\n") || "No real validation command reported."}</pre>
+                                  </div>
+                                  <div className="rounded-md border border-white/10 bg-[#070b12] p-3">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-rose-200">Rollback / Retry Feed</p>
+                                    <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-zinc-200">{[...message.workCycle.summaryReport.rollbackFeed.map((entry) => `rollback: ${entry}`), ...message.workCycle.summaryReport.retryFeed.map((entry) => `retry: ${entry}`)].join("\n") || "No rollback or retry executed."}</pre>
+                                  </div>
+                                </div>
+                                <div className="md:col-span-2 rounded-md border border-white/10 bg-[#070b12] p-3">
+                                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-200">Diff Preview And Changed Files</p>
+                                  <p className="mt-2 text-[11px] text-zinc-300">Changed files: {message.workCycle.summaryReport.changedFiles.join(", ") || "none"}</p>
+                                  <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap text-[11px] leading-5 text-zinc-200">{message.workCycle.summaryReport.diffPreviews.map((entry) => entry.diffPreview).join("\n\n") || "No diff preview reported."}</pre>
+                                </div>
+                                <div className="md:col-span-2 rounded-md border border-white/10 bg-[#070b12] p-3">
+                                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-200">Runtime Transparency</p>
+                                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                    <p>Runtime executed: {String(message.workCycle.summaryReport.runtimeTransparency.runtimeActuallyExecuted)}</p>
+                                    <p>Mutation occurred: {String(message.workCycle.summaryReport.runtimeTransparency.mutationTrulyOccurred)}</p>
+                                    <p>Validation executed: {String(message.workCycle.summaryReport.runtimeTransparency.validationTrulyExecuted)}</p>
+                                    <p>Simulated runtime: {String(message.workCycle.summaryReport.runtimeTransparency.simulatedRuntime)}</p>
+                                    <p className="md:col-span-2">Blocked: {message.workCycle.summaryReport.runtimeTransparency.blockedCapabilities.join(", ")}</p>
+                                  </div>
+                                </div>
                               </>
                             )}
                           </div>
@@ -603,6 +738,32 @@ export function GameDevChatClient() {
         </section>
 
         <aside className="hidden w-80 flex-col gap-3 lg:flex">
+          <div className="rounded-lg border border-violet-400/30 bg-[#0d1420] p-4 shadow-2xl shadow-black/20">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-200">Active Work Panel</p>
+            <h2 className="mt-2 break-words text-lg font-semibold text-zinc-50">{modeSummary.activeCycle}</h2>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${statusPillClass(modeSummary.activeStage)}`}>{modeSummary.activeStage}</span>
+              <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${statusPillClass(modeSummary.activeIndependentStatus)}`}>{modeSummary.activeIndependentStatus}</span>
+            </div>
+            <dl className="mt-4 space-y-3 text-sm">
+              <div>
+                <dt className="font-semibold text-zinc-100">Elapsed Runtime</dt>
+                <dd className="mt-1 text-zinc-300">{modeSummary.activeRuntime}ms</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-zinc-100">Checkpoint Feed</dt>
+                <dd className="mt-1 text-zinc-300">{latestWorkflow?.summaryReport?.checkpointCount ?? 0} checkpoint(s) visible after execution</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-zinc-100">Mutation Proof</dt>
+                <dd className="mt-1 text-zinc-300">{latestWorkflow?.summaryReport?.runtimeTransparency.mutationTrulyOccurred ? "diff preview and changed files visible" : "waiting for approved mutation"}</dd>
+              </div>
+              <div>
+                <dt className="font-semibold text-zinc-100">Validation Proof</dt>
+                <dd className="mt-1 text-zinc-300">{latestWorkflow?.summaryReport?.runtimeTransparency.validationTrulyExecuted ? "real validation output captured" : "waiting for approved validation"}</dd>
+              </div>
+            </dl>
+          </div>
           <div className="rounded-lg border border-white/10 bg-[#0d1420] p-4 shadow-2xl shadow-black/20">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-300">Current Mode</p>
             <h2 className="mt-2 text-lg font-semibold text-zinc-50">{modeSummary.conversationMode}</h2>
@@ -662,7 +823,7 @@ export function GameDevChatClient() {
           </div>
           <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-sm leading-6 text-amber-100 shadow-2xl shadow-black/20">
             <p className="font-semibold text-amber-50">Truthful Scope</p>
-            <p className="mt-2">This page is a real chat UI with conversational orchestration, deterministic task classification, and local-browser project/task context. It does not provide cross-browser or long-term AI memory, autonomously edit files, control Unity, run playtests, or claim implementation.</p>
+            <p className="mt-2">This page can prepare supervised repo workflows and launch approved bounded runtime requests. It can show real mutation, validation, checkpoint, retry, and rollback evidence when the trusted server runtime performs it; it still does not provide unrestricted repo control, unattended autonomy, direct Unity control, or overnight background work.</p>
           </div>
         </aside>
       </div>

@@ -48,6 +48,40 @@ test("launches a bounded work cycle from operator flow", async () => {
   });
 });
 
+test("operator workflow summary exposes visible lifecycle mutation validation checkpoint and diff evidence", async () => {
+  await withTempRepo(async (repoRoot) => {
+    const approved = { ...request(), approvalStatus: "approved" as const, validationPlan: { commands: ["git diff --name-only"] } };
+    const launched = await launchOperatorWorkCycle(approved, {
+      trustedRepoRoot: repoRoot,
+      enableMutation: true,
+      validationRunner: async (command) => ({
+        command,
+        status: "passed",
+        stdout: "runner_artifacts/operator_work_cycle/latest_cycle_request.txt\n",
+        stderr: "",
+        exitCode: 0,
+        elapsedMs: 12,
+        truthfulnessLabel: "real_validation_executed",
+      }),
+    });
+
+    const summary = launched.summaryReport;
+    assert.ok(summary);
+    assert.ok(summary.visibleLifecycle.some((entry) => entry.status === "approval_requested"));
+    assert.ok(summary.visibleLifecycle.some((entry) => entry.status === "mutating"));
+    assert.ok(summary.visibleLifecycle.some((entry) => entry.status === "validating"));
+    assert.ok(summary.visibleLifecycle.some((entry) => entry.status === "checkpointing"));
+    assert.equal(summary.changedFiles.includes("runner_artifacts/operator_work_cycle/latest_cycle_request.txt"), true);
+    assert.match(summary.diffPreviews[0]?.diffPreview ?? "", /diff -- runner_artifacts\/operator_work_cycle\/latest_cycle_request.txt/);
+    assert.equal(summary.validationFeed[0]?.truthfulnessLabel, "real_validation_executed");
+    assert.equal(summary.runtimeTransparency.runtimeActuallyExecuted, true);
+    assert.equal(summary.runtimeTransparency.mutationTrulyOccurred, true);
+    assert.equal(summary.runtimeTransparency.validationTrulyExecuted, true);
+    assert.equal(summary.runtimeTransparency.simulatedRuntime, false);
+    assert.match(summary.runtimeTransparency.blockedCapabilities.join(" "), /unrestricted repo control/);
+  });
+});
+
 test("approval is required before launch", async () => {
   await withTempRepo(async (repoRoot) => {
     const launched = await launchOperatorWorkCycle(request(), { trustedRepoRoot: repoRoot, enableMutation: true });
@@ -101,5 +135,18 @@ test("retry limits are enforced by operator launcher", async () => {
     assert.equal(launched.cycleStatus, "blocked");
     assert.equal(launched.summaryReport?.independentExclusiveExecutionStatus, "not_real");
     assert.match(launched.summaryReport?.blockedState ?? "", /Retry limit/);
+  });
+});
+
+test("rejected workflow is blocked without fake execution", async () => {
+  await withTempRepo(async (repoRoot) => {
+    const rejected = { ...request(), approvalStatus: "rejected" as const };
+    const launched = await launchOperatorWorkCycle(rejected, { trustedRepoRoot: repoRoot, enableMutation: true });
+
+    assert.equal(launched.cycleStatus, "blocked");
+    assert.equal(launched.summaryReport?.cycleStatus, "blocked");
+    assert.equal(launched.summaryReport?.runtimeTransparency.runtimeActuallyExecuted, false);
+    assert.equal(launched.summaryReport?.runtimeTransparency.mutationTrulyOccurred, false);
+    assert.equal(launched.summaryReport?.independentExclusiveExecutionStatus, "not_real");
   });
 });

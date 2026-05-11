@@ -1,8 +1,10 @@
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { NextResponse } from "next/server";
 
 import { createFileBackedDurableProjectMemoryStore } from "@/lib/aie/durableProjectMemoryStore";
 import { launchOperatorWorkCycle, restoreOperatorWorkCycleCheckpoint, type OperatorWorkCycleRequest } from "@/lib/aie/operatorWorkCycleLauncher";
+import type { PatchValidationResult } from "@/lib/aie/scopedRepoMutationRuntime";
 
 export const runtime = "nodejs";
 
@@ -46,7 +48,7 @@ function normalizeRequest(value: unknown): OperatorWorkCycleRequest | null {
     },
     requiresApproval: true,
     approvalStatus: source.approvalStatus,
-    cycleStatus: "approved",
+    cycleStatus: source.approvalStatus === "approved" ? "approved" : source.approvalStatus === "rejected" ? "blocked" : "awaiting_approval",
     proposedChanges: proposedChanges
       .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
       .filter((entry) => typeof entry.filePath === "string" && typeof entry.proposedContent === "string")
@@ -56,6 +58,46 @@ function normalizeRequest(value: unknown): OperatorWorkCycleRequest | null {
     stageHistory: [],
     checkpointHistory: [],
   };
+}
+
+function runAllowlistedValidation(command: string, workingDirectory: string): Promise<PatchValidationResult> {
+  const started = Date.now();
+  const trimmed = command.trim();
+  const invocation = trimmed === "git diff --name-only"
+    ? { executable: "git", args: ["diff", "--name-only"] }
+    : trimmed === "git status --short"
+      ? { executable: "git", args: ["status", "--short"] }
+      : undefined;
+
+  if (!invocation) {
+    return Promise.resolve({
+      command,
+      status: "skipped",
+      stdout: "",
+      stderr: "Validation command is outside the operator workflow allowlist.",
+      exitCode: null,
+      elapsedMs: 0,
+      truthfulnessLabel: "validation_skipped",
+    });
+  }
+
+  return new Promise((resolve) => {
+    const child = spawn(invocation.executable, invocation.args, { cwd: workingDirectory, shell: false });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => {
+      resolve({ command, status: "failed", stdout, stderr: `${stderr}${error.message}`, exitCode: 1, elapsedMs: Date.now() - started, truthfulnessLabel: "real_validation_executed" });
+    });
+    child.on("close", (code) => {
+      resolve({ command, status: code === 0 ? "passed" : "failed", stdout, stderr, exitCode: code, elapsedMs: Date.now() - started, truthfulnessLabel: "real_validation_executed" });
+    });
+  });
 }
 
 export async function POST(request: Request) {
@@ -83,6 +125,7 @@ export async function POST(request: Request) {
   const launched = await launchOperatorWorkCycle(cycleRequest, {
     trustedRepoRoot,
     enableMutation: process.env.AIE_ENABLE_SCOPED_REPO_MUTATION === "true",
+    validationRunner: runAllowlistedValidation,
   });
   const durableState = await durableStore.recordOperatorCycle(launched, typeof body.previousCycleId === "string" ? body.previousCycleId : undefined);
   return NextResponse.json({ ...launched, durableState });

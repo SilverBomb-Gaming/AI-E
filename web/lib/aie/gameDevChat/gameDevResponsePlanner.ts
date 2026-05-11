@@ -138,18 +138,29 @@ function formatDurableContinuityResponse(durableContinuity: NonNullable<GameDevC
 }
 
 function detectOperatorWorkCycleRequest(message: string): OperatorWorkCycleRequest | undefined {
-  if (!/\b(fix the failing tests|continue the repo work|apply the approved patch|run the bounded work cycle|continue the supervised cycle)\b/i.test(message)) {
+  const repoTask = inferRepoWorkflowTask(message);
+  if (!repoTask) {
     return undefined;
   }
   const normalized = message.toLowerCase();
   const cycleRequestId = `work-cycle-${Math.abs(Array.from(normalized).reduce((hash, char) => ((hash << 5) - hash) + char.charCodeAt(0), 0)).toString(16)}`;
   const filePath = "runner_artifacts/operator_work_cycle/latest_cycle_request.txt";
+  const plannedLines = [
+    `cycleRequestId=${cycleRequestId}`,
+    `taskCategory=${repoTask.category}`,
+    `operatorRequest=${message}`,
+    `intendedActions=${repoTask.intendedActions.join(" | ")}`,
+    `requiredCapabilities=${repoTask.requiredCapabilities.join(" | ")}`,
+    "visibleLifecycle=preparing -> approval_requested -> executing -> mutating -> validating -> checkpointing -> completed_or_blocked",
+    "truthfulness=bounded supervised repo workflow proof; no unrestricted repo control",
+    "",
+  ].join("\n");
 
   return {
     cycleRequestId,
-    cycleIntent: "launch bounded supervised operator work cycle",
+    cycleIntent: `bounded supervised repo workflow: ${repoTask.category}`,
     targetFiles: [filePath],
-    validationPlan: { commands: [] },
+    validationPlan: { commands: ["git diff --name-only"] },
     rollbackPlan: "Restore the pre-cycle artifact snapshot captured by the scoped patch runtime.",
     retryLimit: 1,
     mutationScope: {
@@ -161,13 +172,51 @@ function detectOperatorWorkCycleRequest(message: string): OperatorWorkCycleReque
     cycleStatus: "prepared",
     proposedChanges: [{
       filePath,
-      proposedContent: [`cycleRequestId=${cycleRequestId}`, "intent=launch bounded supervised operator work cycle", "status=prepared", ""].join("\n"),
+      proposedContent: plannedLines,
     }],
     retryMode: "supervised_retry",
     rollbackOnValidationFailure: true,
     stageHistory: [],
     checkpointHistory: [],
   };
+}
+
+function inferRepoWorkflowTask(message: string): { category: string; intendedActions: string[]; requiredCapabilities: string[] } | undefined {
+  const lower = message.toLowerCase();
+  const candidates = [
+    {
+      category: "validation_repair",
+      patterns: [/fix .*failing test/, /failing tests?/, /repair .*test/, /test failure/],
+      intendedActions: ["inspect current repo state", "record bounded repair intent", "mutate only the approved workflow artifact", "run allowlisted validation evidence"],
+      requiredCapabilities: ["scoped mutation", "rollback snapshot", "validation feed", "checkpoint persistence"],
+    },
+    {
+      category: "approved_patch_application",
+      patterns: [/apply .*approved patch/, /approved patch/, /continue .*approved repo work/, /continue .*repo work/],
+      intendedActions: ["prepare approved patch application lane", "apply the bounded artifact mutation", "capture diff preview", "checkpoint result"],
+      requiredCapabilities: ["operator approval", "scoped mutation", "diff preview", "checkpoint persistence"],
+    },
+    {
+      category: "repo_inspection",
+      patterns: [/inspect .*interaction system/, /inspect .*system/, /check .*interaction/, /review .*repo/],
+      intendedActions: ["classify requested system", "record inspection target", "validate repo-visible diff evidence", "summarize blocked deeper inspection"],
+      requiredCapabilities: ["dynamic task routing", "bounded execution", "validation feed", "truthful blockers"],
+    },
+    {
+      category: "experience_polish",
+      patterns: [/improve .*ui atmosphere/, /improve .*atmosphere/, /polish .*ui/],
+      intendedActions: ["classify experience-polish request", "record bounded UI improvement intent", "capture diff preview", "surface next human-review step"],
+      requiredCapabilities: ["dynamic task routing", "scoped mutation", "diff preview", "operator review"],
+    },
+    {
+      category: "general_bounded_repo_work",
+      patterns: [/run .*bounded work cycle/, /continue .*supervised cycle/, /repo task/, /bounded repo work/],
+      intendedActions: ["prepare bounded supervised repo workflow", "apply approved artifact mutation", "validate observable change", "checkpoint final state"],
+      requiredCapabilities: ["operator approval", "scoped mutation", "validation feed", "checkpoint persistence"],
+    },
+  ];
+  const match = candidates.find((candidate) => candidate.patterns.some((pattern) => pattern.test(lower)));
+  return match ? { category: match.category, intendedActions: match.intendedActions, requiredCapabilities: match.requiredCapabilities } : undefined;
 }
 
 function formatWorkCycleResponse(workCycle: NonNullable<GameDevChatResponse["workCycle"]>): string {
@@ -181,6 +230,8 @@ function formatWorkCycleResponse(workCycle: NonNullable<GameDevChatResponse["wor
     `Retry limit: ${request.retryLimit}`,
     `Approval status: ${request.approvalStatus}`,
     `Cycle status: ${request.cycleStatus}`,
+    `Validation plan: ${request.validationPlan.commands.join(", ") || "none"}`,
+    "Visible lifecycle: preparing, approval requested, executing, mutating, validating, checkpointing, completed or blocked.",
     "Truthfulness: no cycle ran from the chat planner; approval launches the trusted operator runtime API.",
   ].join("\n");
 }

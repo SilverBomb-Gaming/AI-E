@@ -164,6 +164,29 @@ test("bounded work cycle prompt prepares an operator cycle without running it", 
   assert.doesNotMatch(response.assistantMessage, /I executed|I mutated|I validated/i);
 });
 
+test("repo workflow prompt dynamically prepares visible supervised work", () => {
+  const response = planGameDevChatResponse("inspect the interaction system");
+
+  assert.equal(response.route.mode, "OPERATOR_WORK_CYCLE_REQUEST");
+  assert.ok(response.workCycle);
+  assert.match(response.workCycle.request.cycleIntent, /repo_inspection/);
+  assert.deepEqual(response.workCycle.request.validationPlan.commands, ["git diff --name-only"]);
+  assert.match(response.workCycle.request.proposedChanges[0]?.proposedContent ?? "", /requiredCapabilities=/);
+  assert.match(response.assistantMessage, /Visible lifecycle: preparing, approval requested, executing, mutating, validating, checkpointing, completed or blocked/);
+  assert.match(response.assistantMessage, /chat planner; approval launches the trusted operator runtime API/);
+  assert.doesNotMatch(response.assistantMessage, /I executed|I mutated|I validated|autonomous_real/i);
+});
+
+test("UI atmosphere request routes to generalized repo workflow instead of hardcoded domain lane", () => {
+  const response = planGameDevChatResponse("improve the UI atmosphere");
+
+  assert.equal(response.route.mode, "OPERATOR_WORK_CYCLE_REQUEST");
+  assert.ok(response.workCycle);
+  assert.match(response.workCycle.request.cycleIntent, /experience_polish/);
+  assert.match(response.workCycle.request.proposedChanges[0]?.proposedContent ?? "", /dynamic task routing|scoped mutation|diff preview|operator review/i);
+  assert.equal(response.changedFilesClaimed, false);
+});
+
 test("durable continuity prompt prepares restore request without fake persistence claims", () => {
   const response = planGameDevChatResponse("resume previous campaign");
 
