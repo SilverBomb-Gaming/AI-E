@@ -143,25 +143,32 @@ function formatDurableContinuityResponse(durableContinuity: NonNullable<GameDevC
 }
 
 function formatRuntimeIntrospectionResponse(reasoning: ConversationalReasoningResult): string {
+  const runtime = reasoning.runtimeIntrospection;
   return [
     "Here is the truthful runtime picture I can infer from the current chat surface.",
     "",
     "What is real:",
-    ...reasoning.runtimeAwareness.realCapabilities.map((capability) => `- ${capability}`),
+    ...(runtime?.real ?? reasoning.runtimeAwareness.realCapabilities).map((capability) => `- ${capability}`),
     "",
     "What is bounded/supervised:",
-    "- Approved operator work cycles can run only through trusted server routes and explicit approval gates.",
-    "- Scoped execution remains allowlisted, timeout-bounded, and rollback-aware when enabled.",
-    "- Long-run and durable runtime flows report measured state; they do not imply unattended autonomy.",
+    ...(runtime?.bounded ?? [
+      "Approved operator work cycles can run only through trusted server routes and explicit approval gates.",
+      "Scoped execution remains allowlisted, timeout-bounded, and rollback-aware when enabled.",
+      "Long-run and durable runtime flows report measured state; they do not imply unattended autonomy.",
+    ]).map((capability) => `- ${capability}`),
     "",
     "What still depends on external tools:",
-    "- Copilot/Codex or another implementation agent is still needed for broad code-writing beyond the bounded workflow artifact lane.",
-    "- Unity Editor playmode/control still needs an approved trusted bridge and project-lock-safe validation hooks.",
-    "- Browser/operator UI smoke checks still require a running local dev server and explicit operator interaction.",
+    ...(runtime?.external ?? [
+      "Copilot/Codex or another implementation agent is still needed for broad code-writing beyond the bounded workflow artifact lane.",
+      "Unity Editor playmode/control still needs an approved trusted bridge and project-lock-safe validation hooks.",
+      "Browser/operator UI smoke checks still require a running local dev server and explicit operator interaction.",
+    ]).map((capability) => `- ${capability}`),
     "",
     "What is blocked:",
-    ...reasoning.runtimeAwareness.blockedCapabilities.map((capability) => `- ${capability}`),
-    "- autonomous_real, unrestricted repo autonomy, arbitrary shell access, direct Unity control, and unattended overnight operation remain unavailable.",
+    ...(runtime?.blocked ?? [
+      ...reasoning.runtimeAwareness.blockedCapabilities,
+      "autonomous_real, unrestricted repo autonomy, arbitrary shell access, direct Unity control, and unattended overnight operation remain unavailable.",
+    ]).map((capability) => `- ${capability}`),
     "",
     `Safest next step: ${reasoning.nextUsefulStep}`,
   ].join("\n");
@@ -389,27 +396,34 @@ function formatDeepGameplayFeedbackResponse(reasoning: ConversationalReasoningRe
   if (!feedback) {
     return undefined;
   }
-  return [
-    `What this probably means: ${feedback.whatThisProbablyMeans}`,
-    feedback.contextualLens ? `Context lens: ${feedback.contextualLens}` : undefined,
-    "",
-    "Decomposition dimensions:",
-    ...feedback.dimensions.map((dimension) => `- ${dimension}`),
-    "",
-    "Likely causes:",
-    ...feedback.likelyCauses.map((cause) => `- ${cause}`),
-    "",
-    "Highest leverage fixes:",
-    ...feedback.highestLeverageFixes.map((fix) => `- ${fix}`),
-    "",
-    "Diagnostic questions:",
-    ...feedback.diagnosticQuestions.map((question) => `- ${question}`),
-    "",
-    "Small validation loop:",
-    ...feedback.smallValidationLoop.map((step) => `- ${step}`),
-    "",
-    `If you want AI-E to act: ${feedback.optionalBoundedWorkflowSuggestion}`,
-  ].filter((entry): entry is string => Boolean(entry)).join("\n");
+  const sections = {
+    meaning: [`What this probably means: ${feedback.whatThisProbablyMeans}`],
+    context: feedback.contextualLens ? [`Context lens: ${feedback.contextualLens}`] : [],
+    dimensions: ["Decomposition dimensions:", ...feedback.dimensions.map((dimension) => `- ${dimension}`)],
+    causes: ["Likely causes:", ...feedback.likelyCauses.map((cause) => `- ${cause}`)],
+    fixes: ["Highest leverage fixes:", ...feedback.highestLeverageFixes.map((fix) => `- ${fix}`)],
+    questions: ["Diagnostic questions:", ...feedback.diagnosticQuestions.map((question) => `- ${question}`)],
+    validation: ["Small validation loop:", ...feedback.smallValidationLoop.map((step) => `- ${step}`)],
+    action: [`If you want AI-E to act: ${feedback.optionalBoundedWorkflowSuggestion}`],
+  };
+  const order = (() => {
+    switch (feedback.synthesisVariant) {
+      case "player_psychology_first":
+        return [sections.meaning, sections.context, sections.questions, sections.causes, sections.fixes, sections.dimensions, sections.validation, sections.action];
+      case "system_loop_first":
+        return [sections.dimensions, sections.meaning, sections.causes, sections.fixes, sections.questions, sections.validation, sections.action];
+      case "scene_beat_first":
+        return [sections.meaning, sections.context, sections.validation, sections.causes, sections.fixes, sections.dimensions, sections.questions, sections.action];
+      case "validation_first":
+        return [sections.validation, sections.meaning, sections.causes, sections.fixes, sections.questions, sections.dimensions, sections.action];
+      case "contrast_consequence_first":
+        return [sections.meaning, sections.causes, sections.fixes, sections.validation, sections.questions, sections.dimensions, sections.action];
+      case "diagnosis_first":
+      default:
+        return [sections.meaning, sections.context, sections.dimensions, sections.causes, sections.fixes, sections.questions, sections.validation, sections.action];
+    }
+  })();
+  return order.flatMap((section) => section.length > 0 ? [...section, ""] : []).filter((entry, index, entries) => entry || entries[index + 1]).join("\n").trim();
 }
 
 function openingFor(route: GameDevChatRoute): string {
@@ -796,13 +810,39 @@ export function planGameDevChatResponse(message: string, context?: GameDevConver
     };
   }
 
+  if (isRuntimeIntrospectionRequest(message)) {
+    const route: GameDevChatRoute = {
+      mode: "CAPABILITY_HELP",
+      conversationMode: "CAPABILITY_HELP",
+      detectedIntent: "Runtime capability status query",
+      confidence: "HIGH",
+      unityFirst: false,
+      needsClarification: false,
+      safetyStatus: "SAFE_RESPONSE_ONLY",
+      suggestedNextAction: "Use the runtime capability breakdown before choosing a planning or approved execution path.",
+      keywords: ["runtime", "capability", "introspection"],
+    };
+    const reasoning = runConversationalReasoning({ message, route, sessionContext: context?.sessionContext, subsystem: "conversation" });
+    const assistantMessage = withReasoning(formatRuntimeIntrospectionResponse(reasoning), reasoning);
+    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage, undefined, reasoning);
+
+    return {
+      route,
+      assistantMessage,
+      reasoning,
+      sessionContext,
+      scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1",
+      changedFilesClaimed: false,
+    };
+  }
+
   const campaign = isDevelopmentCampaignRequest(message) ? runDevelopmentCampaignEngine() : undefined;
   const route = campaign ? campaignRoute() : orchestrateGameDevChat(message, context);
   const reasoning = runConversationalReasoning({ message, route, sessionContext: context?.sessionContext, subsystem: campaign ? "development_campaign" : "conversation" });
   const shouldGenerateHandoff = route.mode === "CODEX_HANDOFF_REQUEST" || route.taskMode === "CODEX_HANDOFF_REQUEST";
   const codexHandoff = shouldGenerateHandoff ? generateGameDevCodexHandoff(message, route) : undefined;
-  const baseMessage = isRuntimeIntrospectionRequest(message) ? formatRuntimeIntrospectionResponse(reasoning) : campaign ? formatCampaignResponse(campaign) : formatResponse(message, route, shouldGenerateHandoff, context, reasoning);
-  const assistantMessage = isRuntimeIntrospectionRequest(message) ? withReasoning(baseMessage, reasoning) : campaign ? withReasoning(baseMessage, reasoning) : baseMessage;
+  const baseMessage = campaign ? formatCampaignResponse(campaign) : formatResponse(message, route, shouldGenerateHandoff, context, reasoning);
+  const assistantMessage = campaign ? withReasoning(baseMessage, reasoning) : baseMessage;
   const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage, codexHandoff, reasoning);
   const scaffoldStatus = route.safetyStatus === "BLOCKED" ? "PARTIAL_CHAT_MODE" : "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1";
 

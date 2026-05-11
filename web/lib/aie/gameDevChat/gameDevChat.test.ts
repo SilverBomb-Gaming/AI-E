@@ -332,33 +332,134 @@ test("smart fallback still decomposes unknown design feedback", () => {
 
   assert.equal(response.reasoning?.inferredFeedbackCategory, "smart_feedback_fallback");
   assert.equal(response.reasoning?.categoryMatchKind, "smart_fallback");
-  assert.match(response.reasoning?.fallbackReason ?? "", /No deeper category alias matched/i);
-  assert.ok(response.reasoning?.decompositionDimensions.includes("probable player experience"));
+  assert.match(response.reasoning?.fallbackReason ?? "", /fallback lens/i);
+  assert.ok(response.reasoning?.decompositionDimensions.includes("player symptom"));
   assert.match(response.assistantMessage, /What this probably means/);
   assert.match(response.assistantMessage, /Diagnostic questions/);
   assert.doesNotMatch(response.assistantMessage, /Clarify the real target|Identify the smallest useful next step|Name the relevant capability boundary|Keep the next step small and testable/i);
+});
+
+test("curiosity reward decay gets specific synthesis and next step", () => {
+  const response = planGameDevChatResponse("the game slowly stops rewarding curiosity");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "curiosity_reward_decay");
+  assert.equal(response.reasoning?.categoryMatchKind, "alias");
+  assert.equal(response.reasoning?.gameplayFeedback?.synthesisVariant, "player_psychology_first");
+  assert.match(response.reasoning?.nextUsefulStep ?? "", /Map the next three discoveries/i);
+  assert.match(response.assistantMessage, /discovery promise|question carryover|player hypothesis/i);
+  assert.match(response.assistantMessage, /Map the next three discoveries/i);
+  assert.doesNotMatch(response.assistantMessage, /probable player experience|likely system area|cause category|I edited|I ran Unity/i);
+});
+
+test("consequence decay gets stakes-specific reasoning and next step", () => {
+  const response = planGameDevChatResponse("the player stops fearing consequences");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "consequence_decay");
+  assert.equal(response.reasoning?.gameplayFeedback?.synthesisVariant, "contrast_consequence_first");
+  assert.match(response.reasoning?.nextUsefulStep ?? "", /failure stops changing player behavior/i);
+  assert.match(response.assistantMessage, /failure memory|behavior change|world reaction/i);
+  assert.match(response.assistantMessage, /Find the first decision where failure stops changing player behavior/i);
+  assert.doesNotMatch(response.assistantMessage, /probable player experience|likely system area|I edited|I ran Unity/i);
+});
+
+test("mechanical emotional mismatch gets contrast-specific reasoning", () => {
+  const response = planGameDevChatResponse("the game feels mechanically alive but emotionally dead");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "mechanical_emotional_mismatch");
+  assert.match(response.reasoning?.nextUsefulStep ?? "", /emotional aftermath/i);
+  assert.match(response.assistantMessage, /mechanical activity|emotional aftermath|world acknowledgement/i);
+  assert.match(response.assistantMessage, /Choose one working mechanic/i);
+  assert.doesNotMatch(response.assistantMessage, /probable player experience|likely system area|I edited|I ran Unity/i);
+});
+
+test("uncertainty predictability gets fair-disruption reasoning", () => {
+  const response = planGameDevChatResponse("the uncertainty becomes predictable");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "uncertainty_predictability");
+  assert.equal(response.reasoning?.gameplayFeedback?.synthesisVariant, "validation_first");
+  assert.match(response.reasoning?.nextUsefulStep ?? "", /break only one part of it fairly/i);
+  assert.match(response.assistantMessage, /learned pattern|fair rule break|warning cadence/i);
+  assert.match(response.assistantMessage, /List the pattern players have learned/i);
+  assert.doesNotMatch(response.assistantMessage, /probable player experience|likely system area|I edited|I ran Unity/i);
+});
+
+test("past safety doubt avoids over-triggered implementation routing", () => {
+  const response = planGameDevChatResponse("how do I make players doubt whether a room was previously safe?");
+
+  assert.notEqual(response.route.taskMode, "UNITY_IMPLEMENTATION_PLAN");
+  assert.equal(response.route.taskMode, "PLAYTEST_FEEDBACK");
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "past_safety_doubt");
+  assert.equal(response.reasoning?.gameplayFeedback?.synthesisVariant, "scene_beat_first");
+  assert.match(response.reasoning?.nextUsefulStep ?? "", /safe room.*later-return clue/i);
+  assert.match(response.assistantMessage, /retrospective unease|safety memory|environmental contradiction/i);
+  assert.doesNotMatch(response.assistantMessage, /Unity implementation planning task|I edited|I ran Unity/i);
+});
+
+test("non-repetitive response synthesis avoids identical generic bodies", () => {
+  const prompts = [
+    "the game slowly stops rewarding curiosity",
+    "the player stops fearing consequences",
+    "the game feels mechanically alive but emotionally dead",
+    "the uncertainty becomes predictable",
+    "how do I make players doubt whether a room was previously safe?",
+  ];
+  const responses = prompts.map((prompt) => planGameDevChatResponse(prompt));
+  const bodies = responses.map((response) => response.assistantMessage.replace(/^Reasoning summary:[\s\S]*?\n\n/, ""));
+  const strategies = responses.map((response) => response.reasoning?.selectedResponseStrategy);
+  const nextSteps = responses.map((response) => response.reasoning?.nextUsefulStep);
+
+  assert.equal(new Set(bodies).size, prompts.length);
+  assert.equal(new Set(strategies).size, prompts.length);
+  assert.equal(new Set(nextSteps).size, prompts.length);
+  for (const response of responses) {
+    assert.doesNotMatch(response.assistantMessage, /probable player experience|likely system area|cause category|Clarify the real target|Identify the smallest useful next step|Name the relevant capability boundary|I edited|I ran Unity|autonomous_real/i);
+  }
 });
 
 test("runtime capabilities prompt uses runtime self-explanation", () => {
   const response = planGameDevChatResponse("what runtime capabilities are actually real right now?");
 
   assert.ok(response.reasoning);
+  assert.equal(response.route.mode, "CAPABILITY_HELP");
+  assert.equal(response.codexHandoff, undefined);
+  assert.equal(response.reasoning.runtimeIntrospection?.kind, "capability_status_query");
+  assert.equal(response.reasoning.inferredIntent, "Runtime Introspection");
+  assert.match(response.reasoning.routeRationale, /Runtime Introspection/i);
   assert.match(response.assistantMessage, /What is real/);
   assert.match(response.assistantMessage, /What is bounded\/supervised/);
   assert.match(response.assistantMessage, /What still depends on external tools/);
   assert.match(response.assistantMessage, /What is blocked/);
   assert.match(response.assistantMessage, /Safest next step/);
-  assert.doesNotMatch(response.assistantMessage, /Got it — I can help with that as a game-development question|I edited|I ran Unity/i);
+  assert.doesNotMatch(response.assistantMessage, /Reasoning summary:|Got it — I can help with that as a game-development question|Clarify the real target|I edited|I ran Unity/i);
 });
 
 test("Copilot Codex dependency prompt uses runtime self-explanation", () => {
   const response = planGameDevChatResponse("what still depends on Copilot or Codex?");
 
   assert.ok(response.reasoning);
+  assert.equal(response.route.mode, "CAPABILITY_HELP");
+  assert.equal(response.codexHandoff, undefined);
+  assert.equal(response.sessionContext.latestCodexHandoffTopic, undefined);
+  assert.equal(response.reasoning.runtimeIntrospection?.kind, "external_dependency_query");
   assert.match(response.assistantMessage, /What still depends on external tools/);
   assert.match(response.assistantMessage, /Copilot\/Codex|implementation agent/i);
   assert.match(response.assistantMessage, /What is blocked/);
-  assert.doesNotMatch(response.assistantMessage, /General game-development help|I edited|I ran Unity/i);
+  assert.doesNotMatch(response.assistantMessage, /Reasoning summary:|General game-development help|Clarify the real target|I edited|I ran Unity/i);
+});
+
+test("blocked runtime prompt uses cleaned runtime introspection metadata", () => {
+  const response = planGameDevChatResponse("what is still blocked?");
+
+  assert.ok(response.reasoning);
+  assert.equal(response.route.mode, "CAPABILITY_HELP");
+  assert.equal(response.codexHandoff, undefined);
+  assert.equal(response.reasoning.runtimeIntrospection?.kind, "blocked_capability_query");
+  assert.equal(response.reasoning.inferredIntent, "Runtime Introspection");
+  assert.match(response.reasoning.selectedResponseStrategy, /runtime introspection/i);
+  assert.deepEqual(response.reasoning.decompositionDimensions, ["real capabilities", "bounded/supervised capabilities", "external tool dependencies", "blocked capabilities"]);
+  assert.match(response.assistantMessage, /Runtime introspection: blocked capability query/);
+  assert.match(response.assistantMessage, /What is blocked/);
+  assert.doesNotMatch(response.assistantMessage, /Reasoning summary:|Clarify the real target|Identify the smallest useful next step|Name the relevant capability boundary|I edited|I ran Unity/i);
 });
 
 test("psychological horror context is preserved during world feedback", () => {

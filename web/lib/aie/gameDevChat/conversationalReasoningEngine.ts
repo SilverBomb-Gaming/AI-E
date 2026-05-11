@@ -3,8 +3,9 @@ import type { GameDevChatRoute, GameDevSessionContext } from "./gameDevChatTypes
 export type ConversationalReasoningConfidence = "LOW" | "MEDIUM" | "HIGH";
 export type RuntimeAvailabilityStatus = "available_supervised" | "available_read_only" | "disabled_or_requires_approval" | "blocked_not_implemented" | "not_applicable";
 export type ContextImportance = "primary_task" | "runtime_request" | "blocked_request" | "tangent" | "clarification" | "recap";
-export type GameplayFeedbackCategory = "combat_impact" | "pacing_retention" | "pacing_inconsistency" | "inventory_cognitive_load" | "believability_world_design" | "ui_atmosphere" | "emotional_flatness" | "tension_design" | "interaction_feel" | "world_believability" | "ui_immersion_break" | "psychological_safety_subversion" | "environmental_storytelling" | "curiosity_decay" | "inventory_decision_fatigue" | "exploration_predictability" | "pacing_curve_inconsistency" | "player_interest_dropoff" | "smart_feedback_fallback";
+export type GameplayFeedbackCategory = "combat_impact" | "pacing_retention" | "pacing_inconsistency" | "inventory_cognitive_load" | "believability_world_design" | "ui_atmosphere" | "emotional_flatness" | "tension_design" | "interaction_feel" | "world_believability" | "ui_immersion_break" | "psychological_safety_subversion" | "environmental_storytelling" | "curiosity_decay" | "inventory_decision_fatigue" | "exploration_predictability" | "pacing_curve_inconsistency" | "player_interest_dropoff" | "consequence_decay" | "uncertainty_predictability" | "mechanical_emotional_mismatch" | "curiosity_reward_decay" | "past_safety_doubt" | "emotional_numbness_over_time" | "smart_feedback_fallback";
 export type GameplayFeedbackMatchKind = "exact" | "alias" | "smart_fallback";
+export type ResponseSynthesisVariant = "diagnosis_first" | "player_psychology_first" | "system_loop_first" | "scene_beat_first" | "validation_first" | "contrast_consequence_first";
 
 export type GameplayFeedbackAnalysis = {
   category: GameplayFeedbackCategory;
@@ -21,10 +22,13 @@ export type GameplayFeedbackAnalysis = {
   matchedPhraseFamily: string;
   fallbackReason?: string;
   contextualLens?: string;
+  synthesisVariant?: ResponseSynthesisVariant;
+  fallbackLens?: string;
+  nextUsefulStep?: string;
 };
 
 export type ConversationalReasoningResult = {
-  phaseId: "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1" | "DEEP_GAMEPLAY_REASONING_AND_DECOMPOSITION_PHASE1" | "BROADER_REASONING_COVERAGE_AND_SMART_FALLBACK_PHASE1";
+  phaseId: "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1" | "DEEP_GAMEPLAY_REASONING_AND_DECOMPOSITION_PHASE1" | "BROADER_REASONING_COVERAGE_AND_SMART_FALLBACK_PHASE1" | "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1";
   inferredIntent: string;
   probableUserGoal: string;
   confidence: ConversationalReasoningConfidence;
@@ -41,6 +45,14 @@ export type ConversationalReasoningResult = {
   decompositionDimensions: string[];
   selectedResponseStrategy: string;
   gameplayFeedback?: GameplayFeedbackAnalysis;
+  runtimeIntrospection?: {
+    kind: "capability_status_query" | "external_dependency_query" | "blocked_capability_query" | "general_runtime_query";
+    label: string;
+    real: string[];
+    bounded: string[];
+    external: string[];
+    blocked: string[];
+  };
   runtimeAwareness: {
     runtimeAvailability: RuntimeAvailabilityStatus;
     realCapabilities: string[];
@@ -71,55 +83,177 @@ function hasHorrorContext(message: string, sessionContext?: GameDevSessionContex
   return /psychological horror|horror exploration|atmospheric exploration|dark atmosphere|horror|dread|unease|uncanny/.test(combined);
 }
 
+type SmartFallbackLensDefinition = {
+  lens: string;
+  label: string;
+  dimensions: string[];
+  whatThisProbablyMeans: string;
+  likelyCauses: string[];
+  highestLeverageFixes: string[];
+  diagnosticQuestions: string[];
+  smallValidationLoop: string[];
+  nextUsefulStep: string;
+  responseStrategy: string;
+  matchedPhraseFamily: string;
+  synthesisVariant: ResponseSynthesisVariant;
+};
+
 function isDesignFeedbackLike(message: string): boolean {
-  return /\b(feels?|players?|player's|curiosity|immersion|flow|loop|pacing|world|environment|level|rooms?|inventory|combat|tension|mystery|exploration|interest|fatigue|overwhelming|artificial|predictable|repetitive|unsafe|safe rooms?|lived-in|staged|believable|rhythm|feedback|unsatisfying|clunky)\b/i.test(message);
+  return /\b(feels?|players?|player's|curiosity|immersion|flow|loop|pacing|world|environment|level|rooms?|inventory|combat|tension|mystery|exploration|interest|fatigue|overwhelming|artificial|predictable|repetitive|unsafe|safe rooms?|lived-in|staged|believable|rhythm|feedback|unsatisfying|clunky|consequence|stakes?|doubt|previously safe|rewarding|alive|dead|numb|attention)\b/i.test(message);
+}
+
+function fallbackLensFor(message: string): SmartFallbackLensDefinition {
+  const lower = message.toLowerCase();
+  if (/curiosity|mystery|wonder|question|discover/.test(lower)) {
+    return {
+      lens: "curiosity / mystery",
+      label: "curiosity and mystery feedback",
+      dimensions: ["question carried forward", "discovery payoff", "mystery pressure", "player hypothesis", "next-door pull", "answer-to-question ratio"],
+      whatThisProbablyMeans: "The player is probably not losing interest in content itself; they are losing the expectation that investigating will change what they know, fear, or want next.",
+      likelyCauses: ["Discoveries may close questions without opening sharper ones.", "Optional spaces may reward completion instead of curiosity.", "The mystery may repeat the same clue rhythm until players can predict the payoff."],
+      highestLeverageFixes: ["Pair every answer with one smaller new question.", "Make at least one optional discovery alter the player hypothesis or route choice.", "Delay one explicit explanation and replace it with an implication players can argue about."],
+      diagnosticQuestions: ["What question should the player carry into the next room?"],
+      smallValidationLoop: ["Map the next three discoveries.", "Mark what each discovery answers and what new question it opens.", "Replace the weakest reward with a clue that changes the player's hypothesis.", "Keep it only if testers ask a new question without prompting."],
+      nextUsefulStep: "Map the next three discoveries and check whether each one opens a new question.",
+      responseStrategy: "smart fallback lens: curiosity and mystery cadence",
+      matchedPhraseFamily: "curiosity / mystery / discovery feedback",
+      synthesisVariant: "player_psychology_first",
+    };
+  }
+  if (/consequence|stakes|failure|punish|fear|fearing/.test(lower)) {
+    return {
+      lens: "consequence / stakes",
+      label: "consequence and stakes feedback",
+      dimensions: ["failure meaning", "behavior change", "visible consequence", "risk memory", "stakes escalation", "recovery cost"],
+      whatThisProbablyMeans: "Players may have learned that mistakes are recoverable, invisible, or narratively weightless, so risk stops changing how they behave.",
+      likelyCauses: ["Failure may cost resources without changing player decisions.", "Consequences may reset too cleanly after each encounter.", "The world or characters may not remember enough of what went wrong."],
+      highestLeverageFixes: ["Make one failure alter route choice, information, safety, or future pressure.", "Show a consequence before explaining it with UI or dialogue.", "Let recovery stay possible but make it leave a readable scar."],
+      diagnosticQuestions: ["Which decision should players approach differently after failing once?"],
+      smallValidationLoop: ["Find one decision with supposed risk.", "Record what changes after failure now.", "Add one persistent consequence or changed behavior cue.", "Keep it if players adjust their next choice without being told."],
+      nextUsefulStep: "Find the first decision where failure stops changing player behavior.",
+      responseStrategy: "smart fallback lens: consequence and stakes decay",
+      matchedPhraseFamily: "consequence / stakes / fear of failure",
+      synthesisVariant: "contrast_consequence_first",
+    };
+  }
+  if (/mechanic|mechanically|alive|dead|flat|numb/.test(lower)) {
+    return {
+      lens: "mechanical-emotional mismatch",
+      label: "mechanical-emotional mismatch feedback",
+      dimensions: ["mechanical activity", "emotional read", "stakes response", "world reaction", "character acknowledgement", "payoff contrast"],
+      whatThisProbablyMeans: "The systems may be busy and responsive, but the game is not translating that activity into stakes, feeling, memory, or consequence.",
+      likelyCauses: ["Actions may trigger mechanics but not visible emotional aftermath.", "NPCs, audio, camera, or environment may fail to react to important state changes.", "The loop may reward efficiency while the intended fantasy asks for attachment or dread."],
+      highestLeverageFixes: ["Choose one mechanic and attach a readable emotional consequence to it.", "Add a quiet before/after contrast around the action instead of more activity.", "Let the world acknowledge what the player did in a way that changes tone, not just state."],
+      diagnosticQuestions: ["Which mechanic works correctly but leaves the player emotionally unchanged?"],
+      smallValidationLoop: ["Pick one high-frequency mechanic.", "Write the emotion it should create before, during, and after use.", "Add one reaction cue outside the mechanic itself.", "Keep it if testers describe the feeling, not just the function."],
+      nextUsefulStep: "Choose one working mechanic and define the emotional aftermath it should leave behind.",
+      responseStrategy: "smart fallback lens: mechanical activity versus emotional payoff",
+      matchedPhraseFamily: "mechanically alive / emotionally dead / numb feedback",
+      synthesisVariant: "contrast_consequence_first",
+    };
+  }
+  if (/uncertain|uncertainty|predictable|pattern|obvious/.test(lower)) {
+    return {
+      lens: "uncertainty predictability",
+      label: "uncertainty predictability feedback",
+      dimensions: ["learned pattern", "fair disruption", "warning language", "rule variation", "player trust", "surprise cost"],
+      whatThisProbablyMeans: "The game may still be withholding information, but players have learned the shape of the withholding, so uncertainty becomes a pattern instead of a pressure.",
+      likelyCauses: ["Warnings, reveals, threats, or rewards may arrive with the same cadence.", "The game may break rules randomly instead of varying one readable rule.", "Players may know when a room is safe because setup language repeats."],
+      highestLeverageFixes: ["Name the pattern players have learned, then change one part of it fairly.", "Keep the warning language readable while varying timing, source, or consequence.", "Use one exception that teaches a new rule instead of a random surprise."],
+      diagnosticQuestions: ["What pattern can players now predict: timing, room layout, audio cue, enemy behavior, or reward placement?"],
+      smallValidationLoop: ["List the pattern players have learned.", "Break only one part of it while preserving fairness.", "Replay the same slice and ask what players expected.", "Keep it if surprise turns into renewed caution rather than confusion."],
+      nextUsefulStep: "List the pattern players have learned, then break only one part of it fairly.",
+      responseStrategy: "smart fallback lens: fair uncertainty disruption",
+      matchedPhraseFamily: "uncertainty / predictable pattern",
+      synthesisVariant: "validation_first",
+    };
+  }
+  if (/exploration|route|wander|motivation|investigate/.test(lower)) {
+    return {
+      lens: "exploration motivation",
+      label: "exploration motivation feedback",
+      dimensions: ["route curiosity", "optional value", "spatial question", "risk/reward contrast", "return incentive", "map memory"],
+      whatThisProbablyMeans: "Players may understand where they can go, but not why the next optional step is worth attention, risk, or memory.",
+      likelyCauses: ["Optional routes may pay out with interchangeable rewards.", "Rooms may not pose a question before asking for traversal.", "Exploration may lack a contrast between safe known routes and risky unknown ones."],
+      highestLeverageFixes: ["Give each optional branch a distinct reason to exist: information, power, threat, shortcut, or story implication.", "Put the question before the reward so exploration feels self-motivated.", "Make one route choice change what the player expects from the next space."],
+      diagnosticQuestions: ["Why would a cautious player choose the optional path right now?"],
+      smallValidationLoop: ["Choose one optional route.", "Write the question it raises before entry.", "Give the route one non-interchangeable payoff.", "Keep it if testers can explain why they chose to investigate."],
+      nextUsefulStep: "Pick one optional route and make its payoff answer a question the main path does not.",
+      responseStrategy: "smart fallback lens: exploration motivation",
+      matchedPhraseFamily: "exploration / route motivation / investigation",
+      synthesisVariant: "system_loop_first",
+    };
+  }
+  if (/attention|drift|bored|focus|interest/.test(lower)) {
+    return {
+      lens: "player attention drift",
+      label: "player attention drift feedback",
+      dimensions: ["attention anchor", "novelty interval", "decision density", "reward promise", "friction cost", "next expectation"],
+      whatThisProbablyMeans: "The game may still be playable moment to moment, but players are no longer forming a strong expectation about why the next minute matters.",
+      likelyCauses: ["The next reward, risk, or question may be too far away.", "Decision density may dip into traversal or repetition without contrast.", "Friction may rise faster than the promise of payoff."],
+      highestLeverageFixes: ["Move one attention anchor earlier: a goal, risk, reveal, or decision.", "Cut one low-information segment before adding new content.", "Make the next expected payoff visible without fully giving it away."],
+      diagnosticQuestions: ["At the drift point, what does the player think the next minute will contain?"],
+      smallValidationLoop: ["Find the first attention dip.", "Place one new reason to continue before it.", "Replay only that slice.", "Keep it if players can name what they want next."],
+      nextUsefulStep: "Find the first attention dip and put a concrete promise before it.",
+      responseStrategy: "smart fallback lens: player attention drift",
+      matchedPhraseFamily: "attention / drift / interest feedback",
+      synthesisVariant: "diagnosis_first",
+    };
+  }
+  if (/fatigue|tired|exhaust|friction|overwhelm|overwhelming/.test(lower)) {
+    return {
+      lens: "friction fatigue",
+      label: "friction fatigue feedback",
+      dimensions: ["repeated burden", "input cost", "choice cost", "recovery interval", "clarity debt", "friction-to-payoff ratio"],
+      whatThisProbablyMeans: "Players may accept the system once, but repeated small burdens are accumulating faster than payoff, relief, or mastery.",
+      likelyCauses: ["The same decision or input may be required too frequently.", "The UI or system may ask players to remember information it should expose.", "Recovery beats may not arrive after high-friction stretches."],
+      highestLeverageFixes: ["Remove one repeated input or comparison step from the highest-frequency action.", "Expose the information players keep re-checking.", "Add relief after friction rather than stacking another decision immediately."],
+      diagnosticQuestions: ["Which burden repeats often enough that it becomes exhausting instead of meaningful?"],
+      smallValidationLoop: ["Pick the most repeated burden.", "Count inputs, choices, and re-checks.", "Remove or clarify one burden.", "Keep it if players act faster without losing agency."],
+      nextUsefulStep: "Count the repeated burden first; then remove one input, comparison, or memory check.",
+      responseStrategy: "smart fallback lens: friction fatigue",
+      matchedPhraseFamily: "friction / fatigue / overwhelm feedback",
+      synthesisVariant: "system_loop_first",
+    };
+  }
+  return {
+    lens: "experience synthesis",
+    label: "nuanced player-experience feedback",
+    dimensions: ["player symptom", "system area", "emotion shift", "cause boundary", "validation signal", "bounded action path"],
+    whatThisProbablyMeans: "The player-facing symptom is specific enough to reason about, but it crosses systems rather than naming one exact category.",
+    likelyCauses: ["The intended emotion may not match the feedback the game actually gives.", "A system may work functionally while missing readable cause, consequence, contrast, or payoff.", "The issue may live between systems rather than inside one script, asset, menu, or encounter."],
+    highestLeverageFixes: ["Name the intended player emotion or behavior before changing mechanics.", "Find the first moment where the current experience breaks that intention.", "Change one visible lever: timing, feedback, clarity, consequence, contrast, or friction."],
+    diagnosticQuestions: ["Where is the first moment the player stops feeling what the design intends?"],
+    smallValidationLoop: ["Pick one 60-120 second slice where the symptom appears.", "Write the intended emotion, decision, or question for that slice.", "Change one visible lever and replay the same slice.", "Keep the change only if a tester describes the intended experience without prompting."],
+    nextUsefulStep: "Choose the exact moment where the intended feeling first breaks, then change one visible lever there.",
+    responseStrategy: "smart fallback lens: cross-system experience synthesis",
+    matchedPhraseFamily: "design/playtest feedback language",
+    synthesisVariant: "diagnosis_first",
+  };
 }
 
 function smartFallbackAnalysis(message: string, sessionContext?: GameDevSessionContext): GameplayFeedbackAnalysis | undefined {
   if (!isDesignFeedbackLike(message)) {
     return undefined;
   }
-  const lower = message.toLowerCase();
-  const systemArea = /ui|interface|hud|menu/.test(lower)
-    ? "interface/feedback layer"
-    : /inventory|item/.test(lower)
-      ? "inventory and decision flow"
-      : /world|environment|level|room|exploration/.test(lower)
-        ? "world, level, or exploration loop"
-        : /combat|enemy|hit|attack/.test(lower)
-          ? "combat or encounter feel"
-          : /pacing|interest|curiosity|tension|mystery|rhythm/.test(lower)
-            ? "pacing, curiosity, or emotional rhythm"
-            : "player experience loop";
+  const lens = fallbackLensFor(message);
   return withHorrorLens({
     category: "smart_feedback_fallback",
-    label: "nuanced player-experience feedback",
-    dimensions: ["probable player experience", "likely system area", "cause category", "friction or emotion shift", "validation signal", "bounded action path"],
-    whatThisProbablyMeans: `The player-facing symptom is real enough to analyze, but it did not map cleanly to one of the deeper named categories. I would treat it as a ${systemArea} problem until playtest evidence narrows it.`,
-    likelyCauses: [
-      "The player may be feeling a mismatch between intended emotion and the feedback the game actually gives.",
-      "A system may be functionally correct but missing readable cause, consequence, contrast, or payoff.",
-      "The issue may live between systems rather than inside one script, asset, menu, or encounter.",
-      "The wording points to experience quality, so jumping straight to implementation would likely fix the wrong layer.",
-    ],
-    highestLeverageFixes: [
-      "Name the intended player emotion or behavior in one sentence before changing mechanics.",
-      "Identify the first moment where the current experience breaks that intention.",
-      "Change one visible lever at a time: timing, feedback, clarity, consequence, contrast, or friction.",
-      "Use a short before/after playtest slice instead of broad redesign notes.",
-    ],
-    diagnosticQuestions: ["Where is the first moment the player stops feeling what the design intends?"],
-    smallValidationLoop: [
-      "Pick one 60-120 second slice where the symptom appears.",
-      "Write the intended emotion, decision, or question for that slice.",
-      "Change one likely cause category and replay the same slice.",
-      "Keep the change only if a tester describes the intended experience without prompting.",
-    ],
+    label: lens.label,
+    dimensions: lens.dimensions,
+    whatThisProbablyMeans: lens.whatThisProbablyMeans,
+    likelyCauses: lens.likelyCauses,
+    highestLeverageFixes: lens.highestLeverageFixes,
+    diagnosticQuestions: lens.diagnosticQuestions,
+    smallValidationLoop: lens.smallValidationLoop,
     optionalBoundedWorkflowSuggestion: "AI-E can prepare a bounded supervised workflow to inspect the relevant notes/files and record one scoped experience-improvement plan after approval.",
-    responseStrategy: "smart fallback: decompose player-experience feedback without pretending exact category certainty",
+    responseStrategy: lens.responseStrategy,
     matchKind: "smart_fallback",
-    matchedPhraseFamily: "design/playtest feedback language",
-    fallbackReason: "No deeper category alias matched, so AI-E used the broad player-experience feedback fallback instead of generic planning bullets.",
+    matchedPhraseFamily: lens.matchedPhraseFamily,
+    fallbackReason: `No deeper category alias matched, so AI-E used the ${lens.lens} fallback lens instead of generic planning bullets.`,
+    fallbackLens: lens.lens,
+    synthesisVariant: lens.synthesisVariant,
+    nextUsefulStep: lens.nextUsefulStep,
   }, message, sessionContext);
 }
 
@@ -145,6 +279,114 @@ export function analyzeGameplayFeedback(message: string, sessionContext?: GameDe
   const lower = message.toLowerCase();
   const match = (patterns: RegExp[]) => patterns.some((pattern) => pattern.test(lower));
   const base = (() : GameplayFeedbackAnalysis | undefined => {
+    if (match([/slowly stops? rewarding curiosity/, /stops? rewarding curiosity/, /curiosity.*no longer.*reward/, /rewarding curiosity.*stops?/])) {
+      return {
+        category: "curiosity_reward_decay",
+        label: "curiosity reward decay",
+        dimensions: ["discovery promise", "reward transformation", "question carryover", "optional-path value", "mystery renewal", "player hypothesis shift"],
+        whatThisProbablyMeans: "Curiosity may start strong, but later discoveries stop changing what the player knows, can do, fears, or expects, so investigation becomes completion work.",
+        likelyCauses: ["Early discoveries may teach players to expect meaning, while later ones pay out with filler.", "Clues may answer old questions without opening new ones.", "Optional exploration may stop affecting route choice, threat awareness, or story interpretation."],
+        highestLeverageFixes: ["Make every third discovery alter the player's hypothesis or available choice.", "Replace one filler reward with an implication that reframes a previous room.", "Keep one unanswered thread active across multiple discoveries instead of resolving each room cleanly."],
+        diagnosticQuestions: ["Which discovery first feels like content collection instead of curiosity payoff?"],
+        smallValidationLoop: ["Map the next three discoveries.", "Write the question each one answers and the new question it opens.", "Upgrade the weakest reward so it changes knowledge, access, risk, or suspicion.", "Ask testers what they want to investigate next and why."],
+        optionalBoundedWorkflowSuggestion: "AI-E can prepare a bounded supervised workflow to inspect discovery notes and record one scoped curiosity-reward pass after approval.",
+        responseStrategy: "lens match: restore curiosity rewards through discovery-to-question carryover",
+        matchKind: "alias",
+        matchedPhraseFamily: "curiosity stops being rewarded",
+        synthesisVariant: "player_psychology_first",
+        nextUsefulStep: "Map the next three discoveries and check whether each one opens a new question.",
+      };
+    }
+    if (match([/stops? fearing consequences/, /stop fearing consequences/, /consequences?.*(stop|stops|stopped).*matter/, /consequence.*decay/, /stakes?.*(stop|stops).*matter/])) {
+      return {
+        category: "consequence_decay",
+        label: "consequence decay",
+        dimensions: ["failure memory", "stakes readability", "behavior change", "world reaction", "recovery cost", "risk escalation"],
+        whatThisProbablyMeans: "The player may still understand failure, but failure no longer changes their behavior because consequences feel temporary, invisible, or strategically irrelevant.",
+        likelyCauses: ["Punishment may be numeric but not behavioral.", "Failure may reset too cleanly without changing route, resources, trust, or threat.", "The world may not acknowledge enough after a bad decision."],
+        highestLeverageFixes: ["Make one failure leave a readable state change that affects the next decision.", "Escalate risk through changed information or safety, not just larger penalties.", "Show consequence through the world before explaining it through UI."],
+        diagnosticQuestions: ["Which player decision should feel different after one failure?"],
+        smallValidationLoop: ["Find the first decision where failure stops changing player behavior.", "Add one consequence that changes route choice, threat awareness, or recovery planning.", "Replay the same decision after failure.", "Keep it if players hesitate or adapt without being prompted."],
+        optionalBoundedWorkflowSuggestion: "AI-E can prepare a bounded supervised workflow to inspect consequence/reward notes and propose one scoped stakes pass after approval.",
+        responseStrategy: "lens match: make consequences alter player behavior",
+        matchKind: "alias",
+        matchedPhraseFamily: "player stops fearing consequences",
+        synthesisVariant: "contrast_consequence_first",
+        nextUsefulStep: "Find the first decision where failure stops changing player behavior.",
+      };
+    }
+    if (match([/mechanically alive.*emotionally dead/, /mechanically alive.*dead/, /mechanics?.*alive.*emotion/, /mechanical.*emotional mismatch/])) {
+      return {
+        category: "mechanical_emotional_mismatch",
+        label: "mechanical-emotional mismatch",
+        dimensions: ["system responsiveness", "emotional aftermath", "world acknowledgement", "character reaction", "stakes translation", "contrast before/after"],
+        whatThisProbablyMeans: "The game may have active systems, but those systems are not leaving emotional evidence behind, so players register function without feeling meaning.",
+        likelyCauses: ["Mechanics may update state without changing tone, reactions, or consequence.", "The game may reward efficiency while asking players to feel dread, attachment, guilt, or wonder.", "Important actions may lack quiet aftermath beats."],
+        highestLeverageFixes: ["Choose one working mechanic and add a visible emotional aftermath outside the mechanic itself.", "Use before/after contrast so the world feels changed by the action.", "Let a character, soundscape, object, or room state acknowledge what happened."],
+        diagnosticQuestions: ["Which mechanic is most functional but least emotionally legible?"],
+        smallValidationLoop: ["Pick one repeated mechanic.", "Define the emotion it should create before, during, and after use.", "Add one aftermath cue in the world or audio layer.", "Keep it if testers describe the feeling before they describe the system."],
+        optionalBoundedWorkflowSuggestion: "AI-E can prepare a bounded supervised workflow to inspect the target loop and record one scoped emotional-payoff pass after approval.",
+        responseStrategy: "lens match: connect mechanical activity to emotional aftermath",
+        matchKind: "alias",
+        matchedPhraseFamily: "mechanically alive but emotionally dead",
+        synthesisVariant: "contrast_consequence_first",
+        nextUsefulStep: "Choose one working mechanic and define the emotional aftermath it should leave behind.",
+      };
+    }
+    if (match([/uncertainty.*becomes predictable/, /uncertainty.*predictable/, /predictable uncertainty/, /mystery.*becomes predictable/])) {
+      return {
+        category: "uncertainty_predictability",
+        label: "uncertainty predictability",
+        dimensions: ["learned pattern", "fair rule break", "warning cadence", "threat timing", "safe interval trust", "surprise readability"],
+        whatThisProbablyMeans: "Players may still lack information, but they have learned the pattern of when information is withheld, so uncertainty becomes routine rather than tense.",
+        likelyCauses: ["Danger, relief, clues, or reveals may arrive on a repeated cadence.", "Rooms may use the same setup language for safety and threat.", "Surprises may vary content while preserving the same timing pattern."],
+        highestLeverageFixes: ["List the pattern players have learned, then break only one part of it fairly.", "Vary the source, timing, or consequence of uncertainty while preserving readable rules.", "Use one exception that teaches a new pattern instead of randomizing everything."],
+        diagnosticQuestions: ["What exactly have players learned to predict: timing, audio cue, room layout, objective rhythm, or reward placement?"],
+        smallValidationLoop: ["List the pattern players have learned.", "Break one part of it while keeping warning language fair.", "Replay the same slice and ask what players expected.", "Keep it if they become cautious rather than confused."],
+        optionalBoundedWorkflowSuggestion: "AI-E can prepare a bounded supervised workflow to inspect encounter/exploration cadence and propose one scoped uncertainty-pattern adjustment after approval.",
+        responseStrategy: "lens match: disrupt predictable uncertainty fairly",
+        matchKind: "alias",
+        matchedPhraseFamily: "uncertainty becomes predictable",
+        synthesisVariant: "validation_first",
+        nextUsefulStep: "List the pattern players have learned, then break only one part of it fairly.",
+      };
+    }
+    if (match([/doubt whether a room was previously safe/, /doubt.*room.*previously safe/, /room.*previously safe/, /was previously safe/, /safe room.*was safe/])) {
+      return {
+        category: "past_safety_doubt",
+        label: "past safety doubt",
+        dimensions: ["retrospective unease", "safety memory", "changed-room evidence", "rule instability", "environmental contradiction", "player paranoia"],
+        whatThisProbablyMeans: "You are aiming for retrospective dread: the player was safe mechanically, but later evidence should make them question whether that safety was ever emotionally trustworthy.",
+        likelyCauses: ["Safe spaces may currently communicate clean certainty instead of fragile relief.", "The room may not retain enough changed evidence after the player leaves or returns.", "The game may reveal danger forward in time but not reframe past safety."],
+        highestLeverageFixes: ["Let a previously safe room change one detail after the player leaves: object position, sound source, light state, or trace of observation.", "Avoid spawning a direct threat; make the room imply it was noticed, entered, or remembered.", "Use a contradiction the player can verify so doubt feels fair rather than random."],
+        diagnosticQuestions: ["Should the doubt come from observation, contamination, changed rules, missing objects, or impossible memory?"],
+        smallValidationLoop: ["Pick one room that was mechanically safe.", "Choose one later-return clue that reframes that safety.", "Keep mechanics safe while making the evidence unsettling.", "Ask testers whether they trust the room less on return."],
+        optionalBoundedWorkflowSuggestion: "AI-E can prepare a bounded supervised workflow to turn one safe-room return into a scoped environmental-doubt pass after approval.",
+        responseStrategy: "lens match: reframe previous safety through environmental contradiction",
+        matchKind: "alias",
+        matchedPhraseFamily: "room previously safe / past safety doubt",
+        synthesisVariant: "scene_beat_first",
+        nextUsefulStep: "Pick one safe room and add a later-return clue that changes what players believe happened there.",
+      };
+    }
+    if (match([/emotionally numb over time/, /numb over time/, /emotional numbness/, /stops feeling anything/, /feels emotionally dead over time/])) {
+      return {
+        category: "emotional_numbness_over_time",
+        label: "emotional numbness over time",
+        dimensions: ["emotional contrast", "beat escalation", "recovery spacing", "consequence memory", "sensory variation", "player agency"],
+        whatThisProbablyMeans: "The game may be sustaining one emotional temperature too long, so players adapt to it and stop feeling the intended pressure.",
+        likelyCauses: ["Intensity may stay constant without contrast or recovery.", "Consequences may repeat the same emotional language.", "The player may lack agency beats that make emotion feel personally owned."],
+        highestLeverageFixes: ["Create contrast before the next intense beat instead of raising intensity again.", "Let one consequence linger quietly after the peak.", "Give the player a small agency beat that changes how the emotion lands."],
+        diagnosticQuestions: ["Where should the player feel reset, dread, grief, relief, or guilt instead of more of the same?"],
+        smallValidationLoop: ["Map three emotional beats in sequence.", "Mark where emotion stays the same too long.", "Change one beat into contrast or aftermath.", "Keep it if testers describe a shift rather than a louder version of the same mood."],
+        optionalBoundedWorkflowSuggestion: "AI-E can prepare a bounded supervised workflow to inspect pacing notes and record one scoped emotional-contrast pass after approval.",
+        responseStrategy: "lens match: prevent emotional adaptation through contrast",
+        matchKind: "alias",
+        matchedPhraseFamily: "emotional numbness over time",
+        synthesisVariant: "player_psychology_first",
+        nextUsefulStep: "Map three emotional beats and find where the feeling stops changing.",
+      };
+    }
     if (match([/world.*artificial/, /not lived[- ]in/, /fake world/, /environment.*staged/, /world.*lacks logic/, /level.*feels like a set/, /world.*instead of lived[- ]in/, /world.*doesn'?t.*believable/, /world.*does not.*believable/])) {
       return {
         category: "world_believability",
@@ -553,6 +795,56 @@ function realCapabilitiesFor(route: GameDevChatRoute, subsystem?: ReasoningInput
   return capabilities;
 }
 
+function isRuntimeIntrospectionRequest(message: string): boolean {
+  return /\b(what is real|what can you actually do|what can you actually do right now|runtime capabilities.*real|runtime state|what is scaffolded|what still depends on (copilot|codex|external tools)|what is still blocked|what.*blocked|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
+}
+
+function runtimeIntrospectionKind(message: string): NonNullable<ConversationalReasoningResult["runtimeIntrospection"]>["kind"] {
+  const lower = message.toLowerCase();
+  if (/depends on (copilot|codex|external tools)/.test(lower)) {
+    return "external_dependency_query";
+  }
+  if (/blocked|missing|unavailable/.test(lower)) {
+    return "blocked_capability_query";
+  }
+  if (/what is real|what can you actually do|runtime capabilities.*real/.test(lower)) {
+    return "capability_status_query";
+  }
+  return "general_runtime_query";
+}
+
+function runtimeIntrospectionFor(message: string, realCapabilities: string[], blockedCapabilities: string[]): ConversationalReasoningResult["runtimeIntrospection"] | undefined {
+  if (!isRuntimeIntrospectionRequest(message)) {
+    return undefined;
+  }
+  const kind = runtimeIntrospectionKind(message);
+  return {
+    kind,
+    label: kind === "external_dependency_query"
+      ? "external dependency query"
+      : kind === "blocked_capability_query"
+        ? "blocked capability query"
+        : kind === "capability_status_query"
+          ? "capability status query"
+          : "runtime status query",
+    real: realCapabilities,
+    bounded: [
+      "Approved operator work cycles are supervised and approval-gated.",
+      "Scoped execution is allowlisted, timeout-bounded, and rollback-aware only when enabled.",
+      "Durable and long-run flows report measured state rather than unattended autonomy.",
+    ],
+    external: [
+      "Copilot/Codex or another implementation agent is still needed for broad code-writing outside bounded workflow artifacts.",
+      "Unity Editor playmode/control still requires an approved trusted bridge and project-lock-safe validation hooks.",
+      "Browser/operator UI checks require a running local dev server and explicit operator interaction.",
+    ],
+    blocked: [
+      ...blockedCapabilities,
+      "autonomous_real, unrestricted repo autonomy, arbitrary shell access, direct Unity control, and unattended overnight operation remain unavailable.",
+    ],
+  };
+}
+
 function missingCapabilityExplanation(message: string, runtimeAvailability: RuntimeAvailabilityStatus, blockedCapabilities: string[]): string | undefined {
   const lower = message.toLowerCase();
   if (/run unity|open unity|control unity|playtest in unity|unity editor/.test(lower)) {
@@ -597,6 +889,7 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
   const runtimeAvailability = runtimeStatusFor(message, route, input.subsystem);
   const blockedCapabilities = blockedCapabilitiesFor(message, route);
   const realCapabilities = realCapabilitiesFor(route, input.subsystem);
+  const runtimeIntrospection = runtimeIntrospectionFor(message, realCapabilities, blockedCapabilities);
   const ambiguity = [
     route.confidence === "LOW" ? "Route confidence is low; the user may need to name the target system or desired action." : undefined,
     route.needsClarification ? "The request lacks enough detail to safely choose an implementation path." : undefined,
@@ -604,13 +897,17 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
   ].filter((entry): entry is string => Boolean(entry));
   const selectedCapabilityRoute = route.conversationMode ?? route.taskMode ?? route.mode;
   const missing = gameplayFeedback ? undefined : missingCapabilityExplanation(message, runtimeAvailability, blockedCapabilities);
-  const routeRationale = gameplayFeedback
+  const routeRationale = runtimeIntrospection
+    ? `Handled as Runtime Introspection (${runtimeIntrospection.label}) so the response focuses on real, bounded, external-tool-dependent, and blocked capabilities instead of generic planning metadata.`
+    : gameplayFeedback
     ? gameplayFeedback.matchKind === "smart_fallback"
       ? `Selected ${selectedCapabilityRoute} and smart fallback reasoning because the message looked like design/playtest feedback but did not match a deeper category alias. Fallback reason: ${gameplayFeedback.fallbackReason}`
       : `Selected ${selectedCapabilityRoute} and ${gameplayFeedback.matchKind} gameplay feedback category ${gameplayFeedback.category} from phrase family ${gameplayFeedback.matchedPhraseFamily}.`
     : `Selected ${selectedCapabilityRoute} because the message matched ${route.detectedIntent} with ${route.confidence.toLowerCase()} confidence and safety status ${route.safetyStatus}.`;
   const nextUsefulStep = route.needsClarification
     ? "Ask one precise clarification before planning or execution."
+    : runtimeIntrospection
+      ? "Use the real/bounded/external/blocked breakdown to choose either a planning-only answer or an explicitly approved runtime workflow."
     : runtimeAvailability === "blocked_not_implemented"
       ? "Use the closest supported supervised repo workflow or ask for a planning-only Unity handoff."
       : route.conversationMode === "OPERATOR_WORK_CYCLE_REQUEST"
@@ -618,13 +915,15 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
         : route.conversationMode === "SCOPED_EXECUTION_REQUEST"
           ? "Approve only if the command, working directory, timeout, and rollback boundary are acceptable."
           : gameplayFeedback
-            ? "Pick one likely cause and run the smallest validation loop before asking AI-E to prepare a bounded workflow."
+            ? gameplayFeedback.nextUsefulStep ?? "Choose one concrete player-facing symptom and validate it in the smallest relevant slice before asking AI-E to prepare a bounded workflow."
             : "Continue with the most specific target system, symptom, or desired player-facing outcome.";
-  const decomposition = decompositionFor(message, route, gameplayFeedback);
+  const decomposition = runtimeIntrospection
+    ? ["real capabilities", "bounded/supervised capabilities", "external tool dependencies", "blocked capabilities"]
+    : decompositionFor(message, route, gameplayFeedback);
 
   return {
-    phaseId: gameplayFeedback ? "BROADER_REASONING_COVERAGE_AND_SMART_FALLBACK_PHASE1" : "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1",
-    inferredIntent: route.detectedIntent,
+    phaseId: gameplayFeedback ? "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1" : "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1",
+    inferredIntent: runtimeIntrospection ? "Runtime Introspection" : route.detectedIntent,
     probableUserGoal: gameplayFeedback ? `analyze ${gameplayFeedback.label} feedback into causes, levers, questions, and validation` : probableGoalFor(message, route),
     confidence: route.confidence,
     contextImportance,
@@ -644,15 +943,16 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
     matchedPhraseFamily: gameplayFeedback?.matchedPhraseFamily,
     fallbackReason: gameplayFeedback?.fallbackReason,
     decompositionDimensions: decomposition,
-    selectedResponseStrategy: gameplayFeedback?.responseStrategy ?? (route.needsClarification ? "ask one clarifying question before planning" : "standard truthful planning response"),
+    selectedResponseStrategy: runtimeIntrospection ? `runtime introspection: ${runtimeIntrospection.label}` : gameplayFeedback?.responseStrategy ?? (route.needsClarification ? "ask one clarifying question before planning" : "standard truthful planning response"),
     gameplayFeedback,
+    runtimeIntrospection,
     runtimeAwareness: {
       runtimeAvailability,
       realCapabilities,
       blockedCapabilities,
       missingCapabilityExplanation: missing,
     },
-    limitationExplanation: gameplayFeedback ? "This is design reasoning over the supplied feedback and session context; it has not inspected project files, edited content, run Unity, or validated gameplay." : missing ?? "The response stays inside the current supervised runtime boundary and does not claim hidden execution.",
+    limitationExplanation: gameplayFeedback ? "This is design reasoning over the supplied feedback and session context; it has not inspected project files, edited content, run Unity, or validated gameplay." : runtimeIntrospection ? "This is runtime introspection over known chat/runtime metadata; it does not inspect the project, run Unity, execute commands, or expand AI-E's authority." : missing ?? "The response stays inside the current supervised runtime boundary and does not claim hidden execution.",
     nextUsefulStep,
     shouldPreservePreviousTaskContext: contextImportance === "tangent" || contextImportance === "blocked_request" || contextImportance === "clarification" || contextImportance === "recap",
     truthfulnessWarnings: [
@@ -664,6 +964,14 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
 }
 
 export function formatReasoningPreface(reasoning: ConversationalReasoningResult): string {
+  if (reasoning.runtimeIntrospection) {
+    return [
+      `Runtime introspection: ${reasoning.runtimeIntrospection.label}.`,
+      "Capability breakdown: real capabilities, bounded/supervised capabilities, external dependencies, and blocked capabilities.",
+      `Runtime note: ${reasoning.limitationExplanation}`,
+      `Next useful step: ${reasoning.nextUsefulStep}`,
+    ].join("\n");
+  }
   return [
     `Reasoning summary: I read this as ${reasoning.probableUserGoal}.`,
     `Why this route: ${reasoning.routeRationale}`,

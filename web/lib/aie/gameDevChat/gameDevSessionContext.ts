@@ -71,6 +71,18 @@ function inferGameplaySystem(message: string, reasoning?: ConversationalReasonin
       return "pacing and emotional rhythm";
     case "player_interest_dropoff":
       return "pacing and retention loop";
+    case "consequence_decay":
+      return "stakes and consequence design";
+    case "uncertainty_predictability":
+      return "uncertainty and fair surprise design";
+    case "mechanical_emotional_mismatch":
+      return "mechanical-emotional payoff design";
+    case "curiosity_reward_decay":
+      return "curiosity and discovery loop";
+    case "past_safety_doubt":
+      return "psychological horror atmosphere and tension";
+    case "emotional_numbness_over_time":
+      return "emotional pacing and contrast";
     case "smart_feedback_fallback":
       return baseFeedbackSystemFromMessage(lower);
     case "emotional_flatness":
@@ -105,11 +117,11 @@ function inferImplementationTask(message: string, route: GameDevChatRoute): stri
   return undefined;
 }
 
-function inferHandoffTopic(message: string, handoff?: GameDevCodexHandoff): string | undefined {
+function inferHandoffTopic(message: string, route: GameDevChatRoute, handoff?: GameDevCodexHandoff): string | undefined {
   if (handoff?.goal) {
     return handoff.goal;
   }
-  if (/\b(codex|handoff)\b/i.test(message)) {
+  if ((route.mode === "CODEX_HANDOFF_REQUEST" || route.taskMode === "CODEX_HANDOFF_REQUEST" || route.conversationMode === "CODEX_HANDOFF_REQUEST") && /\b(codex|handoff)\b/i.test(message)) {
     return message.trim();
   }
   return undefined;
@@ -157,7 +169,7 @@ export function updateGameDevSessionContext(
   const currentProject = preserveTaskContext ? base.currentProject : preserveProjectFlavor ? preservedProject : inferProject(message, route) ?? base.currentProject;
   const activeGameplaySystem = preserveTaskContext ? base.activeGameplaySystem : preserveProjectFlavor ? base.activeGameplaySystem ?? inferGameplaySystem(message, reasoning) : inferGameplaySystem(message, reasoning) ?? base.activeGameplaySystem;
   const currentImplementationTask = preserveTaskContext ? base.currentImplementationTask : inferImplementationTask(message, route) ?? base.currentImplementationTask;
-  const latestCodexHandoffTopic = inferHandoffTopic(message, codexHandoff) ?? base.latestCodexHandoffTopic;
+  const latestCodexHandoffTopic = inferHandoffTopic(message, route, codexHandoff) ?? base.latestCodexHandoffTopic;
   const blocker = route.mode === "TROUBLESHOOT_PREVIOUS" || route.mode === "CLARIFICATION_NEEDED" ? route.detectedIntent : undefined;
   const unresolvedBlockers = blocker ? Array.from(new Set([...base.unresolvedBlockers, blocker])) : base.unresolvedBlockers;
   const hasContext = Boolean(currentProject || activeGameplaySystem || currentImplementationTask || latestCodexHandoffTopic || route);

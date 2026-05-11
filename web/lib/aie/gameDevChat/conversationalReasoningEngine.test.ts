@@ -21,7 +21,7 @@ const baseRoute: GameDevChatRoute = {
 test("dynamic reasoning decomposes vague tension requests into concrete levers", () => {
   const reasoning = runConversationalReasoning({ message: "make the game feel more tense", route: baseRoute });
 
-  assert.equal(reasoning.phaseId, "BROADER_REASONING_COVERAGE_AND_SMART_FALLBACK_PHASE1");
+  assert.equal(reasoning.phaseId, "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1");
   assert.equal(reasoning.probableUserGoal, "analyze tension design feedback into causes, levers, questions, and validation");
   assert.ok(reasoning.dynamicDecomposition.some((entry) => /pacing pressure/i.test(entry)));
   assert.ok(reasoning.dynamicDecomposition.some((entry) => /audio pressure/i.test(entry)));
@@ -31,7 +31,7 @@ test("dynamic reasoning decomposes vague tension requests into concrete levers",
 test("deep gameplay feedback exposes category dimensions and strategy", () => {
   const reasoning = runConversationalReasoning({ message: "the combat lacks impact", route: baseRoute });
 
-  assert.equal(reasoning.phaseId, "BROADER_REASONING_COVERAGE_AND_SMART_FALLBACK_PHASE1");
+  assert.equal(reasoning.phaseId, "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1");
   assert.equal(reasoning.inferredFeedbackCategory, "combat_impact");
   assert.equal(reasoning.categoryMatchKind, "exact");
   assert.equal(reasoning.selectedResponseStrategy, "diagnose sensory impact stack before implementation");
@@ -67,9 +67,11 @@ test("runtime introspection explains real and blocked capabilities", () => {
   const response = planGameDevChatResponse("what is real and what is scaffolded in your runtime state?");
 
   assert.ok(response.reasoning);
+  assert.equal(response.reasoning.runtimeIntrospection?.kind, "capability_status_query");
   assert.match(response.assistantMessage, /truthful runtime picture/i);
   assert.match(response.assistantMessage, /What is real:/);
   assert.match(response.assistantMessage, /What is blocked:/);
+  assert.doesNotMatch(response.assistantMessage, /Reasoning summary:/);
   assert.match(response.assistantMessage, /unrestricted arbitrary repo mutation|truthful no-execution labeling/);
 });
 

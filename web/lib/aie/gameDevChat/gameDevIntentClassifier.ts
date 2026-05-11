@@ -6,6 +6,7 @@ const bugPattern = /\b(bug|broken|error|exception|crash|doesn'?t\s+work|not\s+wo
 const explanationPattern = /\b(explain|what\s+does|how\s+does|walk\s+me\s+through|why\s+does)\b/i;
 const playtestPattern = /\b(playtest|feedback|feel|floaty|too\s+slow|too\s+fast|clunky|juice|game\s+feel|tuning)\b/i;
 const implementationPattern = /\b(add|implement|create|build|make|system|controller|patrol|enemy|collectible|inventory|jump|movement|camera|health|damage|unity|script)\b/i;
+const designReasoningQuestionPattern = /\b(how\s+do\s+i\s+make\s+players?|make\s+players?\s+(feel|doubt|fear|trust|wonder|notice|care|hesitate)|players?\s+(doubt|fear|trust|wonder|stop|lose)|room\s+was\s+previously\s+safe|previously\s+safe|uncertainty|curiosity|consequences?|emotionally\s+dead|mechanically\s+alive)\b/i;
 const vagueIdeaPattern = /\b(idea|concept|don'?t\s+know|not\s+sure|small\s+game|survival\s+game|what\s+should\s+i\s+make)\b/i;
 const unityPattern = /\b(unity|c#|monobehaviour|rigidbody|character\s*controller|animator|collider|scene|prefab|navmesh|patrol|jump|player|enemy|collectible)\b/i;
 
@@ -93,6 +94,19 @@ export function classifyGameDevIntent(message: string): GameDevChatRoute {
       needsClarification: trimmed.length < 80,
       safetyStatus: "CLARIFY_BEFORE_ACTION",
       suggestedNextAction: "Answer one design question about genre, player fantasy, or first playable prototype.",
+      keywords,
+    };
+  }
+
+  if (designReasoningQuestionPattern.test(trimmed)) {
+    return {
+      mode: "PLAYTEST_FEEDBACK",
+      detectedIntent: "Analyze nuanced player-experience design feedback",
+      confidence: "HIGH",
+      unityFirst: false,
+      needsClarification: false,
+      safetyStatus: "SAFE_PLANNING_ONLY",
+      suggestedNextAction: "Decompose the intended player experience before choosing any implementation path.",
       keywords,
     };
   }

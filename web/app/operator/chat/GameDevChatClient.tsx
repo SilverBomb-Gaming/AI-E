@@ -420,22 +420,44 @@ export function GameDevChatClient() {
                       {message.reasoning && (
                         <details className="mt-3 overflow-hidden rounded-md border border-cyan-400/25 bg-[#08111d]">
                           <summary className="cursor-pointer px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200">Reasoning Visibility</summary>
-                          <div className="grid gap-2 border-t border-cyan-400/15 p-3 text-xs leading-5 text-zinc-300 md:grid-cols-2">
-                            <p><span className="font-semibold text-zinc-100">Inferred Intent:</span> {message.reasoning.inferredIntent}</p>
-                            <p><span className="font-semibold text-zinc-100">Confidence:</span> {message.reasoning.confidence}</p>
-                            <p><span className="font-semibold text-zinc-100">Route:</span> {message.reasoning.selectedCapabilityRoute}</p>
-                            <p><span className="font-semibold text-zinc-100">Runtime:</span> {message.reasoning.runtimeAwareness.runtimeAvailability}</p>
-                            {message.reasoning.inferredFeedbackCategory && <p><span className="font-semibold text-zinc-100">Feedback Category:</span> {message.reasoning.inferredFeedbackCategory}</p>}
-                            {message.reasoning.categoryMatchKind && <p><span className="font-semibold text-zinc-100">Match:</span> {message.reasoning.categoryMatchKind}</p>}
-                            {message.reasoning.matchedPhraseFamily && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Phrase Family:</span> {message.reasoning.matchedPhraseFamily}</p>}
-                            <p><span className="font-semibold text-zinc-100">Strategy:</span> {message.reasoning.selectedResponseStrategy}</p>
-                            {message.reasoning.fallbackReason && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Fallback:</span> {message.reasoning.fallbackReason}</p>}
-                            <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Why:</span> {message.reasoning.routeRationale}</p>
-                            {message.reasoning.ambiguity.length > 0 && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Ambiguity:</span> {message.reasoning.ambiguity.join(" ")}</p>}
-                            <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Limitation:</span> {message.reasoning.limitationExplanation}</p>
-                            <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Next:</span> {message.reasoning.nextUsefulStep}</p>
-                            <pre className="md:col-span-2 max-h-36 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{message.reasoning.decompositionDimensions.map((entry) => `- ${entry}`).join("\n")}</pre>
-                          </div>
+                          {message.reasoning.runtimeIntrospection ? (
+                            <div className="grid gap-2 border-t border-cyan-400/15 p-3 text-xs leading-5 text-zinc-300 md:grid-cols-2">
+                              <p><span className="font-semibold text-zinc-100">Runtime Introspection:</span> capability status query</p>
+                              <p><span className="font-semibold text-zinc-100">Query:</span> {message.reasoning.runtimeIntrospection.label}</p>
+                              <p><span className="font-semibold text-zinc-100">Confidence:</span> {message.reasoning.confidence}</p>
+                              <p><span className="font-semibold text-zinc-100">Runtime:</span> {message.reasoning.runtimeAwareness.runtimeAvailability}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Why:</span> {message.reasoning.routeRationale}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Limitation:</span> {message.reasoning.limitationExplanation}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Next:</span> {message.reasoning.nextUsefulStep}</p>
+                              <pre className="md:col-span-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{[
+                                "real:",
+                                ...message.reasoning.runtimeIntrospection.real.map((entry) => `- ${entry}`),
+                                "bounded/supervised:",
+                                ...message.reasoning.runtimeIntrospection.bounded.map((entry) => `- ${entry}`),
+                                "external:",
+                                ...message.reasoning.runtimeIntrospection.external.map((entry) => `- ${entry}`),
+                                "blocked:",
+                                ...message.reasoning.runtimeIntrospection.blocked.map((entry) => `- ${entry}`),
+                              ].join("\n")}</pre>
+                            </div>
+                          ) : (
+                            <div className="grid gap-2 border-t border-cyan-400/15 p-3 text-xs leading-5 text-zinc-300 md:grid-cols-2">
+                              <p><span className="font-semibold text-zinc-100">Inferred Intent:</span> {message.reasoning.inferredIntent}</p>
+                              <p><span className="font-semibold text-zinc-100">Confidence:</span> {message.reasoning.confidence}</p>
+                              <p><span className="font-semibold text-zinc-100">Route:</span> {message.reasoning.selectedCapabilityRoute}</p>
+                              <p><span className="font-semibold text-zinc-100">Runtime:</span> {message.reasoning.runtimeAwareness.runtimeAvailability}</p>
+                              {message.reasoning.inferredFeedbackCategory && <p><span className="font-semibold text-zinc-100">Feedback Category:</span> {message.reasoning.inferredFeedbackCategory}</p>}
+                              {message.reasoning.categoryMatchKind && <p><span className="font-semibold text-zinc-100">Match:</span> {message.reasoning.categoryMatchKind}</p>}
+                              {message.reasoning.matchedPhraseFamily && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Phrase Family:</span> {message.reasoning.matchedPhraseFamily}</p>}
+                              <p><span className="font-semibold text-zinc-100">Strategy:</span> {message.reasoning.selectedResponseStrategy}</p>
+                              {message.reasoning.fallbackReason && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Fallback:</span> {message.reasoning.fallbackReason}</p>}
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Why:</span> {message.reasoning.routeRationale}</p>
+                              {message.reasoning.ambiguity.length > 0 && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Ambiguity:</span> {message.reasoning.ambiguity.join(" ")}</p>}
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Limitation:</span> {message.reasoning.limitationExplanation}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Next:</span> {message.reasoning.nextUsefulStep}</p>
+                              <pre className="md:col-span-2 max-h-36 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{message.reasoning.decompositionDimensions.map((entry) => `- ${entry}`).join("\n")}</pre>
+                            </div>
+                          )}
                         </details>
                       )}
                       {message.codexHandoff && (
