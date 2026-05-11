@@ -138,6 +138,52 @@ test("development campaign prompt returns a campaign plan instead of fake execut
   assert.doesNotMatch(response.assistantMessage, /I edited|I ran Unity|I executed/i);
 });
 
+test("repo status prompt creates a scoped execution request without running it", () => {
+  const response = planGameDevChatResponse("check repo status");
+
+  assert.equal(response.route.mode, "SCOPED_EXECUTION_REQUEST");
+  assert.ok(response.scopedExecution);
+  assert.equal(response.scopedExecution.request.command, "git status --short");
+  assert.equal(response.scopedExecution.request.approvalStatus, "pending");
+  assert.equal(response.scopedExecution.log.executionStatus, "blocked");
+  assert.equal(response.scopedExecution.log.truthfulnessLabel, "blocked_no_execution");
+  assert.match(response.assistantMessage, /did not run the command/i);
+  assert.doesNotMatch(response.assistantMessage, /I executed|I ran/i);
+});
+
+test("test run prompt prepares an approved-runtime request rather than fake execution", () => {
+  const response = planGameDevChatResponse("run the tests");
+
+  assert.equal(response.route.mode, "SCOPED_EXECUTION_REQUEST");
+  assert.ok(response.scopedExecution);
+  assert.equal(response.scopedExecution.request.command, "npm test");
+  assert.equal(response.scopedExecution.request.workingDirectory, "repo-root/web");
+  assert.match(response.assistantMessage, /Approval status: pending/);
+  assert.match(response.assistantMessage, /No command was executed from the chat planner/);
+});
+
+test("build prompt prepares rollback-aware scoped execution request", () => {
+  const response = planGameDevChatResponse("build the app");
+
+  assert.equal(response.route.mode, "SCOPED_EXECUTION_REQUEST");
+  assert.ok(response.scopedExecution);
+  assert.equal(response.scopedExecution.request.command, "npm run build");
+  assert.equal(response.scopedExecution.request.mutationPossible, true);
+  assert.match(response.scopedExecution.request.rollbackPlan ?? "", /Remove generated .next/);
+  assert.equal(response.scopedExecution.log.executionStatus, "blocked");
+});
+
+test("destructive execution prompt is blocked as scoped execution", () => {
+  const response = planGameDevChatResponse("delete everything with git reset --hard");
+
+  assert.equal(response.route.mode, "SCOPED_EXECUTION_REQUEST");
+  assert.ok(response.scopedExecution);
+  assert.equal(response.scopedExecution.request.riskLevel, "HIGH");
+  assert.equal(response.scopedExecution.decision.executable, false);
+  assert.match(response.scopedExecution.decision.blockedReason ?? "", /High-risk|blocked destructive/);
+  assert.match(response.assistantMessage, /Execution status: blocked/);
+});
+
 test("jump tuning request is classified as a Unity implementation plan", () => {
   const route = classifyGameDevIntent("I want my player jump to feel less floaty.");
 

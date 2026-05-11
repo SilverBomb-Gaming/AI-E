@@ -21,6 +21,7 @@ export type GameDevConversationMode =
   | "USE_LAST_HANDOFF"
   | "SESSION_RECAP"
   | "DEVELOPMENT_CAMPAIGN"
+  | "SCOPED_EXECUTION_REQUEST"
   | "FRUSTRATION_OR_CONFUSION"
   | "GAME_DEV_TASK"
   | "CODEX_HANDOFF_REQUEST"
@@ -81,6 +82,11 @@ export type GameDevChatResponse = {
   assistantMessage: string;
   codexHandoff?: GameDevCodexHandoff;
   developmentCampaign?: import("../developmentCampaign/developmentCampaignTypes").DevelopmentCampaignEngineResult;
+  scopedExecution?: {
+    request: import("../scopedSupervisedExecutionRuntime").ScopedExecutionRequest;
+    decision: import("../scopedSupervisedExecutionRuntime").ScopedExecutionDecision;
+    log: import("../scopedSupervisedExecutionRuntime").ScopedExecutionLog;
+  };
   sessionContext: GameDevSessionContext;
   scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1" | "CONVERSATIONAL_ORCHESTRATION_ACTIVE" | "REAL_CHAT_MODE_ACTIVE" | "PARTIAL_CHAT_MODE" | "CHAT_UI_SCAFFOLD_ACTIVE";
   changedFilesClaimed: false;
@@ -93,6 +99,7 @@ export type GameDevChatMessage = {
   route?: GameDevChatRoute;
   codexHandoff?: GameDevCodexHandoff;
   developmentCampaign?: import("../developmentCampaign/developmentCampaignTypes").DevelopmentCampaignEngineResult;
+  scopedExecution?: GameDevChatResponse["scopedExecution"];
   sessionContext?: GameDevSessionContext;
   createdAt: string;
 };

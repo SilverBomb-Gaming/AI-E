@@ -1,4 +1,5 @@
 import { isDevelopmentCampaignRequest, runDevelopmentCampaignEngine } from "../developmentCampaign/developmentCampaignEngine";
+import { createScopedExecutionLog, evaluateScopedExecutionRequest, type ScopedExecutionRequest } from "../scopedSupervisedExecutionRuntime";
 import { generateGameDevCodexHandoff } from "./gameDevHandoffGenerator";
 import { orchestrateGameDevChat, type GameDevConversationContext } from "./gameDevConversationalOrchestrator";
 import { createInitialGameDevSessionContext, summarizeGameDevSessionContext, updateGameDevSessionContext } from "./gameDevSessionContext";
@@ -16,6 +17,122 @@ function campaignRoute(): GameDevChatRoute {
     suggestedNextAction: "Review the selected layer and handoff before any implementation work.",
     keywords: ["development", "campaign", "capability", "handoff"],
   };
+}
+
+function scopedExecutionRoute(intent: string, keywords: string[]): GameDevChatRoute {
+  return {
+    mode: "SCOPED_EXECUTION_REQUEST",
+    conversationMode: "SCOPED_EXECUTION_REQUEST",
+    detectedIntent: intent,
+    confidence: "HIGH",
+    unityFirst: false,
+    needsClarification: false,
+    safetyStatus: "SAFE_RESPONSE_ONLY",
+    suggestedNextAction: "Approve the prepared scoped execution request in a trusted runtime before running it.",
+    keywords,
+  };
+}
+
+function detectScopedExecutionRequest(message: string): ScopedExecutionRequest | undefined {
+  const normalized = message.toLowerCase();
+  const base = {
+    executionRequestId: `scoped-exec-${Math.abs(Array.from(normalized).reduce((hash, char) => ((hash << 5) - hash) + char.charCodeAt(0), 0)).toString(16)}`,
+    requestedBy: "operator-chat",
+    workingDirectory: "repo-root",
+    allowedScope: {
+      scopeId: "ai-e-repo",
+      allowedWorkingDirectories: ["repo-root", "repo-root/web"],
+      allowNpmBuild: true,
+      allowNpmTests: true,
+      allowInspectionCommands: true,
+    },
+    requiresApproval: true,
+    approvalStatus: "pending" as const,
+    executionStatus: "prepared" as const,
+  };
+
+  if (/\b(git\s+status|repo\s+status|repository\s+status|check\s+(the\s+)?status)\b/i.test(message)) {
+    return {
+      ...base,
+      intent: "check repository status",
+      command: "git status --short",
+      riskLevel: "LOW",
+      timeoutMs: 10_000,
+      expectedOutputs: ["short git status entries"],
+    };
+  }
+
+  if (/\b(run|execute|start)\b.*\b(test|tests|test suite)\b/i.test(message)) {
+    return {
+      ...base,
+      intent: "run web test suite",
+      command: "npm test",
+      workingDirectory: "repo-root/web",
+      riskLevel: "LOW",
+      timeoutMs: 120_000,
+      expectedOutputs: ["test runner stdout", "test runner exit code"],
+    };
+  }
+
+  if (/\b(build|compile)\b.*\b(app|web|project)\b/i.test(message)) {
+    return {
+      ...base,
+      intent: "build web app",
+      command: "npm run build",
+      workingDirectory: "repo-root/web",
+      riskLevel: "MEDIUM",
+      mutationPossible: true,
+      rollbackPlan: "Remove generated .next build output if the build leaves stale artifacts.",
+      timeoutMs: 180_000,
+      expectedOutputs: ["Next.js build output", "build exit code"],
+    };
+  }
+
+  if (/\bexecute\b.*\b(next|approved|step)\b/i.test(message)) {
+    return {
+      ...base,
+      intent: "prepare next approved supervised execution step",
+      command: "git status --short",
+      riskLevel: "LOW",
+      timeoutMs: 10_000,
+      expectedOutputs: ["current repo status before selecting a bounded step"],
+    };
+  }
+
+  if (/\b(reset --hard|git clean|force push|remove-item|rm -rf)\b/i.test(message)) {
+    return {
+      ...base,
+      intent: "blocked destructive execution request",
+      command: message,
+      riskLevel: "HIGH",
+      timeoutMs: 10_000,
+      expectedOutputs: ["blocked refusal report"],
+    };
+  }
+
+  return undefined;
+}
+
+function formatScopedExecutionResponse(scopedExecution: NonNullable<GameDevChatResponse["scopedExecution"]>): string {
+  const { request, decision, log } = scopedExecution;
+  const approvalLine = request.approvalStatus === "approved" ? "Approval status: approved." : "Approval status: pending; this chat planner did not run the command.";
+  const blockedLine = decision.blockedReason ? `Blocked reason: ${decision.blockedReason}` : "Blocked reason: none at preparation time.";
+
+  return [
+    "I prepared a scoped supervised execution request.",
+    "",
+    `Request id: ${request.executionRequestId}`,
+    `Intent: ${request.intent}`,
+    `Command: ${request.command}`,
+    `Working directory: ${request.workingDirectory}`,
+    `Risk: ${request.riskLevel}`,
+    approvalLine,
+    blockedLine,
+    `Execution status: ${log.executionStatus}`,
+    `Truthfulness: ${log.truthfulnessLabel}`,
+    "",
+    "No command was executed from the chat planner. A trusted server/runtime adapter must re-check this request, require approval, and then run only if it remains inside the allowlist.",
+  ].join("\n");
 }
 
 function openingFor(route: GameDevChatRoute): string {
@@ -271,6 +388,28 @@ function formatCampaignResponse(campaign: ReturnType<typeof runDevelopmentCampai
 }
 
 export function planGameDevChatResponse(message: string, context?: GameDevConversationContext): GameDevChatResponse {
+  const executionRequest = detectScopedExecutionRequest(message);
+  if (executionRequest) {
+    const decision = evaluateScopedExecutionRequest(executionRequest);
+    const log = createScopedExecutionLog(executionRequest, decision, {
+      executionStatus: decision.executable ? "prepared" : "blocked",
+      truthfulnessLabel: decision.executable ? "prepared_no_execution" : "blocked_no_execution",
+    });
+    const route = scopedExecutionRoute(executionRequest.intent, ["scoped-execution", executionRequest.command.split(" ")[0] ?? "command"]);
+    const scopedExecution = { request: executionRequest, decision, log };
+    const assistantMessage = formatScopedExecutionResponse(scopedExecution);
+    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage);
+
+    return {
+      route,
+      assistantMessage,
+      scopedExecution,
+      sessionContext,
+      scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1",
+      changedFilesClaimed: false,
+    };
+  }
+
   const campaign = isDevelopmentCampaignRequest(message) ? runDevelopmentCampaignEngine() : undefined;
   const route = campaign ? campaignRoute() : orchestrateGameDevChat(message, context);
   const shouldGenerateHandoff = route.mode === "CODEX_HANDOFF_REQUEST" || route.taskMode === "CODEX_HANDOFF_REQUEST";

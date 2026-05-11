@@ -108,6 +108,7 @@ export function GameDevChatClient() {
         route: response.route,
         codexHandoff: response.codexHandoff,
         developmentCampaign: response.developmentCampaign,
+        scopedExecution: response.scopedExecution,
         sessionContext: response.sessionContext,
         createdAt: new Date().toISOString(),
       };
@@ -217,6 +218,21 @@ export function GameDevChatClient() {
                             <p><span className="font-semibold text-zinc-100">Reason:</span> {message.developmentCampaign.plan.selectedReason}</p>
                             <p><span className="font-semibold text-zinc-100">Next Layer:</span> {message.developmentCampaign.nextLayerAfterSelected ?? "Depends on selected layer completion"}</p>
                             <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-3 text-xs leading-5 text-zinc-200">{message.developmentCampaign.plan.handoffMarkdown}</pre>
+                          </div>
+                        </div>
+                      )}
+                      {message.scopedExecution && (
+                        <div className="mt-3 overflow-hidden rounded-md border border-amber-400/30 bg-[#0b1220]">
+                          <div className="border-b border-amber-400/20 px-3 py-2">
+                            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-amber-200">Scoped Execution Request</span>
+                          </div>
+                          <div className="grid gap-2 p-3 text-xs leading-5 text-zinc-300 md:grid-cols-2">
+                            <p><span className="font-semibold text-zinc-100">Request:</span> {message.scopedExecution.request.executionRequestId}</p>
+                            <p><span className="font-semibold text-zinc-100">Status:</span> {message.scopedExecution.log.executionStatus}</p>
+                            <p><span className="font-semibold text-zinc-100">Command:</span> {message.scopedExecution.request.command}</p>
+                            <p><span className="font-semibold text-zinc-100">Approval:</span> {message.scopedExecution.request.approvalStatus}</p>
+                            <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Truthfulness:</span> {message.scopedExecution.log.truthfulnessLabel}</p>
+                            {message.scopedExecution.decision.blockedReason && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Blocked:</span> {message.scopedExecution.decision.blockedReason}</p>}
                           </div>
                         </div>
                       )}

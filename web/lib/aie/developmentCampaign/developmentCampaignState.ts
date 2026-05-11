@@ -86,6 +86,18 @@ export const defaultDevelopmentCampaignLayers: DevelopmentCampaignLayer[] = [
     nextActions: ["Use long-running runtime state while advancing Unity workflow awareness", "Keep real execution behind explicit supervised paths"],
   },
   {
+    layerId: "SCOPED_SUPERVISED_EXECUTION_RUNTIME_PHASE1",
+    layerName: "Scoped supervised execution runtime Phase 1",
+    status: "real",
+    priority: 91,
+    dependencyLayerIds: ["SAFE_EXECUTION_GUARDRAILS_PHASE1", "SUPERVISED_MULTI_STEP_EXECUTION_PHASE1", "LONG_RUNNING_CAMPAIGN_RUNTIME_PHASE1"],
+    riskLevel: "HIGH",
+    truthfulnessRequirements: ["Only approved allowlisted commands may run", "Do not claim chat ran commands when it only prepared a request", "Log blocked and executed attempts separately", "Keep destructive, credential, install, force-push, and Unity commands blocked"],
+    completionCriteria: ["Execution request model exists", "Approval and scope gate exists", "Safe command allowlist exists", "Disabled-by-default Node adapter can really execute approved scoped commands", "Execution logs capture stdout, stderr, exit code, elapsed time, and truthfulness labels", "Campaign state can record execution results"],
+    verificationCommands: ["./node_modules/.bin/tsx.cmd --test lib/aie/scopedSupervisedExecutionRuntime.test.ts", "npm run build"],
+    nextActions: ["Use scoped execution for approved low-risk local commands", "Keep Unity execution deferred until Unity workflow awareness is implemented"],
+  },
+  {
     layerId: "UNITY_WORKFLOW_AWARENESS_PHASE1",
     layerName: "Unity workflow awareness Phase 1",
     status: "missing",
