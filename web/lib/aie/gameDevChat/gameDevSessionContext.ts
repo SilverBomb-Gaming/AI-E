@@ -26,6 +26,9 @@ export function hasUsableGameDevSessionContext(context?: GameDevSessionContext):
 }
 
 function inferProject(message: string, route: GameDevChatRoute): string | undefined {
+  if (/psychological horror|horror game|horror project/i.test(message)) {
+    return "psychological horror game project";
+  }
   if (route.unityFirst || /\b(unity|c#|monobehaviour|prefab|scene|rigidbody|navmesh)\b/i.test(message)) {
     return "Unity game project";
   }
@@ -35,8 +38,30 @@ function inferProject(message: string, route: GameDevChatRoute): string | undefi
   return undefined;
 }
 
-function inferGameplaySystem(message: string): string | undefined {
+function inferGameplaySystem(message: string, reasoning?: ConversationalReasoningResult): string | undefined {
   const lower = message.toLowerCase();
+  if (/psychological horror|horror|dread|uncanny/.test(lower)) {
+    return "psychological horror atmosphere and tension";
+  }
+  switch (reasoning?.gameplayFeedback?.category) {
+    case "combat_impact":
+      return "combat impact and hit feedback";
+    case "pacing_retention":
+    case "pacing_inconsistency":
+      return "pacing and retention loop";
+    case "inventory_cognitive_load":
+      return "inventory usability and cognitive load";
+    case "believability_world_design":
+      return "world believability and environmental logic";
+    case "ui_atmosphere":
+      return "UI atmosphere and emotional tone";
+    case "emotional_flatness":
+      return "emotional pacing and consequence";
+    case "tension_design":
+      return "tension and atmosphere design";
+    case "interaction_feel":
+      return "interaction feel and responsiveness";
+  }
   if (lower.includes("collectible")) {
     return "collectible system";
   }
@@ -109,8 +134,10 @@ export function updateGameDevSessionContext(
 ): GameDevSessionContext {
   const base = previousContext ?? createInitialGameDevSessionContext();
   const preserveTaskContext = reasoning?.shouldPreservePreviousTaskContext === true;
-  const currentProject = preserveTaskContext ? base.currentProject : inferProject(message, route) ?? base.currentProject;
-  const activeGameplaySystem = preserveTaskContext ? base.activeGameplaySystem : inferGameplaySystem(message) ?? base.activeGameplaySystem;
+  const preserveProjectFlavor = Boolean(reasoning?.gameplayFeedback && /psychological horror/i.test([base.currentProject, base.activeGameplaySystem, base.currentImplementationTask].filter(Boolean).join(" ")));
+  const preservedProject = preserveProjectFlavor && base.currentProject === "Unity game project" ? "psychological horror game project" : base.currentProject;
+  const currentProject = preserveTaskContext ? base.currentProject : preserveProjectFlavor ? preservedProject : inferProject(message, route) ?? base.currentProject;
+  const activeGameplaySystem = preserveTaskContext ? base.activeGameplaySystem : preserveProjectFlavor ? base.activeGameplaySystem ?? inferGameplaySystem(message, reasoning) : inferGameplaySystem(message, reasoning) ?? base.activeGameplaySystem;
   const currentImplementationTask = preserveTaskContext ? base.currentImplementationTask : inferImplementationTask(message, route) ?? base.currentImplementationTask;
   const latestCodexHandoffTopic = inferHandoffTopic(message, codexHandoff) ?? base.latestCodexHandoffTopic;
   const blocker = route.mode === "TROUBLESHOOT_PREVIOUS" || route.mode === "CLARIFICATION_NEEDED" ? route.detectedIntent : undefined;

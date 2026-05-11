@@ -375,6 +375,34 @@ function formatUnityRuntimeBlockedResponse(reasoning: ConversationalReasoningRes
   ].join("\n");
 }
 
+function formatDeepGameplayFeedbackResponse(reasoning: ConversationalReasoningResult): string | undefined {
+  const feedback = reasoning.gameplayFeedback;
+  if (!feedback) {
+    return undefined;
+  }
+  return [
+    `What this probably means: ${feedback.whatThisProbablyMeans}`,
+    feedback.contextualLens ? `Context lens: ${feedback.contextualLens}` : undefined,
+    "",
+    "Decomposition dimensions:",
+    ...feedback.dimensions.map((dimension) => `- ${dimension}`),
+    "",
+    "Likely causes:",
+    ...feedback.likelyCauses.map((cause) => `- ${cause}`),
+    "",
+    "Highest leverage fixes:",
+    ...feedback.highestLeverageFixes.map((fix) => `- ${fix}`),
+    "",
+    "Diagnostic questions:",
+    ...feedback.diagnosticQuestions.map((question) => `- ${question}`),
+    "",
+    "Small validation loop:",
+    ...feedback.smallValidationLoop.map((step) => `- ${step}`),
+    "",
+    `If you want AI-E to act: ${feedback.optionalBoundedWorkflowSuggestion}`,
+  ].filter((entry): entry is string => Boolean(entry)).join("\n");
+}
+
 function openingFor(route: GameDevChatRoute): string {
   switch (route.taskMode ?? route.mode) {
     case "UNITY_IMPLEMENTATION_PLAN":
@@ -465,6 +493,9 @@ function bulletsFor(message: string, route: GameDevChatRoute): string[] {
 
 function dynamicReasoningBullets(message: string, route: GameDevChatRoute, reasoning: ConversationalReasoningResult): string[] {
   const lower = message.toLowerCase();
+  if (reasoning.gameplayFeedback) {
+    return reasoning.gameplayFeedback.highestLeverageFixes;
+  }
   if (/tense|tension|suspense|atmosphere|atmospheric|mood/.test(lower)) {
     return reasoning.dynamicDecomposition;
   }
@@ -605,6 +636,11 @@ function formatResponse(message: string, route: GameDevChatRoute, includeHandoff
 
   if (route.mode === "BLOCKED_OR_UNSAFE" || route.taskMode === "BLOCKED_OR_UNSAFE") {
     return withReasoning(`${openingFor(route)} ${reasoning.limitationExplanation} I can still help reframe it as a safe Unity planning, debugging, or supervised repo workflow task.`, reasoning);
+  }
+
+  const gameplayFeedbackResponse = formatDeepGameplayFeedbackResponse(reasoning);
+  if (gameplayFeedbackResponse) {
+    return withReasoning(gameplayFeedbackResponse, reasoning);
   }
 
   const bullets = dynamicReasoningBullets(message, route, reasoning).map((entry) => `- ${entry}`).join("\n");

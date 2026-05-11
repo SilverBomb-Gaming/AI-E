@@ -183,10 +183,114 @@ test("vague tension prompt receives dynamic decomposition instead of generic fal
   const response = planGameDevChatResponse("make the game feel more tense");
 
   assert.ok(response.reasoning);
-  assert.match(response.assistantMessage, /Pacing pressure/);
-  assert.match(response.assistantMessage, /Audio pressure/);
-  assert.match(response.assistantMessage, /Enemy pressure/);
+  assert.equal(response.reasoning.inferredFeedbackCategory, "tension_design");
+  assert.match(response.assistantMessage, /What this probably means/);
+  assert.match(response.assistantMessage, /Likely causes/);
+  assert.match(response.assistantMessage, /Highest leverage fixes/);
+  assert.match(response.assistantMessage, /Small validation loop/);
   assert.doesNotMatch(response.assistantMessage, /Keep the next step small and testable/);
+});
+
+test("combat lacks impact gets specific impact-stack reasoning", () => {
+  const response = planGameDevChatResponse("the combat lacks impact");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "combat_impact");
+  assert.match(response.assistantMessage, /What this probably means/);
+  assert.match(response.assistantMessage, /hit-stop|hit stop/i);
+  assert.match(response.assistantMessage, /screen shake/i);
+  assert.match(response.assistantMessage, /enemy reaction/i);
+  assert.match(response.assistantMessage, /animation anticipation/i);
+  assert.match(response.assistantMessage, /sound transients/i);
+  assert.match(response.assistantMessage, /controller vibration/i);
+  assert.match(response.assistantMessage, /camera impulse/i);
+  assert.match(response.assistantMessage, /VFX contact clarity/i);
+  assert.doesNotMatch(response.assistantMessage, /Clarify the real target|Identify the smallest useful next step|Name the relevant capability boundary/);
+});
+
+test("players lose interest after 10 minutes gets retention pacing reasoning", () => {
+  const response = planGameDevChatResponse("players lose interest after 10 minutes");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "pacing_retention");
+  assert.match(response.assistantMessage, /first meaningful reward|first reward/i);
+  assert.match(response.assistantMessage, /novelty/i);
+  assert.match(response.assistantMessage, /goal/i);
+  assert.match(response.assistantMessage, /challenge/i);
+  assert.match(response.assistantMessage, /dead traversal/i);
+  assert.match(response.assistantMessage, /short-term objective/i);
+});
+
+test("pacing feels inconsistent gets rhythm decomposition", () => {
+  const response = planGameDevChatResponse("the pacing feels inconsistent");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "pacing_inconsistency");
+  assert.match(response.assistantMessage, /encounter spacing/i);
+  assert.match(response.assistantMessage, /safe intervals|safe room/i);
+  assert.match(response.assistantMessage, /tension\/release rhythm/i);
+  assert.match(response.assistantMessage, /traversal dead zones/i);
+  assert.match(response.assistantMessage, /dialogue|cutscene/i);
+  assert.match(response.assistantMessage, /reward timing/i);
+});
+
+test("inventory cognitive overload gets usability decomposition", () => {
+  const response = planGameDevChatResponse("the inventory flow creates cognitive overload");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "inventory_cognitive_load");
+  assert.match(response.assistantMessage, /item categorization|group/i);
+  assert.match(response.assistantMessage, /visual grouping|screen density/i);
+  assert.match(response.assistantMessage, /decision frequency|parse, compare, and commit/i);
+  assert.match(response.assistantMessage, /affordances/i);
+  assert.match(response.assistantMessage, /sorting\/filtering/i);
+  assert.match(response.assistantMessage, /controller\/mouse input burden|controller and mouse/i);
+});
+
+test("world does not feel believable gets environmental logic reasoning", () => {
+  const response = planGameDevChatResponse("the world doesn't feel believable");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "believability_world_design");
+  assert.match(response.assistantMessage, /environmental logic|world logic/i);
+  assert.match(response.assistantMessage, /NPC|object placement/i);
+  assert.match(response.assistantMessage, /cause\/effect/i);
+  assert.match(response.assistantMessage, /readable history/i);
+  assert.match(response.assistantMessage, /scale/i);
+  assert.match(response.assistantMessage, /lived-in details/i);
+});
+
+test("psychological horror context is preserved during world feedback", () => {
+  const setup = planGameDevChatResponse("I am making a psychological horror game about being watched in an abandoned hospital.");
+  const response = planGameDevChatResponse("the world doesn't feel believable", { previousRoute: setup.route, sessionContext: setup.sessionContext });
+
+  assert.equal(response.sessionContext.currentProject, "psychological horror game project");
+  assert.equal(response.sessionContext.activeGameplaySystem, "psychological horror atmosphere and tension");
+  assert.match(response.assistantMessage, /psychological horror/i);
+  assert.match(response.assistantMessage, /dread|uncertainty|vulnerability/i);
+});
+
+test("nuanced feedback does not use generic fallback language", () => {
+  const prompts = [
+    "the combat lacks impact",
+    "players lose interest after 10 minutes",
+    "the pacing feels inconsistent",
+    "the inventory flow creates cognitive overload",
+    "the world doesn't feel believable",
+  ];
+
+  for (const prompt of prompts) {
+    const response = planGameDevChatResponse(prompt);
+    assert.ok(response.reasoning?.inferredFeedbackCategory, prompt);
+    assert.match(response.assistantMessage, /What this probably means/);
+    assert.match(response.assistantMessage, /If you want AI-E to act/);
+    assert.doesNotMatch(response.assistantMessage, /Clarify the real target|Identify the smallest useful next step|Name the relevant capability boundary|Keep the next step small and testable/);
+  }
+});
+
+test("reasoning metadata includes feedback dimensions for visibility panel", () => {
+  const response = planGameDevChatResponse("the combat lacks impact");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "combat_impact");
+  assert.equal(response.reasoning?.selectedResponseStrategy, "diagnose sensory impact stack before implementation");
+  assert.ok(response.reasoning?.decompositionDimensions.includes("hit stop"));
+  assert.ok(response.reasoning?.decompositionDimensions.includes("screen shake"));
+  assert.equal(response.reasoning?.runtimeAwareness.runtimeAvailability, "not_applicable");
 });
 
 test("direct Unity runtime request gets blocked capability reasoning", () => {

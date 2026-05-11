@@ -21,11 +21,22 @@ const baseRoute: GameDevChatRoute = {
 test("dynamic reasoning decomposes vague tension requests into concrete levers", () => {
   const reasoning = runConversationalReasoning({ message: "make the game feel more tense", route: baseRoute });
 
-  assert.equal(reasoning.phaseId, "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1");
-  assert.equal(reasoning.probableUserGoal, "turn a vague mood request into actionable game-feel levers");
-  assert.ok(reasoning.dynamicDecomposition.some((entry) => /Pacing pressure/.test(entry)));
-  assert.ok(reasoning.dynamicDecomposition.some((entry) => /Audio pressure/.test(entry)));
-  assert.ok(reasoning.dynamicDecomposition.some((entry) => /Enemy pressure/.test(entry)));
+  assert.equal(reasoning.phaseId, "DEEP_GAMEPLAY_REASONING_AND_DECOMPOSITION_PHASE1");
+  assert.equal(reasoning.probableUserGoal, "analyze tension design feedback into causes, levers, questions, and validation");
+  assert.ok(reasoning.dynamicDecomposition.some((entry) => /pacing pressure/i.test(entry)));
+  assert.ok(reasoning.dynamicDecomposition.some((entry) => /audio pressure/i.test(entry)));
+  assert.ok(reasoning.dynamicDecomposition.some((entry) => /enemy pressure/i.test(entry)));
+});
+
+test("deep gameplay feedback exposes category dimensions and strategy", () => {
+  const reasoning = runConversationalReasoning({ message: "the combat lacks impact", route: baseRoute });
+
+  assert.equal(reasoning.phaseId, "DEEP_GAMEPLAY_REASONING_AND_DECOMPOSITION_PHASE1");
+  assert.equal(reasoning.inferredFeedbackCategory, "combat_impact");
+  assert.equal(reasoning.selectedResponseStrategy, "diagnose sensory impact stack before implementation");
+  assert.ok(reasoning.decompositionDimensions.includes("hit stop"));
+  assert.ok(reasoning.decompositionDimensions.includes("VFX contact clarity"));
+  assert.equal(reasoning.runtimeAwareness.runtimeAvailability, "not_applicable");
 });
 
 test("runtime-aware reasoning explains direct Unity control blocker", () => {
