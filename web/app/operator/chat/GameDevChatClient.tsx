@@ -426,7 +426,10 @@ export function GameDevChatClient() {
                             <p><span className="font-semibold text-zinc-100">Route:</span> {message.reasoning.selectedCapabilityRoute}</p>
                             <p><span className="font-semibold text-zinc-100">Runtime:</span> {message.reasoning.runtimeAwareness.runtimeAvailability}</p>
                             {message.reasoning.inferredFeedbackCategory && <p><span className="font-semibold text-zinc-100">Feedback Category:</span> {message.reasoning.inferredFeedbackCategory}</p>}
+                            {message.reasoning.categoryMatchKind && <p><span className="font-semibold text-zinc-100">Match:</span> {message.reasoning.categoryMatchKind}</p>}
+                            {message.reasoning.matchedPhraseFamily && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Phrase Family:</span> {message.reasoning.matchedPhraseFamily}</p>}
                             <p><span className="font-semibold text-zinc-100">Strategy:</span> {message.reasoning.selectedResponseStrategy}</p>
+                            {message.reasoning.fallbackReason && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Fallback:</span> {message.reasoning.fallbackReason}</p>}
                             <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Why:</span> {message.reasoning.routeRationale}</p>
                             {message.reasoning.ambiguity.length > 0 && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Ambiguity:</span> {message.reasoning.ambiguity.join(" ")}</p>}
                             <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Limitation:</span> {message.reasoning.limitationExplanation}</p>

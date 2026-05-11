@@ -210,7 +210,7 @@ test("combat lacks impact gets specific impact-stack reasoning", () => {
 test("players lose interest after 10 minutes gets retention pacing reasoning", () => {
   const response = planGameDevChatResponse("players lose interest after 10 minutes");
 
-  assert.equal(response.reasoning?.inferredFeedbackCategory, "pacing_retention");
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "player_interest_dropoff");
   assert.match(response.assistantMessage, /first meaningful reward|first reward/i);
   assert.match(response.assistantMessage, /novelty/i);
   assert.match(response.assistantMessage, /goal/i);
@@ -246,13 +246,119 @@ test("inventory cognitive overload gets usability decomposition", () => {
 test("world does not feel believable gets environmental logic reasoning", () => {
   const response = planGameDevChatResponse("the world doesn't feel believable");
 
-  assert.equal(response.reasoning?.inferredFeedbackCategory, "believability_world_design");
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "world_believability");
   assert.match(response.assistantMessage, /environmental logic|world logic/i);
   assert.match(response.assistantMessage, /NPC|object placement/i);
   assert.match(response.assistantMessage, /cause\/effect/i);
   assert.match(response.assistantMessage, /readable history/i);
   assert.match(response.assistantMessage, /scale/i);
   assert.match(response.assistantMessage, /lived-in details/i);
+});
+
+test("world artificial instead of lived-in uses world believability alias", () => {
+  const response = planGameDevChatResponse("the world feels artificial instead of lived-in");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "world_believability");
+  assert.equal(response.reasoning?.categoryMatchKind, "alias");
+  assert.match(response.reasoning?.matchedPhraseFamily ?? "", /artificial|lived-in/i);
+  assert.ok(response.reasoning?.decompositionDimensions.includes("lived-in logic"));
+  assert.match(response.assistantMessage, /What this probably means/);
+  assert.match(response.assistantMessage, /lived-in|spatial purpose|off-screen life/i);
+  assert.doesNotMatch(response.assistantMessage, /Clarify the real target|Identify the smallest useful next step|Name the relevant capability boundary|Keep the next step small and testable|I edited|I ran Unity/i);
+});
+
+test("UI pulls players out of immersion uses UI immersion category", () => {
+  const response = planGameDevChatResponse("the UI constantly pulls players out of immersion");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "ui_immersion_break");
+  assert.equal(response.reasoning?.categoryMatchKind, "alias");
+  assert.ok(response.reasoning?.decompositionDimensions.includes("diegetic fit"));
+  assert.match(response.assistantMessage, /attention|immersion|readability/i);
+  assert.doesNotMatch(response.assistantMessage, /Keep the next step small and testable|I edited|I ran Unity/i);
+});
+
+test("psychologically unsafe safe rooms uses horror safety subversion category", () => {
+  const response = planGameDevChatResponse("I want the player to feel psychologically unsafe even in safe rooms");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "psychological_safety_subversion");
+  assert.equal(response.reasoning?.categoryMatchKind, "alias");
+  assert.ok(response.reasoning?.decompositionDimensions.includes("unsafe safety"));
+  assert.match(response.assistantMessage, /dread|paranoia|vulnerability|mechanical safety/i);
+  assert.doesNotMatch(response.assistantMessage, /Clarify the real target|Name the relevant capability boundary|I edited|I ran Unity/i);
+});
+
+test("Silent Hill-like environmental storytelling gets implication reasoning", () => {
+  const response = planGameDevChatResponse("how would Silent Hill-like environmental storytelling support this?");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "environmental_storytelling");
+  assert.equal(response.reasoning?.categoryMatchKind, "alias");
+  assert.ok(response.reasoning?.decompositionDimensions.includes("implied history"));
+  assert.match(response.assistantMessage, /withheld explanation|motif|player inference/i);
+  assert.doesNotMatch(response.assistantMessage, /Keep the next step small and testable|I edited|I ran Unity/i);
+});
+
+test("curiosity collapses gets curiosity decay reasoning", () => {
+  const response = planGameDevChatResponse("the player's curiosity collapses too quickly");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "curiosity_decay");
+  assert.equal(response.reasoning?.categoryMatchKind, "alias");
+  assert.ok(response.reasoning?.decompositionDimensions.includes("mystery sustain"));
+  assert.match(response.assistantMessage, /question cadence|discovery|hypothesis/i);
+  assert.doesNotMatch(response.assistantMessage, /Identify the smallest useful next step|I edited|I ran Unity/i);
+});
+
+test("inventory decision fatigue gets fatigue-specific reasoning", () => {
+  const response = planGameDevChatResponse("the inventory creates decision fatigue");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "inventory_decision_fatigue");
+  assert.equal(response.reasoning?.categoryMatchKind, "alias");
+  assert.ok(response.reasoning?.decompositionDimensions.includes("choice count"));
+  assert.match(response.assistantMessage, /overthinking|regret|comparison burden|consequence/i);
+  assert.doesNotMatch(response.assistantMessage, /Clarify the real target|I edited|I ran Unity/i);
+});
+
+test("exploration loop predictable gets exploration predictability reasoning", () => {
+  const response = planGameDevChatResponse("the exploration loop becomes predictable");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "exploration_predictability");
+  assert.equal(response.reasoning?.categoryMatchKind, "alias");
+  assert.ok(response.reasoning?.decompositionDimensions.includes("room formula"));
+  assert.match(response.assistantMessage, /formula|discovery pattern|surprise/i);
+  assert.doesNotMatch(response.assistantMessage, /Keep the next step small and testable|I edited|I ran Unity/i);
+});
+
+test("smart fallback still decomposes unknown design feedback", () => {
+  const response = planGameDevChatResponse("the onboarding emotion feels smeared across too many systems");
+
+  assert.equal(response.reasoning?.inferredFeedbackCategory, "smart_feedback_fallback");
+  assert.equal(response.reasoning?.categoryMatchKind, "smart_fallback");
+  assert.match(response.reasoning?.fallbackReason ?? "", /No deeper category alias matched/i);
+  assert.ok(response.reasoning?.decompositionDimensions.includes("probable player experience"));
+  assert.match(response.assistantMessage, /What this probably means/);
+  assert.match(response.assistantMessage, /Diagnostic questions/);
+  assert.doesNotMatch(response.assistantMessage, /Clarify the real target|Identify the smallest useful next step|Name the relevant capability boundary|Keep the next step small and testable/i);
+});
+
+test("runtime capabilities prompt uses runtime self-explanation", () => {
+  const response = planGameDevChatResponse("what runtime capabilities are actually real right now?");
+
+  assert.ok(response.reasoning);
+  assert.match(response.assistantMessage, /What is real/);
+  assert.match(response.assistantMessage, /What is bounded\/supervised/);
+  assert.match(response.assistantMessage, /What still depends on external tools/);
+  assert.match(response.assistantMessage, /What is blocked/);
+  assert.match(response.assistantMessage, /Safest next step/);
+  assert.doesNotMatch(response.assistantMessage, /Got it — I can help with that as a game-development question|I edited|I ran Unity/i);
+});
+
+test("Copilot Codex dependency prompt uses runtime self-explanation", () => {
+  const response = planGameDevChatResponse("what still depends on Copilot or Codex?");
+
+  assert.ok(response.reasoning);
+  assert.match(response.assistantMessage, /What still depends on external tools/);
+  assert.match(response.assistantMessage, /Copilot\/Codex|implementation agent/i);
+  assert.match(response.assistantMessage, /What is blocked/);
+  assert.doesNotMatch(response.assistantMessage, /General game-development help|I edited|I ran Unity/i);
 });
 
 test("psychological horror context is preserved during world feedback", () => {
@@ -316,8 +422,8 @@ test("runtime introspection response exposes reasoning and capability status", (
 
   assert.ok(response.reasoning);
   assert.match(response.assistantMessage, /truthful runtime picture/i);
-  assert.match(response.assistantMessage, /Runtime availability:/);
-  assert.match(response.assistantMessage, /Still blocked or limited:/);
+  assert.match(response.assistantMessage, /What is real:/);
+  assert.match(response.assistantMessage, /What is blocked:/);
 });
 
 test("UI atmosphere request routes to generalized repo workflow instead of hardcoded domain lane", () => {

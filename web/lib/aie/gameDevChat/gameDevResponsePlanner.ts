@@ -146,15 +146,24 @@ function formatRuntimeIntrospectionResponse(reasoning: ConversationalReasoningRe
   return [
     "Here is the truthful runtime picture I can infer from the current chat surface.",
     "",
-    `Selected route: ${reasoning.selectedCapabilityRoute}`,
-    `Confidence: ${reasoning.confidence}`,
-    `Runtime availability: ${reasoning.runtimeAwareness.runtimeAvailability}`,
-    "Real right now:",
+    "What is real:",
     ...reasoning.runtimeAwareness.realCapabilities.map((capability) => `- ${capability}`),
-    "Still blocked or limited:",
+    "",
+    "What is bounded/supervised:",
+    "- Approved operator work cycles can run only through trusted server routes and explicit approval gates.",
+    "- Scoped execution remains allowlisted, timeout-bounded, and rollback-aware when enabled.",
+    "- Long-run and durable runtime flows report measured state; they do not imply unattended autonomy.",
+    "",
+    "What still depends on external tools:",
+    "- Copilot/Codex or another implementation agent is still needed for broad code-writing beyond the bounded workflow artifact lane.",
+    "- Unity Editor playmode/control still needs an approved trusted bridge and project-lock-safe validation hooks.",
+    "- Browser/operator UI smoke checks still require a running local dev server and explicit operator interaction.",
+    "",
+    "What is blocked:",
     ...reasoning.runtimeAwareness.blockedCapabilities.map((capability) => `- ${capability}`),
-    reasoning.runtimeAwareness.missingCapabilityExplanation ? `Why: ${reasoning.runtimeAwareness.missingCapabilityExplanation}` : "Why: this response does not need a blocked runtime capability.",
-    `Next: ${reasoning.nextUsefulStep}`,
+    "- autonomous_real, unrestricted repo autonomy, arbitrary shell access, direct Unity control, and unattended overnight operation remain unavailable.",
+    "",
+    `Safest next step: ${reasoning.nextUsefulStep}`,
   ].join("\n");
 }
 
@@ -660,7 +669,7 @@ function formatResponse(message: string, route: GameDevChatRoute, includeHandoff
 }
 
 function isRuntimeIntrospectionRequest(message: string): boolean {
-  return /\b(what is real|what can you actually do|runtime state|what is scaffolded|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
+  return /\b(what is real|what can you actually do|what can you actually do right now|runtime capabilities.*real|runtime state|what is scaffolded|what still depends on (copilot|codex|external tools)|what is still blocked|what.*blocked|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
 }
 
 function isUnityRuntimeBlockedRequest(message: string): boolean {

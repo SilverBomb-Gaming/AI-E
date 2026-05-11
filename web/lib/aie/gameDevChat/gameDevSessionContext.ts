@@ -52,9 +52,27 @@ function inferGameplaySystem(message: string, reasoning?: ConversationalReasonin
     case "inventory_cognitive_load":
       return "inventory usability and cognitive load";
     case "believability_world_design":
+    case "world_believability":
       return "world believability and environmental logic";
     case "ui_atmosphere":
+    case "ui_immersion_break":
       return "UI atmosphere and emotional tone";
+    case "psychological_safety_subversion":
+      return "psychological horror atmosphere and tension";
+    case "environmental_storytelling":
+      return "environmental storytelling and world implication";
+    case "curiosity_decay":
+      return "curiosity and discovery loop";
+    case "inventory_decision_fatigue":
+      return "inventory usability and cognitive load";
+    case "exploration_predictability":
+      return "exploration loop and discovery cadence";
+    case "pacing_curve_inconsistency":
+      return "pacing and emotional rhythm";
+    case "player_interest_dropoff":
+      return "pacing and retention loop";
+    case "smart_feedback_fallback":
+      return baseFeedbackSystemFromMessage(lower);
     case "emotional_flatness":
       return "emotional pacing and consequence";
     case "tension_design":
@@ -172,4 +190,20 @@ export function summarizeGameDevSessionContext(context?: GameDevSessionContext):
     context?.latestCodexHandoffTopic ? `Latest handoff: ${context.latestCodexHandoffTopic}` : undefined,
     context?.latestAssistantResponseSummary ? `Last response: ${context.latestAssistantResponseSummary}` : undefined,
   ].filter(Boolean).join("\n");
+}
+
+function baseFeedbackSystemFromMessage(lower: string): string {
+  if (/ui|interface|hud|menu/.test(lower)) {
+    return "UI atmosphere and emotional tone";
+  }
+  if (/inventory|item/.test(lower)) {
+    return "inventory usability and cognitive load";
+  }
+  if (/world|environment|level|room|exploration/.test(lower)) {
+    return "world and exploration experience";
+  }
+  if (/combat|enemy|hit|attack/.test(lower)) {
+    return "combat impact and hit feedback";
+  }
+  return "player experience feedback";
 }
