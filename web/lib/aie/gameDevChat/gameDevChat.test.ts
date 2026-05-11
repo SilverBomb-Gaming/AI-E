@@ -185,6 +185,26 @@ test("restore last checkpoint prompt uses durable continuity route", () => {
   assert.equal(response.changedFilesClaimed, false);
 });
 
+test("meaningful long-run prompt prepares approved-server request without starting it", () => {
+  const response = planGameDevChatResponse("start a 5 minute supervised run");
+
+  assert.equal(response.route.mode, "MEANINGFUL_LONG_RUN_REQUEST");
+  assert.ok(response.meaningfulLongRun);
+  assert.equal(response.meaningfulLongRun.request.mode, "test_mode");
+  assert.equal(response.meaningfulLongRun.request.targetRuntimeMs, 5 * 60 * 1000);
+  assert.equal(response.meaningfulLongRun.request.requiresOperatorApproval, true);
+  assert.match(response.assistantMessage, /chat planner did not start the run/i);
+  assert.doesNotMatch(response.assistantMessage, /I ran|overnight|autonomous_real/i);
+});
+
+test("thirty minute prompt prepares supervised mode long-run request", () => {
+  const response = planGameDevChatResponse("continue for 30 minutes");
+
+  assert.equal(response.route.mode, "MEANINGFUL_LONG_RUN_REQUEST");
+  assert.equal(response.meaningfulLongRun?.request.mode, "supervised_mode");
+  assert.equal(response.meaningfulLongRun?.request.targetRuntimeMs, 30 * 60 * 1000);
+});
+
 test("test run prompt prepares an approved-runtime request rather than fake execution", () => {
   const response = planGameDevChatResponse("run the tests");
 

@@ -24,6 +24,7 @@ export type GameDevConversationMode =
   | "SCOPED_EXECUTION_REQUEST"
   | "OPERATOR_WORK_CYCLE_REQUEST"
   | "DURABLE_RUNTIME_CONTINUITY_REQUEST"
+  | "MEANINGFUL_LONG_RUN_REQUEST"
   | "FRUSTRATION_OR_CONFUSION"
   | "GAME_DEV_TASK"
   | "CODEX_HANDOFF_REQUEST"
@@ -102,6 +103,17 @@ export type GameDevChatResponse = {
     };
     report?: import("../durableProjectMemoryStore").DurableRuntimeContinuityReport;
   };
+  meaningfulLongRun?: {
+    request: {
+      sessionId: string;
+      projectId: string;
+      mode: import("../meaningfulLongRunSupervisedOperation").MeaningfulLongRunMode;
+      targetRuntimeMs: number;
+      checkpointIntervalMs: number;
+      requiresOperatorApproval: true;
+    };
+    report?: import("../meaningfulLongRunSupervisedOperation").MeaningfulLongRunSupervisedOperationReport;
+  };
   sessionContext: GameDevSessionContext;
   scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1" | "CONVERSATIONAL_ORCHESTRATION_ACTIVE" | "REAL_CHAT_MODE_ACTIVE" | "PARTIAL_CHAT_MODE" | "CHAT_UI_SCAFFOLD_ACTIVE";
   changedFilesClaimed: false;
@@ -117,6 +129,7 @@ export type GameDevChatMessage = {
   scopedExecution?: GameDevChatResponse["scopedExecution"];
   workCycle?: GameDevChatResponse["workCycle"];
   durableContinuity?: GameDevChatResponse["durableContinuity"];
+  meaningfulLongRun?: GameDevChatResponse["meaningfulLongRun"];
   sessionContext?: GameDevSessionContext;
   createdAt: string;
 };

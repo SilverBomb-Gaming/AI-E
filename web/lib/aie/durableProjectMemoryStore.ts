@@ -44,6 +44,43 @@ export type DurableActiveOperationRecord = {
   summary: string;
 };
 
+export type DurableMeaningfulLongRunCheckpoint = {
+  checkpointId: string;
+  sessionId: string;
+  checkpointIndex: number;
+  checkpointAt: string;
+  elapsedRuntimeMs: number;
+  cycleCount: number;
+  milestoneCount: number;
+  summary: string;
+};
+
+export type DurableMeaningfulLongRunRecord = {
+  phaseId: "MEANINGFUL_LONG_RUN_SUPERVISED_OPERATION_PHASE1";
+  sessionId: string;
+  projectId: string;
+  startedAt: string;
+  endedAt: string;
+  targetRuntimeMs: number;
+  actualRuntimeMs: number;
+  targetRuntimeMet: boolean;
+  mode: "test_mode" | "supervised_mode" | "campaign_mode";
+  cycleCount: number;
+  milestoneCount: number;
+  checkpointCount: number;
+  retryCount: number;
+  rollbackCount: number;
+  failureCount: number;
+  usefulWorkOccurred: boolean;
+  meaningfulLongRunProof: boolean;
+  lastCheckpointAt?: string;
+  stopReason: "target_met" | "failure_limit_reached" | "blocked_unapproved_cycle" | "blocked_no_cycles" | "target_not_met";
+  independentExclusiveExecutionStatus: IndependentExclusiveExecutionStatus;
+  truthfulnessLabel: "test_mode_real_elapsed" | "meaningful_supervised_long_run" | "blocked_no_long_run" | "target_not_met";
+  checkpoints: DurableMeaningfulLongRunCheckpoint[];
+  summary: string;
+};
+
 export type DurableProjectRuntimeState = {
   phaseId: "DURABLE_PROJECT_MEMORY_AND_MULTI_CYCLE_RUNTIME_PHASE1";
   projectId: string;
@@ -59,6 +96,7 @@ export type DurableProjectRuntimeState = {
   executionHistory: DurableRuntimeHistoryEntry[];
   campaignSummaries: DurableRuntimeHistoryEntry[];
   activeOperationHistory: DurableActiveOperationRecord[];
+  meaningfulLongRunHistory: DurableMeaningfulLongRunRecord[];
   activeWorkItems: OperatorWorkCycleRequest[];
   runtimeSummary: string;
   latestExecutionStatus: string;
@@ -104,6 +142,7 @@ export type DurableProjectMemoryStore = {
   recordOperatorCycle: (request: OperatorWorkCycleRequest, previousCycleId?: string) => Promise<DurableProjectRuntimeState>;
   recordInterruption: (request: OperatorWorkCycleRequest, reason: string) => Promise<DurableProjectRuntimeState>;
   recordActiveOperationSession: (record: DurableActiveOperationRecord) => Promise<DurableProjectRuntimeState>;
+  recordMeaningfulLongRunSession: (record: DurableMeaningfulLongRunRecord) => Promise<DurableProjectRuntimeState>;
   restoreRuntimeContinuity: (now?: () => string) => Promise<DurableRuntimeContinuityReport>;
 };
 
@@ -138,6 +177,7 @@ export function createInitialDurableProjectRuntimeState(projectId: string, now: 
     executionHistory: [],
     campaignSummaries: [],
     activeOperationHistory: [],
+    meaningfulLongRunHistory: [],
     activeWorkItems: [],
     runtimeSummary: "No durable runtime history has been recorded yet.",
     latestExecutionStatus: "no_durable_state",
@@ -158,7 +198,7 @@ async function loadState(filePath: string): Promise<DurableProjectRuntimeState |
     if (parsed.phaseId !== "DURABLE_PROJECT_MEMORY_AND_MULTI_CYCLE_RUNTIME_PHASE1") {
       return undefined;
     }
-    return { ...parsed, activeOperationHistory: parsed.activeOperationHistory ?? [] };
+    return { ...parsed, activeOperationHistory: parsed.activeOperationHistory ?? [], meaningfulLongRunHistory: parsed.meaningfulLongRunHistory ?? [] };
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return undefined;
@@ -185,7 +225,7 @@ function mergedIndependentStatus(current: IndependentExclusiveExecutionStatus, n
 function buildRuntimeSummary(state: DurableProjectRuntimeState): string {
   return [
     `Durable local runtime state for ${state.projectId}: ${state.totalCycleCount} cycle(s), ${state.checkpointHistory.length} checkpoint(s), ${state.retryHistory.length} retry record(s), ${state.rollbackHistory.length} rollback record(s).`,
-    `Active operation sessions: ${state.activeOperationHistory.length}.`,
+    `Active operation sessions: ${state.activeOperationHistory.length}. Meaningful long-run sessions: ${state.meaningfulLongRunHistory.length}.`,
     `Latest execution status: ${state.latestExecutionStatus}. Independent status: ${state.independentExclusiveExecutionStatus}.`,
     "Continuity is local JSON-backed and supervised; no unattended background agent or autonomous_real execution is claimed.",
   ].join(" ");
@@ -318,6 +358,21 @@ export function createFileBackedDurableProjectMemoryStore(input: { storageRoot: 
         activeOperationHistory: [...existing.activeOperationHistory, record],
         campaignSummaries: [...existing.campaignSummaries, history(`${record.sessionId}-active-operation`, existing.activeCycleId, record.summary, timestamp, record.runtimeTruthfulnessLabel)],
         cumulativeRuntimeMs: existing.cumulativeRuntimeMs + record.elapsedRuntimeMs,
+        updatedAt: timestamp,
+      };
+      return saveState(filePath, { ...nextState, runtimeSummary: buildRuntimeSummary(nextState) });
+    },
+    recordMeaningfulLongRunSession: async (record) => {
+      const existing = await loadState(filePath) ?? createInitialDurableProjectRuntimeState(input.projectId, now);
+      const timestamp = now();
+      const nextState: DurableProjectRuntimeState = {
+        ...existing,
+        activeCampaignId: existing.activeCampaignId ?? `campaign-${existing.projectId}`,
+        latestExecutionStatus: record.stopReason,
+        independentExclusiveExecutionStatus: mergedIndependentStatus(existing.independentExclusiveExecutionStatus, record.independentExclusiveExecutionStatus),
+        meaningfulLongRunHistory: [...existing.meaningfulLongRunHistory, record],
+        campaignSummaries: [...existing.campaignSummaries, history(`${record.sessionId}-meaningful-long-run`, existing.activeCycleId, record.summary, timestamp, record.truthfulnessLabel)],
+        cumulativeRuntimeMs: existing.cumulativeRuntimeMs + record.actualRuntimeMs,
         updatedAt: timestamp,
       };
       return saveState(filePath, { ...nextState, runtimeSummary: buildRuntimeSummary(nextState) });

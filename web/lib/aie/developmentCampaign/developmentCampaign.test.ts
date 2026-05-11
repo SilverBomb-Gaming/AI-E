@@ -35,6 +35,7 @@ test("labels scaffolded and missing capabilities truthfully", () => {
   const operatorLauncher = result.capabilityMap.find((layer) => layer.layerId === "OPERATOR_WORK_CYCLE_LAUNCHER_PHASE1");
   const durableMultiCycle = result.capabilityMap.find((layer) => layer.layerId === "DURABLE_PROJECT_MEMORY_AND_MULTI_CYCLE_RUNTIME_PHASE1");
   const activeOperation = result.capabilityMap.find((layer) => layer.layerId === "REAL_LONG_DURATION_ACTIVE_OPERATION_PHASE1");
+  const meaningfulLongRun = result.capabilityMap.find((layer) => layer.layerId === "MEANINGFUL_LONG_RUN_SUPERVISED_OPERATION_PHASE1");
   const safeGuardrails = result.capabilityMap.find((layer) => layer.layerId === "SAFE_EXECUTION_GUARDRAILS_PHASE1");
   const supervisedQueue = result.capabilityMap.find((layer) => layer.layerId === "SUPERVISED_MULTI_STEP_EXECUTION_PHASE1");
   const fullStudio = result.capabilityMap.find((layer) => layer.layerId === "FULL_HANDS_OFF_STUDIO_OPERATION");
@@ -51,6 +52,7 @@ test("labels scaffolded and missing capabilities truthfully", () => {
   assert.equal(operatorLauncher?.status, "real");
   assert.equal(durableMultiCycle?.status, "real");
   assert.equal(activeOperation?.status, "real");
+  assert.equal(meaningfulLongRun?.status, "real");
   assert.equal(safeGuardrails?.status, "real");
   assert.equal(supervisedQueue?.status, "real");
   assert.equal(fullStudio?.status, "future");
@@ -89,15 +91,18 @@ test("campaign map distinguishes execution mutation validation rollback and retr
   const operatorLauncher = result.capabilityMap.find((layer) => layer.layerId === "OPERATOR_WORK_CYCLE_LAUNCHER_PHASE1");
   const durableMultiCycle = result.capabilityMap.find((layer) => layer.layerId === "DURABLE_PROJECT_MEMORY_AND_MULTI_CYCLE_RUNTIME_PHASE1");
   const activeOperation = result.capabilityMap.find((layer) => layer.layerId === "REAL_LONG_DURATION_ACTIVE_OPERATION_PHASE1");
+  const meaningfulLongRun = result.capabilityMap.find((layer) => layer.layerId === "MEANINGFUL_LONG_RUN_SUPERVISED_OPERATION_PHASE1");
 
   assert.deepEqual(scopedMutation?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry"]);
   assert.deepEqual(iterativeCycle?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry"]);
   assert.deepEqual(operatorLauncher?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry", "checkpoint"]);
   assert.deepEqual(durableMultiCycle?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry", "checkpoint"]);
   assert.deepEqual(activeOperation?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry", "checkpoint"]);
+  assert.deepEqual(meaningfulLongRun?.milestoneCategories, ["planning", "execution", "mutation", "validation", "rollback", "retry", "checkpoint"]);
   assert.match(operatorLauncher?.truthfulnessRequirements.join(" ") ?? "", /independentExclusiveExecutionStatus/);
   assert.match(durableMultiCycle?.truthfulnessRequirements.join(" ") ?? "", /local JSON file-backed/);
   assert.match(activeOperation?.truthfulnessRequirements.join(" ") ?? "", /measured wall-clock/);
+  assert.match(meaningfulLongRun?.truthfulnessRequirements.join(" ") ?? "", /test-mode short durations/);
   assert.equal(result.plan.selectedLayer.layerId, "UNITY_WORKFLOW_AWARENESS_PHASE1");
 });
 

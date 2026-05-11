@@ -54,6 +54,7 @@ export function GameDevChatClient() {
   const [executionRequestInFlight, setExecutionRequestInFlight] = useState<string | null>(null);
   const [workCycleInFlight, setWorkCycleInFlight] = useState<string | null>(null);
   const [durableContinuityInFlight, setDurableContinuityInFlight] = useState<string | null>(null);
+  const [meaningfulLongRunInFlight, setMeaningfulLongRunInFlight] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
   const latestRoute = latestAssistant?.route;
@@ -114,6 +115,7 @@ export function GameDevChatClient() {
         scopedExecution: response.scopedExecution,
         workCycle: response.workCycle,
         durableContinuity: response.durableContinuity,
+        meaningfulLongRun: response.meaningfulLongRun,
         sessionContext: response.sessionContext,
         createdAt: new Date().toISOString(),
       };
@@ -267,6 +269,39 @@ export function GameDevChatClient() {
       setMessages((current) => current.map((entry) => entry.id === messageId ? { ...entry, content: `${entry.content}\n\nDurable runtime error: ${failureMessage}` } : entry));
     } finally {
       setDurableContinuityInFlight(null);
+    }
+  }
+
+  async function handleMeaningfulLongRunStart(messageId: string) {
+    const message = messages.find((entry) => entry.id === messageId);
+    if (!message?.meaningfulLongRun || meaningfulLongRunInFlight) {
+      return;
+    }
+
+    const sessionId = message.meaningfulLongRun.request.sessionId;
+    setMeaningfulLongRunInFlight(sessionId);
+    try {
+      const response = await fetch("/api/operator/meaningful-long-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...message.meaningfulLongRun.request, approvalStatus: "approved" }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof payload?.error === "string" ? payload.error : "Meaningful long-run start failed.");
+      }
+      setMessages((current) => current.map((entry) => entry.id === messageId && entry.meaningfulLongRun ? {
+        ...entry,
+        meaningfulLongRun: {
+          ...entry.meaningfulLongRun,
+          report: payload.report,
+        },
+      } : entry));
+    } catch (error) {
+      const failureMessage = error instanceof Error ? error.message : "Meaningful long-run start failed.";
+      setMessages((current) => current.map((entry) => entry.id === messageId ? { ...entry, content: `${entry.content}\n\nMeaningful long-run error: ${failureMessage}` } : entry));
+    } finally {
+      setMeaningfulLongRunInFlight(null);
     }
   }
 
@@ -487,6 +522,46 @@ export function GameDevChatClient() {
                                 {message.durableContinuity.report.blockedReason && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Blocked:</span> {message.durableContinuity.report.blockedReason}</p>}
                                 <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Summary:</span> {message.durableContinuity.report.summary}</p>
                                 <pre className="md:col-span-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-[#070b12] p-2 text-[11px] leading-5 text-zinc-200">{message.durableContinuity.report.persistenceLimitations.join("\n")}</pre>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {message.meaningfulLongRun && (
+                        <div className="mt-3 overflow-hidden rounded-md border border-sky-400/30 bg-[#0b1220]">
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sky-400/20 px-3 py-2">
+                            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-sky-200">Meaningful Long-Run Supervised Operation</span>
+                            {!message.meaningfulLongRun.report && (
+                              <button
+                                type="button"
+                                disabled={meaningfulLongRunInFlight === message.meaningfulLongRun.request.sessionId}
+                                onClick={() => handleMeaningfulLongRunStart(message.id)}
+                                className="rounded-md border border-emerald-300/40 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+                              >
+                                Approve & Start
+                              </button>
+                            )}
+                          </div>
+                          <div className="grid gap-2 p-3 text-xs leading-5 text-zinc-300 md:grid-cols-2">
+                            <p><span className="font-semibold text-zinc-100">Session:</span> {message.meaningfulLongRun.request.sessionId}</p>
+                            <p><span className="font-semibold text-zinc-100">Mode:</span> {message.meaningfulLongRun.request.mode}</p>
+                            <p><span className="font-semibold text-zinc-100">Target:</span> {message.meaningfulLongRun.request.targetRuntimeMs}ms</p>
+                            <p><span className="font-semibold text-zinc-100">Checkpoint Interval:</span> {message.meaningfulLongRun.request.checkpointIntervalMs}ms</p>
+                            {message.meaningfulLongRun.report && (
+                              <>
+                                <p><span className="font-semibold text-zinc-100">Actual Runtime:</span> {message.meaningfulLongRun.report.actualRuntimeMs}ms</p>
+                                <p><span className="font-semibold text-zinc-100">Target Met:</span> {String(message.meaningfulLongRun.report.targetRuntimeMet)}</p>
+                                <p><span className="font-semibold text-zinc-100">Cycles:</span> {message.meaningfulLongRun.report.cycleCount}</p>
+                                <p><span className="font-semibold text-zinc-100">Checkpoints:</span> {message.meaningfulLongRun.report.checkpointCount}</p>
+                                <p><span className="font-semibold text-zinc-100">Retries:</span> {message.meaningfulLongRun.report.retryCount}</p>
+                                <p><span className="font-semibold text-zinc-100">Rollbacks:</span> {message.meaningfulLongRun.report.rollbackCount}</p>
+                                <p><span className="font-semibold text-zinc-100">Failures:</span> {message.meaningfulLongRun.report.failureCount}</p>
+                                <p><span className="font-semibold text-zinc-100">Useful Work:</span> {String(message.meaningfulLongRun.report.usefulWorkOccurred)}</p>
+                                <p><span className="font-semibold text-zinc-100">Meaningful Proof:</span> {String(message.meaningfulLongRun.report.meaningfulLongRunProof)}</p>
+                                <p><span className="font-semibold text-zinc-100">Independent Status:</span> {message.meaningfulLongRun.report.independentExclusiveExecutionStatus}</p>
+                                <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Truthfulness:</span> {message.meaningfulLongRun.report.truthfulnessLabel}</p>
+                                <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Stop Reason:</span> {message.meaningfulLongRun.report.stopReason}</p>
+                                <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Summary:</span> {message.meaningfulLongRun.report.summary}</p>
                               </>
                             )}
                           </div>

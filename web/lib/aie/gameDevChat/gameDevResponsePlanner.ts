@@ -62,6 +62,53 @@ function durableContinuityRoute(intent: string): GameDevChatRoute {
   };
 }
 
+function meaningfulLongRunRoute(intent: string): GameDevChatRoute {
+  return {
+    mode: "MEANINGFUL_LONG_RUN_REQUEST",
+    conversationMode: "MEANINGFUL_LONG_RUN_REQUEST",
+    detectedIntent: intent,
+    confidence: "HIGH",
+    unityFirst: false,
+    needsClarification: false,
+    safetyStatus: "SAFE_RESPONSE_ONLY",
+    suggestedNextAction: "Review and approve the supervised long-run target before starting the trusted server runtime.",
+    keywords: ["meaningful-long-run", "supervised-run", "checkpointed-runtime"],
+  };
+}
+
+function detectMeaningfulLongRunRequest(message: string): NonNullable<GameDevChatResponse["meaningfulLongRun"]>["request"] | undefined {
+  const lower = message.toLowerCase();
+  if (!/\b(start a 5 minute supervised run|continue for 30 minutes|run until the next checkpoint|summarize active run status|meaningful long-run|long run supervised)\b/i.test(message)) {
+    return undefined;
+  }
+  const targetRuntimeMs = lower.includes("30 minute") || lower.includes("30 minutes")
+    ? 30 * 60 * 1000
+    : lower.includes("next checkpoint")
+      ? 60 * 1000
+      : 5 * 60 * 1000;
+  return {
+    sessionId: `meaningful-long-run-${Math.abs(Array.from(lower).reduce((hash, char) => ((hash << 5) - hash) + char.charCodeAt(0), 0)).toString(16)}`,
+    projectId: "AI-E",
+    mode: targetRuntimeMs >= 30 * 60 * 1000 ? "supervised_mode" : "test_mode",
+    targetRuntimeMs,
+    checkpointIntervalMs: Math.min(60_000, Math.max(1_000, Math.floor(targetRuntimeMs / 5))),
+    requiresOperatorApproval: true,
+  };
+}
+
+function formatMeaningfulLongRunResponse(meaningfulLongRun: NonNullable<GameDevChatResponse["meaningfulLongRun"]>): string {
+  const request = meaningfulLongRun.request;
+  return [
+    "I prepared a meaningful supervised long-run request.",
+    "",
+    `Session: ${request.sessionId}`,
+    `Mode: ${request.mode}`,
+    `Target runtime: ${request.targetRuntimeMs}ms`,
+    `Checkpoint interval: ${request.checkpointIntervalMs}ms`,
+    "Truthfulness: this chat planner did not start the run; the trusted server route must execute approved bounded cycles and report exact elapsed wall-clock runtime.",
+  ].join("\n");
+}
+
 function detectDurableContinuityRequest(message: string): NonNullable<GameDevChatResponse["durableContinuity"]>["request"] | undefined {
   if (/\b(resume previous campaign|continue yesterday's work|continue yesterdays work)\b/i.test(message)) {
     return { action: "restore_previous_campaign", projectId: "AI-E", requiresOperatorReview: true };
@@ -493,6 +540,23 @@ function formatCampaignResponse(campaign: ReturnType<typeof runDevelopmentCampai
 }
 
 export function planGameDevChatResponse(message: string, context?: GameDevConversationContext): GameDevChatResponse {
+  const meaningfulLongRunRequest = detectMeaningfulLongRunRequest(message);
+  if (meaningfulLongRunRequest) {
+    const route = meaningfulLongRunRoute("Prepare meaningful supervised long-run operation");
+    const meaningfulLongRun = { request: meaningfulLongRunRequest };
+    const assistantMessage = formatMeaningfulLongRunResponse(meaningfulLongRun);
+    const sessionContext = updateGameDevSessionContext(context?.sessionContext ?? createInitialGameDevSessionContext(), message, route, assistantMessage);
+
+    return {
+      route,
+      assistantMessage,
+      meaningfulLongRun,
+      sessionContext,
+      scaffoldStatus: "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1",
+      changedFilesClaimed: false,
+    };
+  }
+
   const durableContinuityRequest = detectDurableContinuityRequest(message);
   if (durableContinuityRequest) {
     const route = durableContinuityRoute(durableContinuityRequest.action);
