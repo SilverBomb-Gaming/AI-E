@@ -10,6 +10,7 @@ export function runDevelopmentCampaignEngine(layers: DevelopmentCampaignLayer[] 
     completionCriteria: [...layer.completionCriteria],
     verificationCommands: [...layer.verificationCommands],
     nextActions: [...layer.nextActions],
+    milestoneCategories: layer.milestoneCategories ? [...layer.milestoneCategories] : undefined,
   }));
   const plan = planDevelopmentCampaign(capabilityMap);
   const nextLayerAfterSelected = plan.selectedLayer.layerId === "AUTONOMOUS_DEVELOPMENT_CAMPAIGN_ENGINE_PHASE1"

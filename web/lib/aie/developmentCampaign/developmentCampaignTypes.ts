@@ -2,6 +2,8 @@ export type DevelopmentCapabilityStatus = "real" | "scaffolded" | "partial" | "m
 
 export type DevelopmentRiskLevel = "LOW" | "MEDIUM" | "HIGH" | "FUTURE_ONLY";
 
+export type DevelopmentCampaignMilestoneKind = "planning" | "execution" | "mutation" | "validation" | "rollback" | "retry";
+
 export type DevelopmentCampaignLayer = {
   layerId: string;
   layerName: string;
@@ -13,6 +15,7 @@ export type DevelopmentCampaignLayer = {
   completionCriteria: string[];
   verificationCommands: string[];
   nextActions: string[];
+  milestoneCategories?: DevelopmentCampaignMilestoneKind[];
 };
 
 export type DevelopmentCampaignBlocker = {
