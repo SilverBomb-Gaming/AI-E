@@ -48,7 +48,10 @@ test("runtime-aware reasoning explains direct Unity control blocker", () => {
   assert.equal(response.reasoning.runtimeAwareness.runtimeAvailability, "blocked_not_implemented");
   assert.match(response.reasoning.runtimeAwareness.missingCapabilityExplanation ?? "", /Unity Editor control is not implemented/);
   assert.match(response.assistantMessage, /trusted editor automation bridge/);
-  assert.match(response.assistantMessage, /Closest supported workflow/);
+  assert.equal(response.reasoning.executionOwnership.phaseId, "INTERNAL_EXECUTION_AND_OPERATOR_OWNERSHIP_PHASE1");
+  assert.equal(response.reasoning.executionOwnership.ownerLabel, "AI-E Supervised Runtime");
+  assert.equal(response.reasoning.executionOwnership.kind, "blocked_capability");
+  assert.match(response.assistantMessage, /Closest supported AI-E workflow/);
   assert.doesNotMatch(response.assistantMessage, /I ran Unity|autonomous_real/);
 });
 
@@ -59,6 +62,9 @@ test("repo workflow reasoning names selected route and supervised runtime bounda
   assert.ok(response.reasoning);
   assert.equal(response.reasoning.selectedCapabilityRoute, "OPERATOR_WORK_CYCLE_REQUEST");
   assert.equal(response.reasoning.runtimeAwareness.runtimeAvailability, "available_supervised");
+  assert.equal(response.reasoning.executionOwnership.phaseId, "INTERNAL_EXECUTION_AND_OPERATOR_OWNERSHIP_PHASE1");
+  assert.equal(response.reasoning.executionOwnership.ownerLabel, "AI-E Supervised Runtime");
+  assert.equal(response.reasoning.executionOwnership.workflowType, "supervised_repo_workflow");
   assert.match(response.assistantMessage, /Why this route:/);
   assert.match(response.assistantMessage, /Review the bounded plan, then approve or reject it/);
 });
@@ -68,6 +74,7 @@ test("runtime introspection explains real and blocked capabilities", () => {
 
   assert.ok(response.reasoning);
   assert.equal(response.reasoning.runtimeIntrospection?.kind, "capability_status_query");
+  assert.equal(response.reasoning.executionOwnership.ownerLabel, "AI-E Supervised Runtime");
   assert.match(response.assistantMessage, /truthful runtime picture/i);
   assert.match(response.assistantMessage, /What is real:/);
   assert.match(response.assistantMessage, /What is blocked:/);
@@ -92,4 +99,18 @@ test("low-confidence clarification is truthful about uncertainty", () => {
   assert.ok(reasoning.ambiguity.length > 0);
   assert.match(reasoning.nextUsefulStep, /Ask one precise clarification/);
   assert.match(reasoning.truthfulnessWarnings.join(" "), /not generalized AGI reasoning/);
+});
+
+test("external tooling prompts expose execution ownership dependency metadata", () => {
+  const response = planGameDevChatResponse("what still requires external tooling?");
+
+  assert.ok(response.reasoning);
+  assert.equal(response.reasoning.runtimeIntrospection?.kind, "external_dependency_query");
+  assert.equal(response.reasoning.executionOwnership.phaseId, "INTERNAL_EXECUTION_AND_OPERATOR_OWNERSHIP_PHASE1");
+  assert.equal(response.reasoning.executionOwnership.ownerLabel, "AI-E Supervised Runtime");
+  assert.equal(response.reasoning.executionOwnership.kind, "external_dependency");
+  assert.equal(response.reasoning.executionOwnership.workflowType, "external_tooling_status");
+  assert.ok(response.reasoning.executionOwnership.externalToolingRequired.length >= 2);
+  assert.match(response.assistantMessage, /Execution owner: AI-E Supervised Runtime/);
+  assert.match(response.assistantMessage, /Broad code-writing outside approved AI-E supervised workflow lanes/);
 });

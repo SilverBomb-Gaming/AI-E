@@ -159,7 +159,7 @@ function formatRuntimeIntrospectionResponse(reasoning: ConversationalReasoningRe
     "",
     "What still depends on external tools:",
     ...(runtime?.external ?? [
-      "Copilot/Codex or another implementation agent is still needed for broad code-writing beyond the bounded workflow artifact lane.",
+      "Broad code-writing beyond approved AI-E supervised workflow lanes still requires a separate approved implementation path.",
       "Unity Editor playmode/control still needs an approved trusted bridge and project-lock-safe validation hooks.",
       "Browser/operator UI smoke checks still require a running local dev server and explicit operator interaction.",
     ]).map((capability) => `- ${capability}`),
@@ -241,7 +241,7 @@ function inferRepoWorkflowTask(message: string): { category: string; intendedAct
     },
     {
       category: "experience_polish",
-      patterns: [/improve .*ui atmosphere/, /improve .*atmosphere/, /polish .*ui/],
+      patterns: [/improve .*ui atmosphere/, /improve .*atmosphere/, /polish .*ui/, /improve .*inventory flow/, /fix .*pacing problem/],
       intendedActions: ["classify experience-polish request", "record bounded UI improvement intent", "capture diff preview", "surface next human-review step"],
       requiredCapabilities: ["dynamic task routing", "scoped mutation", "diff preview", "operator review"],
     },
@@ -259,7 +259,7 @@ function inferRepoWorkflowTask(message: string): { category: string; intendedAct
 function formatWorkCycleResponse(workCycle: NonNullable<GameDevChatResponse["workCycle"]>): string {
   const request = workCycle.request;
   return [
-    "I prepared a bounded operator work-cycle request.",
+    "AI-E prepared a bounded supervised repo workflow request.",
     "",
     `Cycle request id: ${request.cycleRequestId}`,
     `Intent: ${request.cycleIntent}`,
@@ -269,7 +269,7 @@ function formatWorkCycleResponse(workCycle: NonNullable<GameDevChatResponse["wor
     `Cycle status: ${request.cycleStatus}`,
     `Validation plan: ${request.validationPlan.commands.join(", ") || "none"}`,
     "Visible lifecycle: preparing, approval requested, executing, mutating, validating, checkpointing, completed or blocked.",
-    "Truthfulness: no cycle ran from the chat planner; approval launches the trusted operator runtime API.",
+    "Truthfulness: no cycle ran from chat; approval launches the trusted AI-E runtime API.",
   ].join("\n");
 }
 
@@ -371,7 +371,7 @@ function formatScopedExecutionResponse(scopedExecution: NonNullable<GameDevChatR
     `Execution status: ${log.executionStatus}`,
     `Truthfulness: ${log.truthfulnessLabel}`,
     "",
-    "No command was executed from the chat planner. A trusted server/runtime adapter must re-check this request, require approval, and then run only if it remains inside the allowlist.",
+    "No command was executed from chat. The trusted AI-E supervised runtime must re-check this request, require approval, and then run only if it remains inside the allowlist.",
   ].join("\n");
 }
 
@@ -381,7 +381,7 @@ function formatUnityRuntimeBlockedResponse(reasoning: ConversationalReasoningRes
     "",
     reasoning.runtimeAwareness.missingCapabilityExplanation ?? reasoning.limitationExplanation,
     "",
-    "Closest supported workflow today:",
+    "Closest supported AI-E workflow today:",
     "- prepare a bounded supervised repo workflow in /operator/chat",
     "- require operator approval",
     "- show diff/checkpoint/validation evidence when the trusted server runtime acts",
@@ -439,7 +439,7 @@ function openingFor(route: GameDevChatRoute): string {
     case "PLAYTEST_FEEDBACK":
       return "That reads like playtest feedback, so the useful move is to turn the feeling into tuning levers.";
     case "CODEX_HANDOFF_REQUEST":
-      return "Absolutely — I can prepare a safe Codex handoff for implementation.";
+      return "Absolutely - I can prepare an AI-E supervised execution brief for implementation review.";
     case "CLARIFICATION_NEEDED":
       return "I can help, but I need one more detail before planning safely.";
     case "BLOCKED_OR_UNSAFE":
@@ -558,9 +558,9 @@ function formatConversationalResponse(route: GameDevChatRoute, context?: GameDev
   const sessionSummary = summarizeGameDevSessionContext(context?.sessionContext);
   switch (route.mode) {
     case "GREETING":
-      return "Hey — I’m here. What are we working on today: game design, Unity implementation, debugging, or a Codex handoff?";
+      return "Hey - I’m here. What are we working on today: game design, Unity implementation, debugging, or a supervised workflow brief?";
     case "THANKS":
-      return "You’re welcome. When you’re ready, send the next game idea, Unity issue, bug report, or handoff request and I’ll route it safely.";
+      return "You’re welcome. When you’re ready, send the next game idea, Unity issue, bug report, or supervised workflow request and I’ll route it safely.";
     case "SESSION_CLOSE":
       return "Goodnight — we can pick this back up later. I won’t claim any files changed or Unity validation happened from this chat alone.";
     case "CAPABILITY_HELP":
@@ -570,9 +570,9 @@ function formatConversationalResponse(route: GameDevChatRoute, context?: GameDev
         "- Shape game ideas into a first playable loop.",
         "- Plan Unity implementation steps without pretending to edit files.",
         "- Turn bugs or playtest feedback into reproduction and validation steps.",
-        "- Prepare bounded Codex handoffs when you explicitly ask for implementation handoff.",
+        "- Prepare AI-E supervised execution briefs when you explicitly ask for implementation review.",
         "",
-        "What do you want to work on first: design, Unity implementation, debugging, or a Codex handoff?",
+        "What do you want to work on first: design, Unity implementation, debugging, or a supervised workflow brief?",
       ].join("\n");
     case "CONTINUE_PREVIOUS":
       return [
@@ -580,7 +580,7 @@ function formatConversationalResponse(route: GameDevChatRoute, context?: GameDev
         "",
         sessionSummary,
         "",
-        "A good next step is to tighten the plan into one small validation loop, or ask me to prepare a Codex handoff for that same topic.",
+        "A good next step is to tighten the plan into one small validation loop, or ask me to prepare an AI-E supervised execution brief for that same topic.",
         scopedMemoryLine(),
       ].join("\n");
     case "TROUBLESHOOT_PREVIOUS":
@@ -607,16 +607,16 @@ function formatConversationalResponse(route: GameDevChatRoute, context?: GameDev
         "",
         sessionSummary,
         "",
-        "I would change one lever at a time, preserve the original goal, and define a clearer validation check before any implementation handoff.",
+        "I would change one lever at a time, preserve the original goal, and define a clearer validation check before any implementation brief.",
         scopedMemoryLine(),
       ].join("\n");
     case "USE_LAST_HANDOFF":
       return [
-        "Yes — I can reuse the latest handoff topic from this chat session.",
+        "Yes - I can reuse the latest supervised brief topic from this chat session.",
         "",
         sessionSummary,
         "",
-        "I can turn that topic into a revised handoff, a validation checklist, or a safer implementation brief. This chat has not run Codex or edited files.",
+        "I can turn that topic into a revised supervised brief, a validation checklist, or a safer implementation plan. This chat has not run an implementation path or edited files.",
         scopedMemoryLine(),
       ].join("\n");
     case "SESSION_RECAP":
@@ -638,12 +638,12 @@ function formatConversationalResponse(route: GameDevChatRoute, context?: GameDev
           return `I can troubleshoot that, but I don’t have the prior task in this session context yet. What did you try, what happened instead, and did Unity show any Console error? ${scopedMemoryLine()}`;
         }
         if (route.detectedIntent.includes("handoff")) {
-          return `I don’t have a latest handoff stored in this chat session yet. Ask for a new Codex handoff or paste the handoff you want to reuse. ${scopedMemoryLine()}`;
+          return `I don’t have a latest supervised brief stored in this chat session yet. Ask for a new AI-E supervised execution brief or paste the brief you want to reuse. ${scopedMemoryLine()}`;
         }
         if (route.detectedIntent.includes("Refinement")) {
           return `I can refine it, but I don’t have the earlier idea or plan in this session context yet. Send the idea, plan, or target feature and I’ll make a focused refinement pass. ${scopedMemoryLine()}`;
         }
-        return `I’m here, but I need one more detail before routing this safely. Are we talking game design, Unity implementation, debugging, playtest feedback, or a Codex handoff? ${scopedMemoryLine()}`;
+        return `I’m here, but I need one more detail before routing this safely. Are we talking game design, Unity implementation, debugging, playtest feedback, or a supervised workflow brief? ${scopedMemoryLine()}`;
       }
       return undefined;
     default:
@@ -668,8 +668,8 @@ function formatResponse(message: string, route: GameDevChatRoute, includeHandoff
 
   const bullets = dynamicReasoningBullets(message, route, reasoning).map((entry) => `- ${entry}`).join("\n");
   const handoffLine = includeHandoff
-    ? "I prepared a Codex handoff below. It is a handoff only; chat mode did not edit files, run Unity, or execute an agent."
-    : "If you want implementation, I can prepare a Codex handoff that tells an implementation agent exactly what to inspect and how to validate it.";
+    ? "I prepared an AI-E supervised execution brief below. It is a brief only; chat did not edit files, run Unity, or execute an implementation path."
+    : "If you want implementation, I can prepare an AI-E supervised execution brief that names exactly what to inspect and how to validate it before an approved implementation path acts.";
 
   return withReasoning([
     openingFor(route),
@@ -683,7 +683,7 @@ function formatResponse(message: string, route: GameDevChatRoute, includeHandoff
 }
 
 function isRuntimeIntrospectionRequest(message: string): boolean {
-  return /\b(what is real|what can you actually do|what can you actually do right now|runtime capabilities.*real|runtime state|what is scaffolded|what still depends on (copilot|codex|external tools)|what is still blocked|what.*blocked|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
+  return /\b(what is real|what can you actually do|what can you actually do right now|can ai-e execute repo work itself|runtime capabilities.*real|runtime state|what is scaffolded|what still depends on (copilot|codex|external tools|external tooling)|what still requires external tooling|what is still blocked|what.*blocked|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
 }
 
 function isUnityRuntimeBlockedRequest(message: string): boolean {

@@ -13,7 +13,7 @@ const starterPrompts = [
   "Fix the failing tests.",
   "Inspect the interaction system.",
   "I have an idea for a game but I don't know how to explain it.",
-  "Make me a Codex handoff for adding a basic collectible system in Unity.",
+  "Make me an AI-E supervised execution brief for adding a basic collectible system in Unity.",
 ];
 
 function createId(prefix: string): string {
@@ -29,7 +29,7 @@ function renderMarkdownLite(content: string) {
       return <h4 key={index} className="mt-3 text-sm font-semibold text-zinc-100">{line.slice(3)}</h4>;
     }
     if (line.startsWith("- ")) {
-      return <p key={index} className="ml-4 text-sm leading-6 text-zinc-300">• {line.slice(2)}</p>;
+      return <p key={index} className="ml-4 text-sm leading-6 text-zinc-300">- {line.slice(2)}</p>;
     }
     if (!line.trim()) {
       return <div key={index} className="h-2" />;
@@ -74,7 +74,7 @@ export function GameDevChatClient() {
   const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
   const latestWorkflow = [...messages].reverse().find((message) => message.workCycle)?.workCycle;
   const latestRoute = latestAssistant?.route;
-  const scaffoldStatus = latestAssistant ? "✅ SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1" : "Ready for session-scoped chat";
+  const scaffoldStatus = latestAssistant ? "SESSION_CONTEXT_AND_CONVERSATION_MEMORY_PHASE1" : "Ready for session-scoped chat";
 
   useEffect(() => {
     setSessionContext(loadGameDevSessionContext(window.localStorage));
@@ -97,7 +97,7 @@ export function GameDevChatClient() {
     memoryScope: sessionContext.memoryScope,
     activeSystem: sessionContext.activeGameplaySystem ?? "No active gameplay system yet",
     currentTask: sessionContext.currentImplementationTask ?? "No active task yet",
-    latestHandoff: sessionContext.latestCodexHandoffTopic ?? "No Codex handoff in this session yet",
+    latestHandoff: sessionContext.latestCodexHandoffTopic ?? "No supervised execution brief in this session yet",
     activeCycle: latestWorkflow?.summaryReport?.activeCycleDisplay.cycleRequestId ?? latestWorkflow?.request.cycleRequestId ?? "No active repo workflow yet",
     activeStage: latestWorkflow?.summaryReport?.activeCycleDisplay.currentStage ?? latestWorkflow?.request.cycleStatus ?? "idle",
     activeRuntime: latestWorkflow?.summaryReport?.activeCycleDisplay.elapsedRuntimeMs ?? 0,
@@ -384,7 +384,7 @@ export function GameDevChatClient() {
               <div className="mx-auto flex h-full max-w-3xl flex-col justify-center py-16">
                 <div className="rounded-lg border border-white/10 bg-[#111827] p-5">
                   <h2 className="text-lg font-semibold text-zinc-50">What are we making today?</h2>
-                  <p className="mt-2 text-sm leading-6 text-zinc-300">Say hello, ask what AI-E can do, continue a thread, refine the last idea, use the last handoff, report a failed attempt, or ask for tuning, bugs, design ideas, Unity planning, or a Codex handoff.</p>
+                  <p className="mt-2 text-sm leading-6 text-zinc-300">Say hello, ask what AI-E can do, continue a thread, refine the last idea, reuse the latest brief, report a failed attempt, or ask for tuning, bugs, design ideas, Unity planning, or a supervised workflow brief.</p>
                   <div className="mt-4 grid gap-2 md:grid-cols-2">
                     {starterPrompts.map((prompt) => (
                       <button
@@ -426,6 +426,13 @@ export function GameDevChatClient() {
                               <p><span className="font-semibold text-zinc-100">Query:</span> {message.reasoning.runtimeIntrospection.label}</p>
                               <p><span className="font-semibold text-zinc-100">Confidence:</span> {message.reasoning.confidence}</p>
                               <p><span className="font-semibold text-zinc-100">Runtime:</span> {message.reasoning.runtimeAwareness.runtimeAvailability}</p>
+                              <p><span className="font-semibold text-zinc-100">Owner:</span> {message.reasoning.executionOwnership.ownerLabel}</p>
+                              <p><span className="font-semibold text-zinc-100">Ownership:</span> {message.reasoning.executionOwnership.kind}</p>
+                              <p><span className="font-semibold text-zinc-100">Workflow:</span> {message.reasoning.executionOwnership.workflowType}</p>
+                              <p><span className="font-semibold text-zinc-100">Approval:</span> {message.reasoning.executionOwnership.approvalRequirement}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Mutation Scope:</span> {message.reasoning.executionOwnership.mutationScope}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Validation Scope:</span> {message.reasoning.executionOwnership.validationScope}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Dependency:</span> {message.reasoning.executionOwnership.dependencyExplanation}</p>
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Why:</span> {message.reasoning.routeRationale}</p>
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Limitation:</span> {message.reasoning.limitationExplanation}</p>
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Next:</span> {message.reasoning.nextUsefulStep}</p>
@@ -446,12 +453,19 @@ export function GameDevChatClient() {
                               <p><span className="font-semibold text-zinc-100">Confidence:</span> {message.reasoning.confidence}</p>
                               <p><span className="font-semibold text-zinc-100">Route:</span> {message.reasoning.selectedCapabilityRoute}</p>
                               <p><span className="font-semibold text-zinc-100">Runtime:</span> {message.reasoning.runtimeAwareness.runtimeAvailability}</p>
+                              <p><span className="font-semibold text-zinc-100">Owner:</span> {message.reasoning.executionOwnership.ownerLabel}</p>
+                              <p><span className="font-semibold text-zinc-100">Ownership:</span> {message.reasoning.executionOwnership.kind}</p>
+                              <p><span className="font-semibold text-zinc-100">Workflow:</span> {message.reasoning.executionOwnership.workflowType}</p>
+                              <p><span className="font-semibold text-zinc-100">Approval:</span> {message.reasoning.executionOwnership.approvalRequirement}</p>
                               {message.reasoning.inferredFeedbackCategory && <p><span className="font-semibold text-zinc-100">Feedback Category:</span> {message.reasoning.inferredFeedbackCategory}</p>}
                               {message.reasoning.categoryMatchKind && <p><span className="font-semibold text-zinc-100">Match:</span> {message.reasoning.categoryMatchKind}</p>}
                               {message.reasoning.matchedPhraseFamily && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Phrase Family:</span> {message.reasoning.matchedPhraseFamily}</p>}
                               <p><span className="font-semibold text-zinc-100">Strategy:</span> {message.reasoning.selectedResponseStrategy}</p>
                               {message.reasoning.fallbackReason && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Fallback:</span> {message.reasoning.fallbackReason}</p>}
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Why:</span> {message.reasoning.routeRationale}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Mutation Scope:</span> {message.reasoning.executionOwnership.mutationScope}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Validation Scope:</span> {message.reasoning.executionOwnership.validationScope}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Dependency:</span> {message.reasoning.executionOwnership.dependencyExplanation}</p>
                               {message.reasoning.ambiguity.length > 0 && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Ambiguity:</span> {message.reasoning.ambiguity.join(" ")}</p>}
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Limitation:</span> {message.reasoning.limitationExplanation}</p>
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Next:</span> {message.reasoning.nextUsefulStep}</p>
@@ -463,7 +477,7 @@ export function GameDevChatClient() {
                       {message.codexHandoff && (
                         <div className="mt-3 overflow-hidden rounded-md border border-white/10 bg-[#0b1220]">
                           <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
-                            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-300">Copyable Codex Handoff</span>
+                            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-300">Copyable AI-E Supervised Execution Brief</span>
                             <button
                               type="button"
                               onClick={() => navigator.clipboard?.writeText(message.codexHandoff?.markdown ?? "")}
@@ -766,7 +780,7 @@ export function GameDevChatClient() {
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={handleKeyDown}
                 rows={2}
-                placeholder="Ask AI-E about a Unity feature, bug, design idea, playtest note, or Codex handoff..."
+                placeholder="Ask AI-E about a Unity feature, bug, design idea, playtest note, or supervised workflow brief..."
                 className="max-h-40 min-h-12 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm leading-6 text-zinc-100 outline-none placeholder:text-zinc-500"
               />
               <button
@@ -860,7 +874,7 @@ export function GameDevChatClient() {
                 <dd className="mt-1 text-zinc-300">{modeSummary.currentTask}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-zinc-100">Latest Handoff</dt>
+                <dt className="font-semibold text-zinc-100">Latest Supervised Brief</dt>
                 <dd className="mt-1 text-zinc-300">{modeSummary.latestHandoff}</dd>
               </div>
             </dl>

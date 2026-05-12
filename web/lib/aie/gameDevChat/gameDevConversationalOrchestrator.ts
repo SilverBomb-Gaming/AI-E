@@ -81,11 +81,11 @@ function taskRouteFor(message: string): GameDevChatRoute {
 export function orchestrateGameDevChat(message: string, context?: GameDevConversationContext): GameDevChatRoute {
   const trimmed = message.trim();
   if (!trimmed) {
-    return routeFor("CLARIFICATION_NEEDED", "No message yet", "Type a greeting, question, game-development goal, bug, idea, or Codex handoff request.", true);
+    return routeFor("CLARIFICATION_NEEDED", "No message yet", "Type a greeting, question, game-development goal, bug, idea, or supervised workflow brief request.", true);
   }
 
   if (greetingPattern.test(trimmed)) {
-    return routeFor("GREETING", "Social greeting", "Choose game design, Unity implementation, debugging, or a Codex handoff.");
+    return routeFor("GREETING", "Social greeting", "Choose game design, Unity implementation, debugging, or a supervised workflow brief.");
   }
   if (thanksPattern.test(trimmed)) {
     return routeFor("THANKS", "User acknowledgement or thanks", "Continue with a game-dev request when ready.");
@@ -94,7 +94,7 @@ export function orchestrateGameDevChat(message: string, context?: GameDevConvers
     return routeFor("SESSION_CLOSE", "Session close", "Return when you want to continue planning or debugging.");
   }
   if (capabilityPattern.test(trimmed)) {
-    return routeFor("CAPABILITY_HELP", "Capability help request", "Pick a mode: design, Unity implementation planning, debugging, playtest feedback, or Codex handoff.");
+    return routeFor("CAPABILITY_HELP", "Capability help request", "Pick a mode: design, Unity implementation planning, debugging, playtest feedback, or supervised workflow brief.");
   }
   if (continuePattern.test(trimmed)) {
     if (hasPreviousTask(context)) {
@@ -116,9 +116,9 @@ export function orchestrateGameDevChat(message: string, context?: GameDevConvers
   }
   if (reuseHandoffPattern.test(trimmed)) {
     if (hasLastHandoff(context)) {
-      return routeFor("USE_LAST_HANDOFF", "Reuse the latest Codex handoff topic", "Continue from the latest handoff topic in this session only.");
+      return routeFor("USE_LAST_HANDOFF", "Reuse the latest supervised brief topic", "Continue from the latest supervised brief topic in this session only.");
     }
-    return routeFor("CLARIFICATION_NEEDED", "Last handoff requested but none exists in session context", "Ask for a new Codex handoff or paste the handoff you want to reuse.", true);
+    return routeFor("CLARIFICATION_NEEDED", "Last supervised brief requested but none exists in session context", "Ask for a new supervised workflow brief or paste the brief you want to reuse.", true);
   }
   if (sessionRecapPattern.test(trimmed)) {
     if (hasPreviousTask(context)) {

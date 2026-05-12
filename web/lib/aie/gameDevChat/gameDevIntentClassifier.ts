@@ -1,7 +1,7 @@
 import type { GameDevChatRoute } from "./gameDevChatTypes";
 
 const unsafePattern = /\b(delete\s+everything|wipe\s+project|steal|malware|bypass\s+license|crack\s+asset|disable\s+safety)\b/i;
-const codexPattern = /\b(codex|handoff|implementation\s+brief|give\s+me\s+a\s+task|make\s+me\s+a\s+handoff)\b/i;
+const codexPattern = /\b(codex|handoff|implementation\s+brief|supervised\s+(execution\s+)?brief|workflow\s+brief|give\s+me\s+a\s+task|make\s+me\s+a\s+handoff)\b/i;
 const bugPattern = /\b(bug|broken|error|exception|crash|doesn'?t\s+work|not\s+working|nullreference|null\s+reference|stack\s+trace|fix)\b/i;
 const explanationPattern = /\b(explain|what\s+does|how\s+does|walk\s+me\s+through|why\s+does)\b/i;
 const playtestPattern = /\b(playtest|feedback|feel|floaty|too\s+slow|too\s+fast|clunky|juice|game\s+feel|tuning)\b/i;
@@ -62,12 +62,12 @@ export function classifyGameDevIntent(message: string): GameDevChatRoute {
   if (codexPattern.test(trimmed)) {
     return {
       mode: "CODEX_HANDOFF_REQUEST",
-      detectedIntent: "Prepare a safe implementation handoff",
+      detectedIntent: "Prepare a safe supervised execution brief",
       confidence: "HIGH",
       unityFirst: unityPattern.test(trimmed) || implementationPattern.test(trimmed),
       needsClarification: false,
       safetyStatus: "SAFE_PLANNING_ONLY",
-      suggestedNextAction: "Review the handoff, then run implementation only with explicit approval.",
+      suggestedNextAction: "Review the supervised brief, then run implementation only with explicit approval.",
       keywords,
     };
   }
@@ -132,7 +132,7 @@ export function classifyGameDevIntent(message: string): GameDevChatRoute {
       unityFirst: true,
       needsClarification: false,
       safetyStatus: "SAFE_PLANNING_ONLY",
-      suggestedNextAction: "Prepare a bounded plan or Codex handoff before any code changes.",
+      suggestedNextAction: "Prepare a bounded plan or supervised execution brief before any code changes.",
       keywords,
     };
   }

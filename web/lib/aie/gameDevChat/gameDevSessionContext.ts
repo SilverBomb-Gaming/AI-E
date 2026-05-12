@@ -130,7 +130,7 @@ function inferHandoffTopic(message: string, route: GameDevChatRoute, handoff?: G
 function latestSummary(message: string, route: GameDevChatRoute, handoff?: GameDevCodexHandoff): string {
   const mode = route.taskMode ?? route.mode;
   if (handoff) {
-    return `Prepared a session-scoped Codex handoff plan for ${handoff.goal}`;
+    return `Prepared a session-scoped AI-E supervised execution brief for ${handoff.goal}`;
   }
   if (route.mode === "GREETING" || route.mode === "THANKS" || route.mode === "CAPABILITY_HELP") {
     return `Handled conversational mode ${route.mode.toLowerCase()}.`;
@@ -199,7 +199,7 @@ export function summarizeGameDevSessionContext(context?: GameDevSessionContext):
     context?.currentProject ? `Project: ${context.currentProject}` : undefined,
     context?.activeGameplaySystem ? `System: ${context.activeGameplaySystem}` : undefined,
     context?.currentImplementationTask ? `Task: ${context.currentImplementationTask}` : undefined,
-    context?.latestCodexHandoffTopic ? `Latest handoff: ${context.latestCodexHandoffTopic}` : undefined,
+    context?.latestCodexHandoffTopic ? `Latest supervised brief: ${context.latestCodexHandoffTopic}` : undefined,
     context?.latestAssistantResponseSummary ? `Last response: ${context.latestAssistantResponseSummary}` : undefined,
   ].filter(Boolean).join("\n");
 }

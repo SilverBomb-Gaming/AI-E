@@ -1,4 +1,5 @@
 import type { GameDevChatRoute, GameDevSessionContext } from "./gameDevChatTypes";
+import { buildExecutionOwnershipMetadata, type ExecutionOwnershipMetadata } from "./executionIdentityEngine";
 
 export type ConversationalReasoningConfidence = "LOW" | "MEDIUM" | "HIGH";
 export type RuntimeAvailabilityStatus = "available_supervised" | "available_read_only" | "disabled_or_requires_approval" | "blocked_not_implemented" | "not_applicable";
@@ -28,7 +29,7 @@ export type GameplayFeedbackAnalysis = {
 };
 
 export type ConversationalReasoningResult = {
-  phaseId: "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1" | "DEEP_GAMEPLAY_REASONING_AND_DECOMPOSITION_PHASE1" | "BROADER_REASONING_COVERAGE_AND_SMART_FALLBACK_PHASE1" | "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1";
+  phaseId: "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1" | "DEEP_GAMEPLAY_REASONING_AND_DECOMPOSITION_PHASE1" | "BROADER_REASONING_COVERAGE_AND_SMART_FALLBACK_PHASE1" | "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1" | "INTERNAL_EXECUTION_AND_OPERATOR_OWNERSHIP_PHASE1";
   inferredIntent: string;
   probableUserGoal: string;
   confidence: ConversationalReasoningConfidence;
@@ -53,6 +54,7 @@ export type ConversationalReasoningResult = {
     external: string[];
     blocked: string[];
   };
+  executionOwnership: ExecutionOwnershipMetadata;
   runtimeAwareness: {
     runtimeAvailability: RuntimeAvailabilityStatus;
     realCapabilities: string[];
@@ -796,18 +798,18 @@ function realCapabilitiesFor(route: GameDevChatRoute, subsystem?: ReasoningInput
 }
 
 function isRuntimeIntrospectionRequest(message: string): boolean {
-  return /\b(what is real|what can you actually do|what can you actually do right now|runtime capabilities.*real|runtime state|what is scaffolded|what still depends on (copilot|codex|external tools)|what is still blocked|what.*blocked|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
+  return /\b(what is real|what can you actually do|what can you actually do right now|can ai-e execute repo work itself|runtime capabilities.*real|runtime state|what is scaffolded|what still depends on (copilot|codex|external tools|external tooling)|what still requires external tooling|what is still blocked|what.*blocked|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
 }
 
 function runtimeIntrospectionKind(message: string): NonNullable<ConversationalReasoningResult["runtimeIntrospection"]>["kind"] {
   const lower = message.toLowerCase();
-  if (/depends on (copilot|codex|external tools)/.test(lower)) {
+  if (/depends on (copilot|codex|external tools|external tooling)|requires external tooling/.test(lower)) {
     return "external_dependency_query";
   }
   if (/blocked|missing|unavailable/.test(lower)) {
     return "blocked_capability_query";
   }
-  if (/what is real|what can you actually do|runtime capabilities.*real/.test(lower)) {
+  if (/what is real|what can you actually do|can ai-e execute repo work itself|runtime capabilities.*real/.test(lower)) {
     return "capability_status_query";
   }
   return "general_runtime_query";
@@ -834,7 +836,7 @@ function runtimeIntrospectionFor(message: string, realCapabilities: string[], bl
       "Durable and long-run flows report measured state rather than unattended autonomy.",
     ],
     external: [
-      "Copilot/Codex or another implementation agent is still needed for broad code-writing outside bounded workflow artifacts.",
+      "Broad code-writing outside approved AI-E supervised workflow lanes still requires a separate approved implementation path.",
       "Unity Editor playmode/control still requires an approved trusted bridge and project-lock-safe validation hooks.",
       "Browser/operator UI checks require a running local dev server and explicit operator interaction.",
     ],
@@ -854,7 +856,9 @@ function missingCapabilityExplanation(message: string, runtimeAvailability: Runt
     return "Unattended or autonomous_real operation is intentionally unavailable. Current execution remains bounded, supervised, and approval-gated, so long-running or overnight claims require measured runs and explicit operator supervision.";
   }
   if (blockedCapabilities.length > 0 || runtimeAvailability === "blocked_not_implemented") {
-    return `The missing piece is ${blockedCapabilities.join(", ")}. The closest supported workflow is a bounded supervised repo request with visible approval, diff, checkpoint, and validation evidence.`;
+    const filtered = blockedCapabilities.filter((capability) => capability !== "unrestricted arbitrary repo mutation");
+    const missingCapabilities = filtered.length > 0 ? filtered.join(", ") : "an approved bounded execution path";
+    return `The missing piece is ${missingCapabilities}. The closest supported workflow is a bounded supervised repo request with visible approval, diff, checkpoint, and validation evidence.`;
   }
   return undefined;
 }
@@ -890,6 +894,7 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
   const blockedCapabilities = blockedCapabilitiesFor(message, route);
   const realCapabilities = realCapabilitiesFor(route, input.subsystem);
   const runtimeIntrospection = runtimeIntrospectionFor(message, realCapabilities, blockedCapabilities);
+  const executionOwnership = buildExecutionOwnershipMetadata({ message, route, subsystem: input.subsystem, runtimeIntrospectionKind: runtimeIntrospection?.kind });
   const ambiguity = [
     route.confidence === "LOW" ? "Route confidence is low; the user may need to name the target system or desired action." : undefined,
     route.needsClarification ? "The request lacks enough detail to safely choose an implementation path." : undefined,
@@ -922,7 +927,7 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
     : decompositionFor(message, route, gameplayFeedback);
 
   return {
-    phaseId: gameplayFeedback ? "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1" : "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1",
+    phaseId: executionOwnership.kind !== "bounded_internal_workflow" || route.conversationMode === "OPERATOR_WORK_CYCLE_REQUEST" || route.conversationMode === "SCOPED_EXECUTION_REQUEST" || route.mode === "CODEX_HANDOFF_REQUEST" ? "INTERNAL_EXECUTION_AND_OPERATOR_OWNERSHIP_PHASE1" : gameplayFeedback ? "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1" : "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1",
     inferredIntent: runtimeIntrospection ? "Runtime Introspection" : route.detectedIntent,
     probableUserGoal: gameplayFeedback ? `analyze ${gameplayFeedback.label} feedback into causes, levers, questions, and validation` : probableGoalFor(message, route),
     confidence: route.confidence,
@@ -946,6 +951,7 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
     selectedResponseStrategy: runtimeIntrospection ? `runtime introspection: ${runtimeIntrospection.label}` : gameplayFeedback?.responseStrategy ?? (route.needsClarification ? "ask one clarifying question before planning" : "standard truthful planning response"),
     gameplayFeedback,
     runtimeIntrospection,
+    executionOwnership,
     runtimeAwareness: {
       runtimeAvailability,
       realCapabilities,
@@ -967,6 +973,7 @@ export function formatReasoningPreface(reasoning: ConversationalReasoningResult)
   if (reasoning.runtimeIntrospection) {
     return [
       `Runtime introspection: ${reasoning.runtimeIntrospection.label}.`,
+      `Execution owner: ${reasoning.executionOwnership.ownerLabel} (${reasoning.executionOwnership.workflowType}).`,
       "Capability breakdown: real capabilities, bounded/supervised capabilities, external dependencies, and blocked capabilities.",
       `Runtime note: ${reasoning.limitationExplanation}`,
       `Next useful step: ${reasoning.nextUsefulStep}`,
@@ -974,6 +981,7 @@ export function formatReasoningPreface(reasoning: ConversationalReasoningResult)
   }
   return [
     `Reasoning summary: I read this as ${reasoning.probableUserGoal}.`,
+    `Execution owner: ${reasoning.executionOwnership.ownerLabel} (${reasoning.executionOwnership.workflowType}).`,
     `Why this route: ${reasoning.routeRationale}`,
     reasoning.ambiguity.length > 0 ? `Uncertainty: ${reasoning.ambiguity.join(" ")}` : undefined,
     `Runtime note: ${reasoning.limitationExplanation}`,

@@ -69,7 +69,7 @@ test("continue after a Codex handoff resumes the same topic", () => {
 
   assert.equal(response.route.mode, "CONTINUE_PREVIOUS");
   assert.match(response.assistantMessage, /collectible/i);
-  assert.match(response.assistantMessage, /Latest handoff/i);
+  assert.match(response.assistantMessage, /Latest supervised brief/i);
   assert.equal(response.sessionContext.latestCodexHandoffTopic?.includes("collectible"), true);
 });
 
@@ -105,7 +105,7 @@ test("use the last handoff references session handoff when available", () => {
   const response = planGameDevChatResponse("use the last handoff", { previousRoute: handoff.route, sessionContext: handoff.sessionContext });
 
   assert.equal(response.route.mode, "USE_LAST_HANDOFF");
-  assert.match(response.assistantMessage, /latest handoff topic/i);
+  assert.match(response.assistantMessage, /latest supervised brief topic/i);
   assert.match(response.assistantMessage, /collectible/i);
 });
 
@@ -160,7 +160,7 @@ test("bounded work cycle prompt prepares an operator cycle without running it", 
   assert.equal(response.workCycle.request.cycleStatus, "prepared");
   assert.equal(response.workCycle.request.retryLimit, 1);
   assert.equal(response.workCycle.request.targetFiles[0], "runner_artifacts/operator_work_cycle/latest_cycle_request.txt");
-  assert.match(response.assistantMessage, /no cycle ran from the chat planner/i);
+  assert.match(response.assistantMessage, /no cycle ran from chat/i);
   assert.doesNotMatch(response.assistantMessage, /I executed|I mutated|I validated/i);
 });
 
@@ -175,7 +175,7 @@ test("repo workflow prompt dynamically prepares visible supervised work", () => 
   assert.match(response.assistantMessage, /Visible lifecycle: preparing, approval requested, executing, mutating, validating, checkpointing, completed or blocked/);
   assert.match(response.assistantMessage, /Reasoning summary:/);
   assert.equal(response.reasoning?.runtimeAwareness.runtimeAvailability, "available_supervised");
-  assert.match(response.assistantMessage, /chat planner; approval launches the trusted operator runtime API/);
+  assert.match(response.assistantMessage, /approval launches the trusted AI-E runtime API/);
   assert.doesNotMatch(response.assistantMessage, /I executed|I mutated|I validated|autonomous_real/i);
 });
 
@@ -441,8 +441,10 @@ test("Copilot Codex dependency prompt uses runtime self-explanation", () => {
   assert.equal(response.codexHandoff, undefined);
   assert.equal(response.sessionContext.latestCodexHandoffTopic, undefined);
   assert.equal(response.reasoning.runtimeIntrospection?.kind, "external_dependency_query");
+  assert.equal(response.reasoning.executionOwnership.ownerLabel, "AI-E Supervised Runtime");
+  assert.equal(response.reasoning.executionOwnership.kind, "external_dependency");
   assert.match(response.assistantMessage, /What still depends on external tools/);
-  assert.match(response.assistantMessage, /Copilot\/Codex|implementation agent/i);
+  assert.match(response.assistantMessage, /approved AI-E supervised workflow lanes/i);
   assert.match(response.assistantMessage, /What is blocked/);
   assert.doesNotMatch(response.assistantMessage, /Reasoning summary:|General game-development help|Clarify the real target|I edited|I ran Unity/i);
 });
@@ -586,7 +588,7 @@ test("test run prompt prepares an approved-runtime request rather than fake exec
   assert.equal(response.scopedExecution.request.command, "npm test");
   assert.equal(response.scopedExecution.request.workingDirectory, "repo-root/web");
   assert.match(response.assistantMessage, /Approval status: pending/);
-  assert.match(response.assistantMessage, /No command was executed from the chat planner/);
+  assert.match(response.assistantMessage, /No command was executed from chat/);
 });
 
 test("build prompt prepares rollback-aware scoped execution request", () => {
@@ -643,18 +645,20 @@ test("bug report is classified as a bug fix request", () => {
   assert.equal(route.safetyStatus, "SAFE_PLANNING_ONLY");
 });
 
-test("Codex handoff request generates structured handoff", () => {
-  const message = "Make me a Codex handoff for adding a basic collectible system in Unity.";
+test("supervised execution brief request generates structured brief", () => {
+  const message = "Make me an AI-E supervised execution brief for adding a basic collectible system in Unity.";
   const response = planGameDevChatResponse(message);
 
   assert.equal(response.route.mode, "CODEX_HANDOFF_REQUEST");
   assert.equal(response.route.conversationMode, "CODEX_HANDOFF_REQUEST");
   assert.equal(response.route.taskMode, "CODEX_HANDOFF_REQUEST");
   assert.ok(response.codexHandoff);
-  assert.match(response.codexHandoff.markdown, /# Codex Handoff/);
+  assert.equal(response.reasoning?.executionOwnership.ownerLabel, "AI-E Supervised Runtime");
+  assert.equal(response.reasoning?.executionOwnership.workflowType, "execution_brief");
+  assert.match(response.codexHandoff.markdown, /# AI-E Supervised Execution Brief/);
   assert.match(response.codexHandoff.markdown, /Files To Inspect First/);
   assert.match(response.codexHandoff.markdown, /Collectible/);
-  assert.match(response.codexHandoff.markdown, /Chat mode prepared this handoff only/);
+  assert.match(response.codexHandoff.markdown, /Chat mode prepared this supervised execution brief only/);
 });
 
 test("handoff generator keeps implementation bounded and Unity-first", () => {
@@ -675,7 +679,18 @@ test("responses do not claim files were edited", () => {
   assert.equal(response.changedFilesClaimed, false);
   assert.doesNotMatch(response.assistantMessage, /I (changed|edited|updated|created|modified) .*file/i);
   assert.doesNotMatch(response.assistantMessage, /I ran Unity|I validated the scene|I executed/i);
-  assert.match(response.assistantMessage, /If you want implementation, I can prepare a Codex handoff/);
+  assert.match(response.assistantMessage, /If you want implementation, I can prepare an AI-E supervised execution brief/);
+});
+
+test("AI-E repo execution prompt uses internal ownership metadata", () => {
+  const response = planGameDevChatResponse("can AI-E execute repo work itself?");
+
+  assert.ok(response.reasoning);
+  assert.equal(response.reasoning.runtimeIntrospection?.kind, "capability_status_query");
+  assert.equal(response.reasoning.executionOwnership.ownerLabel, "AI-E Supervised Runtime");
+  assert.equal(response.reasoning.executionOwnership.kind, "bounded_internal_workflow");
+  assert.match(response.assistantMessage, /Execution owner: AI-E Supervised Runtime/);
+  assert.doesNotMatch(response.assistantMessage, /I edited|I ran Unity|autonomous_real is available/i);
 });
 
 test("scaffold status is truthful for active planning chat", () => {

@@ -51,8 +51,8 @@ export function generateGameDevCodexHandoff(message: string, route: GameDevChatR
     "Perform a Unity play-mode or smoke validation when available.",
     "Manually verify the gameplay behavior: trigger, movement, timing, and no console errors.",
   ];
-  const title = route.mode === "BUG_FIX_REQUEST" ? "Codex Handoff: Unity Bug Fix" : "Codex Handoff: Unity Gameplay Task";
-  const summary = `${route.detectedIntent}. This is a planning handoff only; no files have been changed by chat mode.`;
+  const title = route.mode === "BUG_FIX_REQUEST" ? "AI-E Supervised Execution Brief: Unity Bug Fix" : "AI-E Supervised Execution Brief: Unity Gameplay Task";
+  const summary = `${route.detectedIntent}. This is a supervised execution brief only; no files have been changed by chat mode.`;
   const markdown = [
     `# ${title}`,
     "",
@@ -75,7 +75,7 @@ export function generateGameDevCodexHandoff(message: string, route: GameDevChatR
     ...validationPlan.map((step) => `- ${step}`),
     "",
     "## Truthfulness Constraint",
-    "Chat mode prepared this handoff only. It did not edit files, run Unity, or validate the scene.",
+    "Chat mode prepared this supervised execution brief only. It did not edit files, run Unity, or validate the scene.",
   ].join("\n");
 
   return {
