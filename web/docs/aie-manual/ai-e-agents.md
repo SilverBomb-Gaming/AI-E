@@ -1,0 +1,123 @@
+# AI-E Agents
+
+AI-E Agents are bounded operational runtime participants. They are not generic chatbots and they are not unrestricted autonomous developers.
+
+## What AI-E Agents Are
+
+### Engineering Explanation
+
+An AI-E Agent is a typed runtime participant with a role, allowed paths, blocked paths, command limits, task contracts, workflow sessions, lifecycle state, approval boundaries, validation checkpoints, and structured logs.
+
+### YouTuber Explanation
+
+Think of an AI-E Agent as a controlled specialist inside the product. It can follow a governed workflow and show its work, but it does not get free rein over the project.
+
+### User Explanation
+
+An AI-E Agent helps move a task through visible steps. You can see what it is allowed to do, what step it is on, and why it stops.
+
+## How Agents Differ From Chatbots
+
+### Engineering Explanation
+
+A chatbot produces conversation. An AI-E Agent carries runtime metadata: workflow IDs, stage order, path scope, mutation permission, approval state, validation state, rollback markers, and logs.
+
+### YouTuber Explanation
+
+A chatbot answers. An AI-E Agent operates inside a dashboard where its steps, rules, and blockers are visible.
+
+### User Explanation
+
+Chat gives advice. Agents show operational progress and boundaries.
+
+## Bounded Workflows
+
+### Engineering Explanation
+
+Agent workflows are deterministic chains of typed stages such as `READ_REPO_CONTEXT`, `PREPARE_PATCH`, `REQUEST_APPROVAL`, `VERIFY_BUILD`, `VALIDATE_PATCH`, and `GENERATE_REPORT`.
+
+### YouTuber Explanation
+
+The agent does not wander. It follows a predictable sequence that can be explained and audited.
+
+### User Explanation
+
+You can see the planned steps and where the agent currently is.
+
+## Approvals
+
+### Engineering Explanation
+
+Mutation-capable stages use approval checkpoints. A `PREPARE_PATCH` stage can be blocked if approval is missing.
+
+### YouTuber Explanation
+
+AI-E knows when to stop and ask for permission before changing something sensitive.
+
+### User Explanation
+
+If the task needs approval, AI-E stops and tells you why.
+
+## Lifecycle Stages
+
+### Engineering Explanation
+
+Workflow stages can move through `PENDING`, `APPROVED`, `RUNNING`, `VALIDATING`, `COMPLETED`, `FAILED`, `ROLLBACK_AVAILABLE`, or `BLOCKED`.
+
+### YouTuber Explanation
+
+Every step has a status, so the operator can see whether the agent is waiting, working, validating, done, or blocked.
+
+### User Explanation
+
+The dashboard shows whether the workflow is ready, running, waiting for proof, finished, or stopped.
+
+## Validation
+
+### Engineering Explanation
+
+Validation-required stages cannot complete until validation succeeds. Validation can be pending, successful, failed, blocked, or not required.
+
+### YouTuber Explanation
+
+AI-E separates doing a step from proving the step is safe or correct.
+
+### User Explanation
+
+Some steps need evidence before they count as complete.
+
+## Rollback Preparation
+
+### Engineering Explanation
+
+Rollback fields record `rollbackAvailable`, `rollbackPrepared`, and `rollbackReason`. Phase 1 manual coverage treats rollback as preparation metadata, not automatic rollback execution.
+
+### YouTuber Explanation
+
+AI-E can mark that an undo path matters and explain why, but it is not silently undoing work by itself.
+
+### User Explanation
+
+If rollback is relevant, the dashboard can show that. You still review what happens next.
+
+## Supervised Runtime Behavior
+
+### Engineering Explanation
+
+The supervised runtime model enforces bounded path scope, stage ordering, approval-aware mutation, validation requirements, blocked-state explanations, and auditable summaries.
+
+### YouTuber Explanation
+
+AI-E is becoming an operational system, but it is still governed. The important leap is visible workflow control, not fantasy autonomy.
+
+### User Explanation
+
+AI-E can help guide and track work, while keeping the operator in control of sensitive steps.
+
+## Current Agent Roles
+
+- `repo-maintainer`: scoped repo maintenance and patch preparation.
+- `test-runner`: validation and test-focused workflows.
+- `unity-task-planner`: Unity task planning without direct editor control in this phase.
+- `documentation-updater`: manual and documentation workflow support.
+- `qa-verifier`: validation and evidence review.

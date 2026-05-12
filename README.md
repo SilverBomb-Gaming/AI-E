@@ -2,6 +2,40 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_MANUAL_AND_TRANSLATION_SYSTEM_PHASE1
+
+AI-E now has the first operational manual and translation system for product comprehension. This phase establishes documentation as part of the product: a structured knowledge layer that explains runtime concepts, workflow behavior, UI navigation, agent behavior, and official truth boundaries for engineers, creators, and end users.
+
+Manual architecture added under `web/docs/aie-manual/`:
+
+- `index.md`: manual map, audience model, screenshot policy, and operating rules
+- `glossary.md`: engineering-to-YouTuber-to-end-user translation table
+- `ui-navigation.md`: `/operator/chat`, `/operator/agents`, reasoning visibility, workflow states, validation indicators, approval indicators, blocked states, and rollback markers
+- `runtime-workflows.md`: workflow sessions, stage progression, blocked workflows, validation stages, approval checkpoints, rollback preparation, and deterministic workflow walkthroughs
+- `ai-e-agents.md`: AI-E agent explanation with engineering, creator, and user language for each core concept
+- `real-vs-not-real.md`: official REAL vs NOT REAL doctrine for AI-E product behavior
+
+Manual viewer:
+
+- `/operator/manual` provides a lightweight read-only browser for the markdown manual files
+- no CMS, editing system, fake screenshots, or generated screenshot claims were added
+
+What became real:
+
+- operational manual structure
+- architecture-to-human translation layer
+- UI onboarding groundwork
+- screenshot TODO placeholders without fake images
+- official truthfulness doctrine documentation
+- product-facing manual route for navigation
+
+Remaining limitations:
+
+- screenshots are placeholders until real UI captures are added
+- markdown rendering is intentionally lightweight in Phase 1
+- the manual does not replace runtime validation, approval gates, or workflow logs
+- future phases can add richer rendering, search, and captured visual walkthroughs after the manual structure stabilizes
+
 ## AIE_LITE_ELITE_AGENT_PHASE2_MULTI_STEP_SUPERVISED_WORKFLOWS
 
 AI-E-lite now has supervised multi-step workflow architecture for governed operational progression. This evolves the Phase 1 bounded local executor from a single scoped task into lifecycle-aware workflow sessions with deterministic stage chains, approval checkpoints, validation checkpoints, blocked-stage explanations, and rollback preparation metadata.
