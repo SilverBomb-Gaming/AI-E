@@ -15,6 +15,9 @@ export type EliteAgentWorkflowLifecycleState =
   | "COMPLETED"
   | "FAILED"
   | "ROLLBACK_AVAILABLE"
+  | "PAUSED"
+  | "INTERRUPTED"
+  | "RESUMABLE"
   | "BLOCKED";
 
 export type EliteAgentWorkflowApprovalState = "NOT_REQUIRED" | "PENDING" | "APPROVED" | "REJECTED" | "BLOCKED";
@@ -54,7 +57,7 @@ export type EliteAgentWorkflowLogEntry = {
   rollbackAvailable: boolean;
 };
 
-export type EliteAgentWorkflowSessionStatus = "PENDING" | "RUNNING" | "PARTIALLY_COMPLETED" | "COMPLETED" | "BLOCKED" | "FAILED" | "ROLLBACK_AVAILABLE";
+export type EliteAgentWorkflowSessionStatus = "PENDING" | "RUNNING" | "PARTIALLY_COMPLETED" | "COMPLETED" | "BLOCKED" | "FAILED" | "ROLLBACK_AVAILABLE" | "PAUSED" | "INTERRUPTED" | "RESUMABLE";
 
 export type EliteAgentWorkflowSession = {
   workflowSessionId: string;
@@ -71,6 +74,9 @@ export type EliteAgentWorkflowSession = {
   rollbackPrepared: boolean;
   rollbackReason: string | null;
   partialCompletion: boolean;
+  resumeEligible: boolean;
+  resumeFromStageId: string | null;
+  resumeReason: string | null;
   deterministicSelectionReason: string;
   truthfulCapabilityBoundary: string;
   logs: EliteAgentWorkflowLogEntry[];
@@ -86,7 +92,7 @@ export type BuildEliteAgentWorkflowInput = {
 
 export type AdvanceEliteAgentWorkflowInput = {
   stageId: string;
-  action: "APPROVE_STAGE" | "START_STAGE" | "BEGIN_VALIDATION" | "COMPLETE_STAGE" | "FAIL_STAGE" | "BLOCK_STAGE" | "PREPARE_ROLLBACK";
+  action: "APPROVE_STAGE" | "START_STAGE" | "BEGIN_VALIDATION" | "COMPLETE_STAGE" | "FAIL_STAGE" | "BLOCK_STAGE" | "PREPARE_ROLLBACK" | "PAUSE_WORKFLOW" | "INTERRUPT_WORKFLOW" | "MARK_RESUMABLE";
   reason?: string;
   now?: string;
 };
@@ -104,10 +110,13 @@ export type EliteAgentWorkflowSummary = {
   rollbackPrepared: boolean;
   rollbackReason: string | null;
   partialCompletion: boolean;
+  resumeEligible: boolean;
+  resumeFromStage: EliteAgentWorkflowStageType | null;
+  resumeReason: string | null;
   truthfulCapabilityBoundary: string;
 };
 
-const TRUTHFUL_WORKFLOW_BOUNDARY = "AI-E-lite Phase 2 provides supervised multi-step workflow lifecycle tracking with bounded paths, approval checkpoints, validation checkpoints, and rollback preparation. It does not provide unrestricted repo control or unattended operation.";
+const TRUTHFUL_WORKFLOW_BOUNDARY = "AI-E-lite Phase 3 provides supervised multi-step workflow continuity with bounded paths, approval checkpoints, validation checkpoints, resumable state tracking, and rollback preparation. It does not provide unrestricted repo control or unattended operation.";
 
 const DEFAULT_FORBIDDEN_PATHS = [".git", "node_modules", "web/node_modules", ".env", "web/.env", "package-lock.json"];
 
@@ -287,6 +296,15 @@ function createLog(now: string, stage: EliteAgentWorkflowStage | null, message: 
 }
 
 function deriveSessionStatus(stages: EliteAgentWorkflowStage[]): EliteAgentWorkflowSessionStatus {
+  if (stages.some((stage) => stage.lifecycleState === "INTERRUPTED")) {
+    return "INTERRUPTED";
+  }
+  if (stages.some((stage) => stage.lifecycleState === "RESUMABLE")) {
+    return "RESUMABLE";
+  }
+  if (stages.some((stage) => stage.lifecycleState === "PAUSED")) {
+    return "PAUSED";
+  }
   if (stages.some((stage) => stage.lifecycleState === "ROLLBACK_AVAILABLE")) {
     return "ROLLBACK_AVAILABLE";
   }
@@ -294,7 +312,7 @@ function deriveSessionStatus(stages: EliteAgentWorkflowStage[]): EliteAgentWorkf
     return "FAILED";
   }
   if (stages.some((stage) => stage.lifecycleState === "BLOCKED")) {
-    return stages.some((stage) => stage.lifecycleState === "COMPLETED") ? "PARTIALLY_COMPLETED" : "BLOCKED";
+    return "BLOCKED";
   }
   if (stages.every((stage) => stage.lifecycleState === "COMPLETED")) {
     return "COMPLETED";
@@ -310,9 +328,10 @@ function deriveSessionStatus(stages: EliteAgentWorkflowStage[]): EliteAgentWorkf
 
 function recomputeSession(session: EliteAgentWorkflowSession): EliteAgentWorkflowSession {
   const nextIncomplete = session.stages.find((stage) => stage.lifecycleState !== "COMPLETED" && stage.lifecycleState !== "BLOCKED" && stage.lifecycleState !== "FAILED" && stage.lifecycleState !== "ROLLBACK_AVAILABLE");
-  const blockedStage = session.stages.find((stage) => stage.lifecycleState === "BLOCKED" || stage.lifecycleState === "FAILED" || stage.lifecycleState === "ROLLBACK_AVAILABLE");
+  const blockedStage = session.stages.find((stage) => stage.lifecycleState === "BLOCKED" || stage.lifecycleState === "FAILED" || stage.lifecycleState === "ROLLBACK_AVAILABLE" || stage.lifecycleState === "INTERRUPTED" || stage.lifecycleState === "PAUSED" || stage.lifecycleState === "RESUMABLE");
   const completedStageCount = session.stages.filter((stage) => stage.lifecycleState === "COMPLETED").length;
   const rollbackStage = session.stages.find((stage) => stage.rollbackAvailable || stage.rollbackPrepared);
+  const resumableStage = session.stages.find((stage) => stage.lifecycleState === "RESUMABLE" || stage.lifecycleState === "PAUSED" || stage.lifecycleState === "INTERRUPTED");
   return {
     ...session,
     status: deriveSessionStatus(session.stages),
@@ -323,6 +342,9 @@ function recomputeSession(session: EliteAgentWorkflowSession): EliteAgentWorkflo
     rollbackPrepared: session.stages.some((stage) => stage.rollbackPrepared),
     rollbackReason: rollbackStage?.rollbackReason ?? null,
     partialCompletion: completedStageCount > 0 && completedStageCount < session.stages.length,
+    resumeEligible: Boolean(resumableStage && resumableStage.lifecycleState !== "INTERRUPTED" && resumableStage.lifecycleState !== "BLOCKED"),
+    resumeFromStageId: resumableStage?.stageId ?? null,
+    resumeReason: resumableStage?.blockedReason ?? null,
   };
 }
 
@@ -349,6 +371,9 @@ export function buildEliteAgentWorkflowSession(input: BuildEliteAgentWorkflowInp
     rollbackPrepared: false,
     rollbackReason: null,
     partialCompletion: false,
+    resumeEligible: false,
+    resumeFromStageId: null,
+    resumeReason: null,
     deterministicSelectionReason: selection.reason,
     truthfulCapabilityBoundary: TRUTHFUL_WORKFLOW_BOUNDARY,
     logs: [createLog(now, stages[0] ?? null, `Workflow created: ${selection.reason}`)],
@@ -371,6 +396,9 @@ export function advanceEliteAgentWorkflow(session: EliteAgentWorkflowSession, in
   if (stage.lifecycleState === "BLOCKED") {
     next.logs.push(createLog(now, stage, input.reason ?? "Blocked stage remained blocked.", "BLOCKED"));
     return recomputeSession(next);
+  }
+  if ((stage.lifecycleState === "PAUSED" || stage.lifecycleState === "INTERRUPTED") && input.action !== "MARK_RESUMABLE") {
+    throw new Error(`Workflow stage ${stage.stageId} must be marked resumable before continuation.`);
   }
   if (stage.lifecycleState === "COMPLETED" && input.action !== "PREPARE_ROLLBACK") {
     throw new Error(`Unsafe workflow transition rejected: ${stage.stageId} is already completed.`);
@@ -454,6 +482,27 @@ export function advanceEliteAgentWorkflow(session: EliteAgentWorkflowSession, in
     next.logs.push(createLog(now, stage, stage.rollbackReason, stage.lifecycleState));
   }
 
+  if (input.action === "PAUSE_WORKFLOW") {
+    stage.lifecycleState = "PAUSED";
+    stage.blockedReason = input.reason ?? "Workflow paused by operator; resume is allowed from this stage under the same governance rules.";
+    next.logs.push(createLog(now, stage, stage.blockedReason, "PAUSED"));
+  }
+
+  if (input.action === "INTERRUPT_WORKFLOW") {
+    stage.lifecycleState = "INTERRUPTED";
+    stage.blockedReason = input.reason ?? "Workflow interrupted before completion; operator review is required before resume eligibility can be restored.";
+    next.logs.push(createLog(now, stage, stage.blockedReason, "INTERRUPTED"));
+  }
+
+  if (input.action === "MARK_RESUMABLE") {
+    if (stage.lifecycleState !== "PAUSED" && stage.lifecycleState !== "INTERRUPTED" && stage.lifecycleState !== "RESUMABLE") {
+      throw new Error(`Workflow stage ${stage.stageId} is not paused or interrupted and cannot be marked resumable.`);
+    }
+    stage.lifecycleState = "RESUMABLE";
+    stage.blockedReason = input.reason ?? "This workflow can be resumed from this stage while preserving approval and validation rules.";
+    next.logs.push(createLog(now, stage, stage.blockedReason, "RESUMABLE"));
+  }
+
   if (stage.lifecycleState === "VALIDATING" && input.action === "BEGIN_VALIDATION") {
     stage.validationState = "PENDING";
   }
@@ -461,6 +510,29 @@ export function advanceEliteAgentWorkflow(session: EliteAgentWorkflowSession, in
     stage.validationState = "SUCCESS";
   }
 
+  return recomputeSession(next);
+}
+
+export function resumeEliteAgentWorkflow(session: EliteAgentWorkflowSession, params?: { now?: string; reason?: string }): EliteAgentWorkflowSession {
+  const now = normalizeText(params?.now) || new Date().toISOString();
+  const next = cloneSession(session);
+  const stage = next.stages.find((candidate) => candidate.stageId === next.resumeFromStageId || candidate.lifecycleState === "RESUMABLE");
+  if (!stage) {
+    throw new Error("No resumable workflow stage is available.");
+  }
+  if (stage.lifecycleState !== "RESUMABLE") {
+    throw new Error(`Workflow stage ${stage.stageId} is not marked resumable.`);
+  }
+  if (stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL" && stage.approvalState !== "APPROVED") {
+    stage.lifecycleState = "BLOCKED";
+    stage.approvalState = "BLOCKED";
+    stage.blockedReason = "Resumed workflow remains blocked pending operator approval for the mutation-capable stage.";
+    next.logs.push(createLog(now, stage, stage.blockedReason, "BLOCKED"));
+    return recomputeSession(next);
+  }
+  stage.lifecycleState = "RUNNING";
+  stage.blockedReason = null;
+  next.logs.push(createLog(now, stage, params?.reason ?? "Workflow resumed from recorded history under the same governance rules.", "RUNNING"));
   return recomputeSession(next);
 }
 
@@ -514,6 +586,9 @@ export function summarizeEliteAgentWorkflow(session: EliteAgentWorkflowSession):
     rollbackPrepared: session.rollbackPrepared,
     rollbackReason: session.rollbackReason,
     partialCompletion: session.partialCompletion,
+    resumeEligible: session.resumeEligible,
+    resumeFromStage: current?.type ?? null,
+    resumeReason: session.resumeReason,
     truthfulCapabilityBoundary: session.truthfulCapabilityBoundary,
   };
 }

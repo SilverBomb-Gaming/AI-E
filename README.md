@@ -2,6 +2,40 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_AGENT_EXECUTION_HISTORY_AND_RESUMABLE_WORKFLOWS_PHASE3
+
+AI-E Agents now have the first supervised operational continuity layer. This phase evolves deterministic multi-step workflow sessions into recorded workflow history with resumable state, timestamps, execution outcomes, validation results, approval checkpoints, blocked reasons, rollback preparation state, and structured summaries.
+
+What became real:
+
+- workflow history architecture in `web/lib/aie/agentWorkflowHistory.ts`
+- paused, interrupted, and resumable workflow lifecycle states
+- workflow summary generation for purpose, completed stages, blockers, validation, approvals, rollback state, and remaining steps
+- resume planning from recorded workflow history
+- approval-aware continuation that keeps mutation stages blocked until approval is present
+- `/operator/agents` workflow history panel for recent, failed, paused, interrupted, and resumable workflows
+- manual updates for operational continuity, history, paused/interrupted states, and resume behavior
+
+Resumable state behavior:
+
+- `PAUSED` means the workflow was intentionally stopped and can be reviewed for continuation
+- `INTERRUPTED` means execution stopped before completion and requires operator review before it can become resumable
+- `RESUMABLE` means AI-E can continue from the recorded stage while preserving approval and validation rules
+
+Workflow summary examples:
+
+- `This workflow can be resumed from the READ_REPO_CONTEXT stage.`
+- `The previous execution stopped because approval was missing.`
+- `Rollback preparation is available for operator review.`
+- `The workflow remains blocked pending operator approval.`
+
+Current limitations:
+
+- workflow history is an architectural continuity layer, not unrestricted memory
+- resume does not bypass approval, validation, path scope, or blocked-state rules
+- no unrestricted repo execution, unattended recursive operation, autonomous coding authority, AGI behavior, or `autonomous_real` behavior was added
+- persistent storage beyond the structured history model remains future work
+
 ## AIE_MANUAL_AND_TRANSLATION_SYSTEM_PHASE1
 
 AI-E now has the first operational manual and translation system for product comprehension. This phase establishes documentation as part of the product: a structured knowledge layer that explains runtime concepts, workflow behavior, UI navigation, agent behavior, and official truth boundaries for engineers, creators, and end users.

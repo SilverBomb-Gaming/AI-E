@@ -28,6 +28,12 @@ This glossary translates AI-E engineering language into language that creators a
 | rollbackReason | The reason rollback is relevant | Operators can see why rollback was prepared or made available |
 | partial workflow completion | Some stages completed before the workflow stopped | Operators can see progress even if later stages are blocked |
 | operational dashboard | A product surface for inspecting runtime state | The UI shows workflow sessions, stages, approvals, validation, and blockers |
+| workflow history | A recorded timeline of workflow sessions and outcomes | Operators can see recent, failed, paused, interrupted, and resumable workflows |
+| resumable workflow | A paused or reviewed workflow that can continue from a known stage | AI-E can continue from the recorded stage while preserving approval and validation rules |
+| paused workflow | A workflow intentionally stopped by the operator | The job is not lost; it can become resumable from the paused stage |
+| interrupted workflow | A workflow stopped by runtime interruption or incomplete execution | The operator must review it before it becomes resumable |
+| execution outcome | The recorded result of a workflow run | Shows whether the workflow completed, blocked, failed, paused, interrupted, or became resumable |
+| continuation eligibility | The rule that decides whether resume is allowed | AI-E checks history, current stage, approvals, validation, and blockers before continuing |
 
 ## Translation Principles
 
@@ -46,6 +52,9 @@ Use these:
 - "Validation is pending."
 - "Rollback preparation metadata is available for operator review."
 - "This request routed to read-only inspection."
+- "This workflow can be resumed from the validation stage."
+- "The previous execution stopped because approval was missing."
+- "The workflow remains blocked pending operator approval."
 
 Avoid these:
 
@@ -54,3 +63,19 @@ Avoid these:
 - "AI-E can run forever unattended."
 - "AI-E is general intelligence."
 - "AI-E has unrestricted shell access."
+- "AI-E remembers everything forever."
+- "AI-E will continue unattended until the job is done."
+
+## Resumable Workflow Translation
+
+### Engineering Explanation
+
+Resumability is derived from recorded workflow state: current stage, lifecycle state, approval checkpoints, validation checkpoints, blocked reasons, rollback markers, and timestamps.
+
+### YouTuber Explanation
+
+AI-E can now pick up certain governed jobs from where they stopped, but only when the dashboard says the workflow is eligible to resume.
+
+### End-User Explanation
+
+If a workflow was paused or reviewed, AI-E can show where it stopped and whether it can continue. Blocked workflows stay blocked until the reason is fixed.

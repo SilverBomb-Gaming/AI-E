@@ -114,6 +114,48 @@ AI-E is becoming an operational system, but it is still governed. The important 
 
 AI-E can help guide and track work, while keeping the operator in control of sensitive steps.
 
+## Workflow History
+
+### Engineering Explanation
+
+Agent workflow history records session IDs, prompts, outcomes, stage completion, blocked reasons, validation results, approval checkpoints, rollback preparation, timestamps, remaining steps, and resumable state.
+
+### YouTuber Explanation
+
+AI-E Agents can begin remembering operational jobs in a governed way: what happened, where the job stopped, and whether it can continue.
+
+### User Explanation
+
+The Agents page can show recent workflows, failed workflows, paused workflows, interrupted workflows, and workflows that can be resumed.
+
+## Paused and Interrupted Workflows
+
+### Engineering Explanation
+
+`PAUSED`, `INTERRUPTED`, and `RESUMABLE` states describe continuity without granting new execution authority. Interrupted workflows require review before resumability. Paused workflows can be marked resumable from the recorded stage.
+
+### YouTuber Explanation
+
+AI-E does not have to forget every job. It can show a stopped job and continue it only if the rules still allow it.
+
+### User Explanation
+
+If a workflow stops, check whether it is paused, interrupted, blocked, or resumable. The reason tells you what can happen next.
+
+## Resume Behavior
+
+### Engineering Explanation
+
+Resume logic locates a history entry, checks resume eligibility, resumes from the recorded stage, and preserves mutation approval and validation requirements.
+
+### YouTuber Explanation
+
+Resume is not a shortcut around safety. It is a controlled continuation from the last known workflow state.
+
+### User Explanation
+
+When you resume a workflow, AI-E continues from the right stage if allowed. If approval is still missing, it stays blocked.
+
 ## Current Agent Roles
 
 - `repo-maintainer`: scoped repo maintenance and patch preparation.

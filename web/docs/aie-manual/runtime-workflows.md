@@ -18,6 +18,9 @@ A workflow session is one tracked operational run. It has:
 - blocked reason if present
 - rollback markers
 - structured logs
+- workflow history record
+- resume eligibility
+- last event timestamp
 
 Example:
 
@@ -49,6 +52,18 @@ Approval-blocked lifecycle:
 ```text
 PENDING -> BLOCKED
 Reason: Mutation-capable stage cannot start until explicit operator approval is recorded.
+```
+
+Continuity lifecycle:
+
+```text
+RUNNING -> PAUSED -> RESUMABLE -> RUNNING
+```
+
+Interrupted lifecycle:
+
+```text
+RUNNING -> INTERRUPTED -> RESUMABLE -> RUNNING
 ```
 
 ## Deterministic Workflow Chains
@@ -122,6 +137,64 @@ Common blocked causes:
 
 Operators should read the blocked reason before deciding the next action.
 
+Blocked workflows can be recorded in workflow history. Recording the history does not make the workflow safe to resume by itself; the blocker still has to be resolved.
+
+## Workflow History
+
+Workflow history records what happened over time.
+
+It tracks:
+
+- workflow purpose
+- stages completed
+- blocked stages
+- validation results
+- approvals received
+- rollback availability
+- remaining steps
+- current execution state
+- timestamps
+- resumable state
+
+### Engineering Explanation
+
+History entries are structured summaries of workflow sessions. They preserve lifecycle state, approval checkpoints, validation checkpoints, blocked reasons, rollback fields, and the stage that can be resumed if eligibility is true.
+
+### YouTuber Explanation
+
+AI-E can now show a job history: what it tried, where it stopped, why it stopped, and whether it can continue.
+
+### End-User Explanation
+
+You can review previous workflow runs and continue eligible ones instead of starting from scratch.
+
+## Resumable Workflows
+
+A resumable workflow is a recorded workflow that can continue from a known stage.
+
+Examples:
+
+```text
+Request: resume the movement patch workflow
+History result: found PREPARE_PATCH
+Resume result: blocked until operator approval is recorded
+```
+
+```text
+Request: resume inventory inspection
+History result: found READ_REPO_CONTEXT
+Resume result: workflow continues from READ_REPO_CONTEXT
+```
+
+Resume rules:
+
+- paused workflows can become resumable
+- interrupted workflows require operator review before resumability
+- mutation stages still require approval
+- validation stages still require validation evidence
+- blocked workflows remain blocked until the blocker is resolved
+- resume never grants unrestricted execution
+
 ## Validation Stages
 
 Validation-required stages use validation state:
@@ -170,3 +243,13 @@ No automatic rollback execution is claimed in this phase.
 6. If validation is required, the stage cannot complete until validation succeeds.
 7. If rollback is relevant, rollback preparation metadata can be recorded.
 8. Operator reviews the summary and decides the next step.
+
+## Operational Walkthrough: Resume a Workflow
+
+1. Operator asks to resume a prior workflow.
+2. AI-E searches workflow history for a matching recorded session.
+3. AI-E explains the current state and remaining steps.
+4. If resume is allowed, AI-E continues from the recorded stage.
+5. If approval is missing, the workflow remains blocked.
+6. If validation is pending, the workflow resumes into the validation-aware path.
+7. The updated outcome is recorded back into history.

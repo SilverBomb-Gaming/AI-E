@@ -43,8 +43,11 @@ Route: `/operator/agents`
 3. Generate or inspect a deterministic workflow chain.
 4. Open the active workflow cards.
 5. Inspect stage lifecycle states, approval checkpoints, validation checkpoints, blocked reasons, and rollback markers.
+6. Review the workflow history panel for recent, resumable, paused, interrupted, failed, or blocked workflows.
 
 Screenshot TODO: `/operator/agents` workflow selection and active workflow cards.
+
+Screenshot TODO: `/operator/agents` workflow history panel with recent and resumable workflows.
 
 ## Workflow States
 
@@ -59,8 +62,41 @@ Common states:
 - `BLOCKED`: the workflow stopped because a boundary or dependency is missing.
 - `FAILED`: validation or execution failed.
 - `ROLLBACK_AVAILABLE`: a rollback-relevant stage has rollback preparation available.
+- `PAUSED`: the workflow was intentionally paused and may become resumable.
+- `INTERRUPTED`: execution stopped before completion and needs operator review before resume.
+- `RESUMABLE`: the workflow can continue from a recorded stage while preserving governance rules.
 
 Screenshot TODO: workflow cards showing `PENDING`, `BLOCKED`, and `PARTIALLY_COMPLETED` states.
+
+## Workflow History Panel
+
+The workflow history panel turns temporary workflow sessions into operational continuity.
+
+Look for:
+
+- recent workflows
+- failed or blocked workflows
+- resumable workflows
+- paused workflows
+- interrupted workflows
+- workflow summaries
+- timestamps
+- current execution state
+- remaining steps
+
+### Engineering Explanation
+
+The panel reads recorded workflow history entries and summarizes execution outcomes, validation results, approval checkpoints, blocked reasons, rollback preparation, and resume eligibility.
+
+### YouTuber Explanation
+
+AI-E starts acting less like every job is brand new. The dashboard can show what happened last time and whether the job can continue.
+
+### End-User Explanation
+
+Use this panel to see what stopped, what passed, what is still blocked, and whether a workflow can be resumed.
+
+Screenshot TODO: workflow history entry showing paused, interrupted, and resumable states.
 
 ## Validation Indicators
 
@@ -129,3 +165,4 @@ When reviewing an AI-E operational workflow:
 7. Confirm blocked reason if present.
 8. Confirm rollback markers if present.
 9. Decide the next operator action.
+10. If a workflow is resumable, confirm that approval and validation rules still make sense before continuing.

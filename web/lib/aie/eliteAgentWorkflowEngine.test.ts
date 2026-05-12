@@ -6,6 +6,7 @@ import {
   buildEliteAgentWorkflowSession,
   listEliteAgentWorkflowStageDefinitions,
   markEliteAgentWorkflowValidation,
+  resumeEliteAgentWorkflow,
   summarizeEliteAgentWorkflow,
   type EliteAgentWorkflowStageType,
 } from "./eliteAgentWorkflowEngine";
@@ -187,4 +188,51 @@ test("workflow boundary avoids unrestricted execution claims", () => {
 
   assert.match(session.truthfulCapabilityBoundary, /bounded paths/);
   assert.doesNotMatch(session.truthfulCapabilityBoundary, /fully autonomous|AGI|unattended indefinitely|autonomous_real/i);
+});
+
+test("paused workflows can be marked resumable and resume from the correct stage", () => {
+  const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "inspect the inventory system" });
+  const readStage = session.stages[0]!;
+  const running = advanceEliteAgentWorkflow(session, { stageId: readStage.stageId, action: "START_STAGE" });
+  const paused = advanceEliteAgentWorkflow(running, { stageId: readStage.stageId, action: "PAUSE_WORKFLOW", reason: "Operator paused during context review." });
+  const resumable = advanceEliteAgentWorkflow(paused, { stageId: readStage.stageId, action: "MARK_RESUMABLE" });
+  const resumed = resumeEliteAgentWorkflow(resumable, { now: "2026-05-12T12:10:00.000Z" });
+
+  assert.equal(paused.status, "PAUSED");
+  assert.equal(resumable.status, "RESUMABLE");
+  assert.equal(resumable.resumeEligible, true);
+  assert.equal(resumable.resumeFromStageId, readStage.stageId);
+  assert.equal(resumed.stages[0]?.lifecycleState, "RUNNING");
+});
+
+test("interrupted workflows require resumable marking before continuation", () => {
+  const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "inspect the inventory system" });
+  const readStage = session.stages[0]!;
+  const running = advanceEliteAgentWorkflow(session, { stageId: readStage.stageId, action: "START_STAGE" });
+  const interrupted = advanceEliteAgentWorkflow(running, { stageId: readStage.stageId, action: "INTERRUPT_WORKFLOW", reason: "Terminal closed during inspection." });
+
+  assert.equal(interrupted.status, "INTERRUPTED");
+  assert.equal(interrupted.resumeEligible, false);
+  assert.throws(() => resumeEliteAgentWorkflow(interrupted), /not marked resumable|No resumable/i);
+
+  const resumable = advanceEliteAgentWorkflow(interrupted, { stageId: readStage.stageId, action: "MARK_RESUMABLE" });
+  assert.equal(resumable.status, "RESUMABLE");
+  assert.equal(resumable.resumeEligible, true);
+});
+
+test("approval-aware resume keeps mutation stages blocked without approval", () => {
+  const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
+  const readStage = session.stages[0]!;
+  const patchStage = session.stages[1]!;
+  const afterRead = advanceEliteAgentWorkflow(
+    advanceEliteAgentWorkflow(session, { stageId: readStage.stageId, action: "START_STAGE" }),
+    { stageId: readStage.stageId, action: "COMPLETE_STAGE" },
+  );
+  const pausedPatch = advanceEliteAgentWorkflow(afterRead, { stageId: patchStage.stageId, action: "PAUSE_WORKFLOW" });
+  const resumablePatch = advanceEliteAgentWorkflow(pausedPatch, { stageId: patchStage.stageId, action: "MARK_RESUMABLE" });
+  const resumed = resumeEliteAgentWorkflow(resumablePatch);
+
+  assert.equal(resumed.status, "BLOCKED");
+  assert.match(resumed.blockedStageReason ?? "", /approval/i);
+  assert.equal(resumed.stages[1]?.approvalState, "BLOCKED");
 });
