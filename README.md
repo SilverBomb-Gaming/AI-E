@@ -2,6 +2,31 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_AGENT_NEXT_STEP_GUIDANCE_AND_WORKFLOW_ASSISTANT_PHASE1
+
+AI-E Agents now have a first next-step guidance layer for human workflow operation. This phase moves `/operator/agents` beyond passive workflow cards toward guided operational assistance: each workflow explains what is happening, why the state matters, and what the operator should do next.
+
+What changed:
+
+- every workflow card now shows `AI-E Agent Summary`
+- every workflow card now shows `Next Recommended Action`
+- abstract status labels now include plain-English explanations
+- unavailable resume actions remain disabled and explain why resume is unavailable
+- the likely next safe action is visually emphasized on the workflow card
+- validation-required steps can expose `Run Validation` and `Record Validation Pass` guidance actions
+- workflows can be saved for resume using existing pause/resumable workflow transitions
+- completed workflows show next options: inspect results, start another workflow, or review technical details
+- beginner-mode explanations translate steps like read context, validation pending, rollback available, and blocked states
+- advanced lifecycle, governance, validation, rollback, and execution metadata remain behind expandable details
+- manual and glossary docs now explain next-step guidance, workflow assistance behavior, disabled action guidance, and status translations
+
+Current limitations:
+
+- this phase improves guidance and operator clarity only
+- no new unrestricted repo authority, Unity execution, unattended workflow execution, AGI behavior, or `autonomous_real` capability was added
+- validation-result buttons record operator-provided validation state inside the existing supervised workflow model; they do not run arbitrary external commands
+- resume behavior still follows the existing workflow engine and does not bypass approval, validation, path scope, or blocked-state rules
+
 ## AIE_AGENT_HUMAN_TESTING_UX_REFACTOR_PHASE1
 
 The `/operator/agents` surface now prioritizes human testing readiness. The page has been refactored from a developer-heavy diagnostics dashboard into a conversational AI-E Agent workflow experience: operators can type a plain-language request, choose example prompt chips, create a supervised workflow, and act from compact workflow cards.

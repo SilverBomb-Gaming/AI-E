@@ -58,6 +58,62 @@ The card is the control surface. It tells you what the agent is doing and gives 
 
 Use the buttons on a workflow card to run, resume, inspect, or understand the workflow. If approval is required, the card shows that as an action.
 
+## Next-Step Guidance
+
+### Engineering Explanation
+
+Each workflow card now computes an operator-facing next recommended action from workflow status, current stage, approval checkpoints, validation checkpoints, blocked reason, completion state, and resume eligibility. This is a UI guidance layer over the existing workflow engine.
+
+### YouTuber Explanation
+
+AI-E should not just show a status badge. It should say what is happening, why it matters, and what the operator should click or review next.
+
+### User Explanation
+
+Look for `Next Recommended Action` first. It tells you whether to run the workflow, request approval, run validation, resume, inspect results, or resolve a blocker.
+
+## Workflow Assistant Summaries
+
+### Engineering Explanation
+
+The `AI-E Agent Summary` panel summarizes the workflow intent, safety posture, approval requirement, blocked state, completion state, or resumable state without requiring the operator to inspect lifecycle fields first.
+
+### YouTuber Explanation
+
+The card now behaves more like an assistant: it explains the job in normal language before showing the diagnostics.
+
+### User Explanation
+
+Read the summary to quickly understand what AI-E is doing and whether it needs approval or validation.
+
+## Disabled Action Guidance
+
+### Engineering Explanation
+
+Unavailable actions remain disabled and are paired with explanations. For example, resume remains disabled until the workflow has a resumable state. The disabled state does not bypass workflow history, approval, validation, or path-scope rules.
+
+### YouTuber Explanation
+
+If a button is unavailable, AI-E explains why instead of leaving the operator guessing.
+
+### User Explanation
+
+If `Resume Workflow` is disabled, read the note below the buttons. It explains what must happen before resume is available.
+
+## Beginner Operational Explanations
+
+### Engineering Explanation
+
+Abstract stage and lifecycle terms are translated into operational explanations on the card. `READ_REPO_CONTEXT` becomes a note that AI-E is reviewing project information. Validation pending becomes a note that AI-E is waiting to verify the result. Rollback available becomes a note that an undo path is prepared for operator review.
+
+### YouTuber Explanation
+
+AI-E still keeps the technical state, but it now translates that state into plain language at the point of use.
+
+### User Explanation
+
+You should not need to understand every lifecycle word to know what to do next.
+
 ## Technical Details Panels
 
 ### Engineering Explanation

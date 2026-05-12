@@ -34,6 +34,36 @@ This glossary translates AI-E engineering language into language that creators a
 | interrupted workflow | A workflow stopped by runtime interruption or incomplete execution | The operator must review it before it becomes resumable |
 | execution outcome | The recorded result of a workflow run | Shows whether the workflow completed, blocked, failed, paused, interrupted, or became resumable |
 | continuation eligibility | The rule that decides whether resume is allowed | AI-E checks history, current stage, approvals, validation, and blockers before continuing |
+| next recommended action | The guidance line that tells the operator what to do next | AI-E explains whether to run, resume, validate, request approval, inspect, or resolve a blocker |
+| AI-E Agent Summary | A plain-language summary of workflow purpose and safety posture | Operators can quickly see what the workflow is doing and whether approval or validation matters |
+| guided operational interaction | A workflow UI that behaves like an assistant instead of a passive status board | AI-E explains what is happening, why it matters, and which action is most useful next |
+| disabled action guidance | Explanation attached to an unavailable action | If a button cannot be used, AI-E explains what has to happen first |
+| primary action emphasis | Visual emphasis on the most likely next safe action | Operators can quickly identify whether to run, resume, validate, approve, inspect, or review a blocker |
+| beginner operational explanation | Plain-English translation beside technical state | AI-E explains terms like read context, validation pending, rollback available, and blocked without hiding the technical details |
+
+## Status Explanation Translation
+
+### Engineering Explanation
+
+Workflow states remain lifecycle metadata, but the UI adds action-oriented explanations derived from current stage, validation state, approval state, blocked reason, completion state, and resume eligibility.
+
+### YouTuber Explanation
+
+AI-E is moving from "here is the status" to "here is the status, why it matters, and what to do next."
+
+### End-User Explanation
+
+When a card says waiting, blocked, running, resumable, or complete, read the sentence below it. That sentence explains the practical meaning.
+
+| Status | Plain-English Explanation |
+|---|---|
+| `PENDING` | This workflow is ready, but the current step has not started yet. |
+| `RUNNING` | AI-E is working through a supervised step and has not claimed completion yet. |
+| `BLOCKED` | AI-E stopped because approval, validation, scope, or an external dependency is missing. |
+| `RESUMABLE` | This workflow can safely continue from the previous recorded step. |
+| `VALIDATING` | AI-E is waiting to verify the workflow result. |
+| `ROLLBACK_AVAILABLE` | AI-E prepared an undo path for operator review; it did not run rollback automatically. |
+| `COMPLETED` | All planned workflow steps completed inside the supervised workflow model. |
 
 ## Translation Principles
 
@@ -55,6 +85,9 @@ Use these:
 - "This workflow can be resumed from the validation stage."
 - "The previous execution stopped because approval was missing."
 - "The workflow remains blocked pending operator approval."
+- "Next recommended action: run validation to verify the workflow result."
+- "Resume Workflow is disabled until the workflow is saved for resume or marked resumable."
+- "AI-E Agent Summary: this workflow is using read-only analysis steps."
 
 Avoid these:
 

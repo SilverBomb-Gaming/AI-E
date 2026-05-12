@@ -6,6 +6,7 @@ import {
   advanceEliteAgentWorkflow,
   buildEliteAgentWorkflowSession,
   listEliteAgentWorkflowStageDefinitions,
+  markEliteAgentWorkflowValidation,
   resumeEliteAgentWorkflow,
   summarizeEliteAgentWorkflow,
   type EliteAgentWorkflowSession,
@@ -54,6 +55,7 @@ const sampleAgent = {
 const examplePrompts = [
   "inspect the inventory system",
   "prepare a movement patch",
+  "apply the patch automatically",
   "verify latest gameplay patch",
 ];
 
@@ -88,6 +90,22 @@ function stageLabel(stageType: string | null): string {
   return labels[stageType] ?? stageType.replace(/_/g, " ").toLowerCase();
 }
 
+function stageExplanation(stageType: string | null): string {
+  if (!stageType) {
+    return "AI-E has no active workflow step right now.";
+  }
+  const explanations: Record<string, string> = {
+    READ_REPO_CONTEXT: "AI-E is reviewing project information before generating results.",
+    PREPARE_PATCH: "AI-E is preparing a scoped change plan that still respects approval rules.",
+    VALIDATE_PATCH: "AI-E is waiting to verify the workflow result before it can be counted as complete.",
+    VERIFY_BUILD: "AI-E is preparing a bounded verification step for the requested work.",
+    GENERATE_REPORT: "AI-E is turning the workflow outcome into an operator-readable report.",
+    REQUEST_APPROVAL: "AI-E is waiting for a human decision before a sensitive step can continue.",
+    BLOCKED_EXTERNAL_DEPENDENCY: "AI-E stopped because this request needs approval or another external route before execution can continue.",
+  };
+  return explanations[stageType] ?? "AI-E is tracking this workflow step under supervised rules.";
+}
+
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
     PENDING: "Waiting",
@@ -104,17 +122,151 @@ function statusLabel(status: string): string {
   return labels[status] ?? status.replace(/_/g, " ");
 }
 
+function statusExplanation(status: string): string {
+  const explanations: Record<string, string> = {
+    PENDING: "This workflow is ready, but the current step has not started yet.",
+    RUNNING: "AI-E is working through a supervised step and has not claimed completion yet.",
+    PARTIALLY_COMPLETED: "Some steps are complete, and AI-E is waiting for the next safe operator action.",
+    COMPLETED: "All planned workflow steps have completed inside the supervised workflow model.",
+    BLOCKED: "AI-E stopped because approval, validation, scope, or an external dependency is missing.",
+    FAILED: "A workflow step failed and needs operator review before continuing.",
+    ROLLBACK_AVAILABLE: "AI-E prepared an undo path for operator review; it did not run rollback automatically.",
+    PAUSED: "The workflow was intentionally paused and can be reviewed for continuation.",
+    INTERRUPTED: "The workflow stopped unexpectedly and needs review before it can resume.",
+    RESUMABLE: "This workflow can safely continue from the previous recorded step.",
+  };
+  return explanations[status] ?? "AI-E is tracking this workflow state under supervised rules.";
+}
+
+function firstPendingApproval(workflow: EliteAgentWorkflowSession): EliteAgentWorkflowStage | null {
+  return workflow.stages.find((stage) => stage.approvalState === "PENDING") ?? null;
+}
+
+function approvalActionStage(workflow: EliteAgentWorkflowSession): EliteAgentWorkflowStage | null {
+  return workflow.stages.find((stage, index) => stage.approvalState === "PENDING" && workflow.stages.slice(0, index).every((previous) => previous.lifecycleState === "COMPLETED")) ?? null;
+}
+
+function firstPendingValidation(workflow: EliteAgentWorkflowSession): EliteAgentWorkflowStage | null {
+  return workflow.stages.find((stage) => stage.validationRequired && stage.validationState === "PENDING" && stage.lifecycleState === "RUNNING") ?? null;
+}
+
 function currentStage(workflow: EliteAgentWorkflowSession): EliteAgentWorkflowStage | null {
   return workflow.stages.find((stage) => stage.stageId === workflow.currentStageId) ?? workflow.stages.find((stage) => stage.lifecycleState !== "COMPLETED") ?? null;
 }
 
 function buildWorkflow(prompt: string): EliteAgentWorkflowSession {
+  const sessionSeed = `${Date.now()}-${Math.round(Math.random() * 100000)}`;
   return buildEliteAgentWorkflowSession({
-    agentId: sampleAgent.agentId,
+    agentId: `${sampleAgent.agentId}-workflow-${sessionSeed}`,
     prompt,
     allowedPaths: sampleAgent.allowedPaths,
     forbiddenPaths: sampleAgent.blockedPaths,
   });
+}
+
+function workflowAssistantSummary(workflow: EliteAgentWorkflowSession): string {
+  const summary = summarizeEliteAgentWorkflow(workflow);
+  const stage = currentStage(workflow);
+  const isReadOnly = workflow.stages.every((entry) => entry.mutationPermission !== "MUTATION_REQUIRES_APPROVAL");
+  const approval = firstPendingApproval(workflow);
+  if (summary.status === "BLOCKED") {
+    return `This workflow is blocked before it can continue. ${summary.blockedStageReason ?? "A governance requirement or external dependency is missing."}`;
+  }
+  if (summary.status === "COMPLETED") {
+    return `This workflow completed all ${workflow.stages.length} planned steps. Review the summary or start another workflow.`;
+  }
+  if (summary.resumeEligible) {
+    return `This workflow is ready to resume from ${stageLabel(summary.resumeFromStage ?? summary.currentStage)} while keeping the same approval and validation rules.`;
+  }
+  if (approval) {
+    return `This workflow includes ${stageLabel(approval.type).toLowerCase()}. Approval is required before mutation-capable work can continue.`;
+  }
+  if (isReadOnly) {
+    return `This workflow is using read-only analysis steps. No approval is currently required.`;
+  }
+  return `This workflow is operating on ${stageLabel(stage?.type ?? null).toLowerCase()} with supervised approval and validation checks available as needed.`;
+}
+
+function workflowCreationSummary(workflow: EliteAgentWorkflowSession): string {
+  const summary = summarizeEliteAgentWorkflow(workflow);
+  if (summary.status === "BLOCKED") {
+    return "AI-E Agent created a supervised blocked workflow so the missing approval or external route is visible before execution continues.";
+  }
+  if (firstPendingApproval(workflow)) {
+    return "AI-E Agent created a supervised workflow with an approval checkpoint before mutation-capable work can begin.";
+  }
+  if (summary.validationCheckpoints.length > 0) {
+    return "AI-E Agent created a supervised verification workflow with validation guidance.";
+  }
+  return "AI-E Agent created a supervised inspection workflow.";
+}
+
+function nextRecommendedAction(workflow: EliteAgentWorkflowSession): string {
+  const summary = summarizeEliteAgentWorkflow(workflow);
+  const stage = currentStage(workflow);
+  if (summary.status === "COMPLETED") {
+    return "Inspect results, start another workflow, or review technical details.";
+  }
+  if (summary.resumeEligible) {
+    return `Resume the workflow from ${stageLabel(summary.resumeFromStage ?? summary.currentStage).toLowerCase()}.`;
+  }
+  if (summary.status === "BLOCKED") {
+    if (firstPendingApproval(workflow) || /approval/i.test(summary.blockedStageReason ?? "")) {
+      return "Approval is required before execution can continue.";
+    }
+    return "Review the blocker and resolve the missing dependency before continuing.";
+  }
+  if (firstPendingValidation(workflow)) {
+    return "Run validation to verify the workflow result.";
+  }
+  if (stage?.lifecycleState === "VALIDATING") {
+    return "Wait for validation evidence, then record the validation result.";
+  }
+  if (summary.status === "RUNNING") {
+    return `Wait for ${stageLabel(summary.currentStage).toLowerCase()} to complete.`;
+  }
+  return "Run the workflow to continue execution.";
+}
+
+function resumeUnavailableReason(workflow: EliteAgentWorkflowSession): string | null {
+  const summary = summarizeEliteAgentWorkflow(workflow);
+  if (summary.resumeEligible) {
+    return null;
+  }
+  if (summary.status === "COMPLETED") {
+    return "Resume is unavailable because this workflow is already complete.";
+  }
+  if (summary.status === "BLOCKED") {
+    return "Resume becomes available after the blocker is resolved and the workflow is marked resumable.";
+  }
+  const pendingValidation = workflow.stages.find((stage) => stage.validationRequired && stage.validationState === "PENDING");
+  if (pendingValidation) {
+    return "Resume becomes available after validation is handled or the workflow is saved for resume.";
+  }
+  return "Resume becomes available after the workflow is paused and saved for later continuation.";
+}
+
+function primaryActionLabel(workflow: EliteAgentWorkflowSession): string {
+  const summary = summarizeEliteAgentWorkflow(workflow);
+  if (summary.resumeEligible) {
+    return "Resume Workflow";
+  }
+  if (approvalActionStage(workflow)) {
+    return "Request Approval";
+  }
+  if (firstPendingValidation(workflow)) {
+    return "Run Validation";
+  }
+  if (summary.status === "BLOCKED") {
+    return "Explain Blocker";
+  }
+  if (summary.status === "COMPLETED") {
+    return "Inspect Summary";
+  }
+  if (summary.status === "RUNNING") {
+    return "Complete Step";
+  }
+  return "Run Workflow";
 }
 
 function StageTimeline({ workflow }: { workflow: EliteAgentWorkflowSession }) {
@@ -129,13 +281,16 @@ function StageTimeline({ workflow }: { workflow: EliteAgentWorkflowSession }) {
   );
 }
 
-function ActionButton({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
+function ActionButton({ label, onClick, disabled, primary }: { label: string; onClick: () => void; disabled?: boolean; primary?: boolean }) {
+  const classes = primary
+    ? "rounded-md bg-cyan-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-cyan-600 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 dark:bg-cyan-500 dark:text-[#061018] dark:hover:bg-cyan-400 dark:disabled:bg-white/10 dark:disabled:text-zinc-500"
+    : "rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 transition hover:border-cyan-400 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 dark:border-white/10 dark:bg-[#111827] dark:text-zinc-100 dark:hover:border-cyan-300/60 dark:hover:bg-cyan-400/10 dark:disabled:bg-white/5 dark:disabled:text-zinc-500";
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 transition hover:border-cyan-400 hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-[#111827] dark:text-zinc-100 dark:hover:border-cyan-300/60 dark:hover:bg-cyan-400/10"
+      className={classes}
     >
       {label}
     </button>
@@ -167,8 +322,7 @@ export function EliteAgentClient() {
     }
     const workflow = buildWorkflow(prompt);
     upsertWorkflow(workflow);
-    const summary = summarizeEliteAgentWorkflow(workflow);
-    setAgentReply(`I created a step-by-step workflow for "${prompt}". Current step: ${stageLabel(summary.currentStage)}. Status: ${statusLabel(summary.status)}.`);
+    setAgentReply(`${workflowCreationSummary(workflow)} Next recommended action: ${nextRecommendedAction(workflow)}`);
   }
 
   async function runSampleTask() {
@@ -202,7 +356,7 @@ export function EliteAgentClient() {
     try {
       const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "START_STAGE" });
       upsertWorkflow(next);
-      setAgentReply(`${stageLabel(stage.type)} is now running under supervised workflow rules.`);
+      setAgentReply(`${stageLabel(stage.type)} is now running under supervised workflow rules. Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "The workflow could not start safely.");
     }
@@ -212,23 +366,85 @@ export function EliteAgentClient() {
     try {
       const next = resumeEliteAgentWorkflow(workflow);
       upsertWorkflow(next);
-      setAgentReply(`Resumed from ${stageLabel(summarizeEliteAgentWorkflow(next).currentStage)}. Approval and validation rules still apply.`);
+      setAgentReply(`Resumed from ${stageLabel(summarizeEliteAgentWorkflow(next).currentStage)}. Approval and validation rules still apply. Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "This workflow is not currently resumable.");
     }
   }
 
   function requestApproval(workflow: EliteAgentWorkflowSession) {
-    const stage = workflow.stages.find((entry) => entry.approvalState === "PENDING") ?? currentStage(workflow);
+    const stage = approvalActionStage(workflow);
     if (!stage) {
+      setAgentReply("Approval is not available yet. Complete the earlier supervised steps first.");
       return;
     }
     try {
       const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "APPROVE_STAGE", reason: "Operator requested approval from the workflow card." });
       upsertWorkflow(next);
-      setAgentReply(`${stageLabel(stage.type)} is now approved. You can run the next supervised step.`);
+      setAgentReply(`${stageLabel(stage.type)} is now approved. Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "Approval could not be recorded for this step.");
+    }
+  }
+
+  function runValidation(workflow: EliteAgentWorkflowSession) {
+    const stage = firstPendingValidation(workflow);
+    if (!stage) {
+      setAgentReply("Validation is not available yet. Start the validation-required step first.");
+      return;
+    }
+    try {
+      const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "BEGIN_VALIDATION", reason: "Operator opened validation from the workflow guidance card." });
+      upsertWorkflow(next);
+      setAgentReply(`${stageLabel(stage.type)} is now waiting for validation evidence. Next recommended action: ${nextRecommendedAction(next)}`);
+    } catch (caught) {
+      setAgentReply(caught instanceof Error ? caught.message : "Validation could not begin for this workflow.");
+    }
+  }
+
+  function recordValidationPass(workflow: EliteAgentWorkflowSession) {
+    const stage = workflow.stages.find((entry) => entry.lifecycleState === "VALIDATING" && entry.validationState === "PENDING");
+    if (!stage) {
+      setAgentReply("No validating step is waiting for a result right now.");
+      return;
+    }
+    try {
+      const next = markEliteAgentWorkflowValidation(workflow, { stageId: stage.stageId, validationState: "SUCCESS", reason: "Operator recorded validation evidence as passed from the guidance card." });
+      upsertWorkflow(next);
+      setAgentReply(`Validation passed for ${stageLabel(stage.type)}. Next recommended action: ${nextRecommendedAction(next)}`);
+    } catch (caught) {
+      setAgentReply(caught instanceof Error ? caught.message : "Validation result could not be recorded.");
+    }
+  }
+
+  function completeCurrentStep(workflow: EliteAgentWorkflowSession) {
+    const stage = currentStage(workflow);
+    if (!stage) {
+      setAgentReply("This workflow has no step available to complete.");
+      return;
+    }
+    try {
+      const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "COMPLETE_STAGE", reason: "Operator completed the current guided workflow step." });
+      upsertWorkflow(next);
+      setAgentReply(`${stageLabel(stage.type)} completed. Next recommended action: ${nextRecommendedAction(next)}`);
+    } catch (caught) {
+      setAgentReply(caught instanceof Error ? caught.message : "The current step could not be completed safely.");
+    }
+  }
+
+  function saveForResume(workflow: EliteAgentWorkflowSession) {
+    const stage = currentStage(workflow);
+    if (!stage) {
+      setAgentReply("This workflow has no active step to save for resume.");
+      return;
+    }
+    try {
+      const paused = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "PAUSE_WORKFLOW", reason: "Operator saved this workflow for later continuation." });
+      const resumable = advanceEliteAgentWorkflow(paused, { stageId: stage.stageId, action: "MARK_RESUMABLE", reason: "This workflow can safely resume from the saved step." });
+      upsertWorkflow(resumable);
+      setAgentReply(`Saved ${stageLabel(stage.type)} for later continuation. Next recommended action: ${nextRecommendedAction(resumable)}`);
+    } catch (caught) {
+      setAgentReply(caught instanceof Error ? caught.message : "This workflow could not be saved for resume.");
     }
   }
 
@@ -294,6 +510,10 @@ export function EliteAgentClient() {
           <section className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm dark:border-white/15 dark:bg-[#0d1420]">
             <h2 className="text-xl font-semibold">No workflows yet.</h2>
             <p className="mt-2 text-sm text-slate-600 dark:text-zinc-300">Try one of these: inspect the inventory system, prepare a safe movement patch, verify latest gameplay patch.</p>
+            <div className="mx-auto mt-5 max-w-2xl rounded-md border border-cyan-200 bg-cyan-50 p-4 text-left dark:border-cyan-300/20 dark:bg-cyan-400/10">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Next Recommended Action</p>
+              <p className="mt-2 text-sm text-cyan-950 dark:text-cyan-100">Start a workflow using the input above.</p>
+            </div>
           </section>
         ) : (
           <section className="grid gap-4 lg:grid-cols-2">
@@ -302,16 +522,35 @@ export function EliteAgentClient() {
               const isSelected = selectedWorkflow?.workflowSessionId === workflow.workflowSessionId;
               const showSummary = summaryWorkflowId === workflow.workflowSessionId;
               const canResume = summary.resumeEligible;
-              const needsApproval = summary.approvalCheckpoints.some((checkpoint) => checkpoint.approvalState === "PENDING");
+              const activeStage = currentStage(workflow);
+              const needsApproval = Boolean(approvalActionStage(workflow));
+              const pendingValidation = firstPendingValidation(workflow);
+              const validatingStage = workflow.stages.find((stage) => stage.lifecycleState === "VALIDATING" && stage.validationState === "PENDING");
+              const resumeReason = resumeUnavailableReason(workflow);
+              const primary = primaryActionLabel(workflow);
+              const runDisabled = !activeStage || summary.status === "COMPLETED" || summary.status === "BLOCKED" || activeStage.lifecycleState === "RUNNING" || activeStage.lifecycleState === "VALIDATING" || summary.resumeEligible;
               return (
                 <article key={workflow.workflowSessionId} className={`rounded-lg border bg-white p-5 shadow-sm transition dark:bg-[#0d1420] ${isSelected ? "border-cyan-400 ring-2 ring-cyan-400/20 dark:border-cyan-300/60" : "border-slate-200 dark:border-white/10"}`}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <h2 className="text-lg font-semibold">{workflow.prompt}</h2>
                       <p className="mt-1 text-sm text-slate-600 dark:text-zinc-300">Current step: {stageLabel(summary.currentStage)}</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-zinc-400">{stageExplanation(summary.currentStage)}</p>
                     </div>
                     <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${statusClass(summary.status.toLowerCase())}`}>{statusLabel(summary.status)}</span>
                   </div>
+
+                  <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/5">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-zinc-400">AI-E Agent Summary</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-700 dark:text-zinc-200">{workflowAssistantSummary(workflow)}</p>
+                  </div>
+
+                  <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 p-4 dark:border-cyan-300/20 dark:bg-cyan-400/10">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Next Recommended Action</p>
+                    <p className="mt-2 text-sm font-semibold leading-6 text-cyan-950 dark:text-cyan-100">{nextRecommendedAction(workflow)}</p>
+                  </div>
+
+                  <p className="mt-3 rounded-md border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-600 dark:border-white/10 dark:bg-[#070b12] dark:text-zinc-300">{statusExplanation(summary.status)}</p>
 
                   <StageTimeline workflow={workflow} />
 
@@ -326,13 +565,26 @@ export function EliteAgentClient() {
                   )}
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <ActionButton label="Run" onClick={() => runWorkflow(workflow)} />
-                    <ActionButton label="Resume" onClick={() => resumeWorkflow(workflow)} disabled={!canResume} />
+                    <ActionButton label="Run Workflow" onClick={() => runWorkflow(workflow)} primary={primary === "Run Workflow"} disabled={runDisabled} />
+                    <ActionButton label="Resume Workflow" onClick={() => resumeWorkflow(workflow)} disabled={!canResume} primary={primary === "Resume Workflow"} />
+                    {pendingValidation && <ActionButton label="Run Validation" onClick={() => runValidation(workflow)} primary={primary === "Run Validation"} />}
+                    {validatingStage && <ActionButton label="Record Validation Pass" onClick={() => recordValidationPass(workflow)} primary />}
+                    {summary.status === "RUNNING" && !pendingValidation && !validatingStage && <ActionButton label="Complete Step" onClick={() => completeCurrentStep(workflow)} primary={primary === "Complete Step"} />}
+                    {!canResume && summary.status !== "COMPLETED" && summary.status !== "BLOCKED" && <ActionButton label="Save for Resume" onClick={() => saveForResume(workflow)} />}
                     <ActionButton label="Inspect" onClick={() => setSelectedWorkflowId(workflow.workflowSessionId)} />
-                    <ActionButton label={showSummary ? "Hide Summary" : "Show Summary"} onClick={() => setSummaryWorkflowId(showSummary ? null : workflow.workflowSessionId)} />
-                    {summary.blockedStageReason && <ActionButton label="Explain Blocker" onClick={() => setAgentReply(summary.blockedStageReason ?? "This workflow is blocked by policy.")} />}
-                    {needsApproval && <ActionButton label="Request Approval" onClick={() => requestApproval(workflow)} />}
+                    <ActionButton label={showSummary ? "Hide Summary" : "Inspect Summary"} onClick={() => setSummaryWorkflowId(showSummary ? null : workflow.workflowSessionId)} primary={primary === "Inspect Summary"} />
+                    {summary.blockedStageReason && <ActionButton label="Explain Blocker" onClick={() => setAgentReply(`${summary.blockedStageReason} Next recommended action: ${nextRecommendedAction(workflow)}`)} primary={primary === "Explain Blocker"} />}
+                    {needsApproval && <ActionButton label="Request Approval" onClick={() => requestApproval(workflow)} primary={primary === "Request Approval"} />}
                   </div>
+
+                  {resumeReason && <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-zinc-400">{resumeReason}</p>}
+
+                  {summary.status === "COMPLETED" && (
+                    <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-300/30 dark:bg-emerald-400/10">
+                      <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-100">Workflow Completed</p>
+                      <p className="mt-2 text-sm leading-6 text-emerald-800 dark:text-emerald-100">Next options: inspect results, start another workflow, or review technical details.</p>
+                    </div>
+                  )}
 
                   {showSummary && (
                     <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700 dark:border-white/10 dark:bg-[#070b12] dark:text-zinc-300">
