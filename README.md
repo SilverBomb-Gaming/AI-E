@@ -2,6 +2,41 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_LITE_ELITE_AGENT_PHASE1_BOUNDED_LOCAL_EXECUTOR
+
+AI-E now has the foundation for bounded local elite agents that can execute scoped tasks with file-safety and verification reporting.
+
+This phase adds a local AI-E-lite executor layer for repo-development tasks that are intentionally narrow, typed, and reviewable. A task contract names the task, goal, repo scope, allowed paths, forbidden paths, expected outputs, verification commands, risk level, approval requirement, files to inspect, and explicit requested file changes. The executor validates scope, inspects only allowed files, generates a deterministic step-limited plan, blocks writes that require missing approval, applies controlled edits only after conflict checks, runs allowlisted verification commands, and returns structured logs with changed files, failures, unresolved blockers, and the next recommended task.
+
+What is real in this phase:
+
+- bounded local filesystem inspection and controlled writes through `web/lib/aie/liteEliteAgentRuntime.ts`
+- agent and task contracts for repo-maintainer, test-runner, Unity task planner, documentation updater, and QA verifier roles
+- path safety that prevents task contracts from widening an agent's allowed scope
+- blocked path enforcement for sensitive roots such as `.git`, dependency folders, and environment files
+- content-hash conflict protection before writes
+- allowlisted verification command reporting
+- operator API surface at `/api/operator/agents/run`
+- operator visibility surface at `/operator/agents`
+- focused tests in `web/lib/aie/liteEliteAgentRuntime.test.ts`
+
+What remains blocked or scaffolded:
+
+- no unrestricted autonomy claims, general machine-intelligence claims, unattended studio operation, recursive agent spawning, unrestricted shell execution, or arbitrary repo mutation
+- no automatic commits or pushes from the executor
+- no direct Unity editor control in this phase
+- no writes outside the agent's declared allowed paths
+- no sensitive writes without the task contract approval gate being satisfied
+
+Validation:
+
+```powershell
+cd web
+.\node_modules\.bin\tsx.cmd --test lib\aie\liteEliteAgentRuntime.test.ts
+npm test
+npm run build
+```
+
 ## Local Storage And Cache Policy
 
 AI-E development machines should keep heavy temp, cache, render, and test-artifact writes off the system drive when possible. The preferred local cache root is `E:\AI_SYSTEM` with these directories:
