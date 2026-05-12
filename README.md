@@ -2,6 +2,29 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_AGENT_HUMAN_TESTING_UX_REFACTOR_PHASE1
+
+The `/operator/agents` surface now prioritizes human testing readiness. The page has been refactored from a developer-heavy diagnostics dashboard into a conversational AI-E Agent workflow experience: operators can type a plain-language request, choose example prompt chips, create a supervised workflow, and act from compact workflow cards.
+
+What changed:
+
+- top-level workflow input labeled "Ask an AI-E Agent to help with a workflow"
+- `Run Workflow` entry point for plain-language agent requests
+- compact workflow cards with beginner-readable current-step and status labels
+- per-card actions for `Run`, `Resume`, `Inspect`, `Show Summary`, `Explain Blocker`, and `Request Approval`
+- empty-state guidance for first-time human testers
+- stage timeline chips that show workflow progress without forcing technical reading first
+- technical lifecycle, mutation, approval, validation, path-scope, and rollback details moved into expandable panels
+- dark-mode styling added for `/operator/agents` and `/operator/manual`; `/operator/chat` already uses a dark operator theme
+- manual updates for the new interaction model, action buttons, compact cards, and beginner/operator detail split
+
+Current limitations:
+
+- the UX uses the existing supervised workflow runtime and bounded sample executor only
+- no new unrestricted repo mutation, Unity editor control, unattended autonomy, AGI behavior, or `autonomous_real` behavior was added
+- approval and validation actions remain governed by the existing workflow engine
+- the manual still uses lightweight markdown rendering and screenshot TODO placeholders until real captures are added
+
 ## AIE_AGENT_EXECUTION_HISTORY_AND_RESUMABLE_WORKFLOWS_PHASE3
 
 AI-E Agents now have the first supervised operational continuity layer. This phase evolves deterministic multi-step workflow sessions into recorded workflow history with resumable state, timestamps, execution outcomes, validation results, approval checkpoints, blocked reasons, rollback preparation state, and structured summaries.

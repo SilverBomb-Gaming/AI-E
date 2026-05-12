@@ -39,15 +39,50 @@ Screenshot TODO: reasoning visibility fields after a supervised repo-work prompt
 Route: `/operator/agents`
 
 1. Open `/operator/agents`.
-2. Review the workflow selection panel.
-3. Generate or inspect a deterministic workflow chain.
-4. Open the active workflow cards.
-5. Inspect stage lifecycle states, approval checkpoints, validation checkpoints, blocked reasons, and rollback markers.
-6. Review the workflow history panel for recent, resumable, paused, interrupted, failed, or blocked workflows.
+2. Use the field labeled "Ask an AI-E Agent to help with a workflow".
+3. Enter a plain-language request or choose an example prompt chip.
+4. Select `Run Workflow` to create a supervised step-by-step workflow.
+5. Use the workflow card action buttons: `Run`, `Resume`, `Inspect`, `Show Summary`, `Explain Blocker`, or `Request Approval` when those actions are available.
+6. Open `Show Technical Details` only when lifecycle states, approval checkpoints, validation checkpoints, blocked reasons, path scope, or rollback markers need deeper review.
+7. Review recent workflow history after a workflow has been created or updated.
 
 Screenshot TODO: `/operator/agents` workflow selection and active workflow cards.
 
 Screenshot TODO: `/operator/agents` workflow history panel with recent and resumable workflows.
+
+### Human Testing Experience
+
+The Agents page is intended to feel like asking an AI operations agent for help, not like reading a static engineering dashboard.
+
+Beginner-facing controls appear first:
+
+- a plain-language workflow input
+- example prompt chips
+- compact workflow cards
+- current step labels
+- action buttons for the next operator decision
+- an empty state when no workflows exist
+
+Operator and engineering details remain available through expandable technical panels instead of being the default reading path.
+
+### Action Buttons
+
+Workflow cards may show these actions:
+
+- `Run`: starts the current supervised step when allowed.
+- `Resume`: continues a workflow only when resume state is eligible.
+- `Inspect`: highlights the selected workflow card for review.
+- `Show Summary`: opens a human-readable workflow summary.
+- `Explain Blocker`: repeats the recorded blocked reason in the agent response area.
+- `Request Approval`: records approval for an approval-gated step when the workflow exposes one.
+
+These buttons do not grant new backend authority. They use the existing supervised workflow runtime and preserve approval, validation, path-scope, and blocked-state rules.
+
+### Beginner vs Operator Detail
+
+The default view uses beginner-readable language such as "step-by-step workflow", "current step", "needs attention", and "requires approval before execution".
+
+Technical labels such as lifecycle state, mutation permission, validation state, approval state, workflow ID, and allowed paths are still visible in `Show Technical Details` panels.
 
 ## Workflow States
 
@@ -156,13 +191,11 @@ Screenshot TODO: rollback marker visible on a patch-preparation workflow.
 
 When reviewing an AI-E operational workflow:
 
-1. Confirm the route: chat, read-only, patch preparation, validation, build verification, or blocked.
-2. Confirm the workflow ID.
-3. Confirm the current stage.
-4. Confirm whether mutation is allowed.
-5. Confirm approval status.
-6. Confirm validation status.
-7. Confirm blocked reason if present.
-8. Confirm rollback markers if present.
-9. Decide the next operator action.
-10. If a workflow is resumable, confirm that approval and validation rules still make sense before continuing.
+1. Start with the plain-language request in the agent input.
+2. Confirm the workflow card matches the intended task.
+3. Confirm the current step and status label.
+4. Choose the next visible action button.
+5. Open `Show Summary` if the human explanation is enough.
+6. Open `Show Technical Details` if approval, validation, mutation, rollback, path scope, or blocked reason must be audited.
+7. If a workflow is resumable, confirm that approval and validation rules still make sense before continuing.
+8. If a workflow is blocked, use `Explain Blocker` and resolve the missing approval, validation, dependency, or scope issue before continuing.

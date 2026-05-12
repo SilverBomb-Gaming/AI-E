@@ -30,6 +30,48 @@ A chatbot answers. An AI-E Agent operates inside a dashboard where its steps, ru
 
 Chat gives advice. Agents show operational progress and boundaries.
 
+## Human Workflow Interaction
+
+### Engineering Explanation
+
+The `/operator/agents` surface now treats agent work as an interaction loop: prompt intake, workflow creation, card-level actions, history recording, and optional technical expansion. The UI still uses the existing workflow runtime and does not add new backend execution authority.
+
+### YouTuber Explanation
+
+The agent page should feel more like asking an operations assistant to handle a job. You type the job, get a workflow card, and press clear action buttons instead of reading a wall of diagnostics first.
+
+### User Explanation
+
+Start by typing what you want help with. AI-E creates a workflow card and shows the next step. More technical details are available only when you open them.
+
+## Workflow Cards and Actions
+
+### Engineering Explanation
+
+Workflow cards expose bounded state transitions through actions such as `Run`, `Resume`, `Inspect`, `Show Summary`, `Explain Blocker`, and `Request Approval`. These actions preserve workflow ordering, approval gates, validation requirements, path scope, and blocked-state reporting.
+
+### YouTuber Explanation
+
+The card is the control surface. It tells you what the agent is doing and gives you buttons for safe next moves.
+
+### User Explanation
+
+Use the buttons on a workflow card to run, resume, inspect, or understand the workflow. If approval is required, the card shows that as an action.
+
+## Technical Details Panels
+
+### Engineering Explanation
+
+Lifecycle states, workflow IDs, mutation permission, approval state, validation state, allowed paths, blocked reasons, and rollback markers remain available in expandable technical panels.
+
+### YouTuber Explanation
+
+The engineering data is still there, but it is no longer the first thing a tester has to read.
+
+### User Explanation
+
+Open technical details when you need to audit exactly why a workflow can or cannot continue.
+
 ## Bounded Workflows
 
 ### Engineering Explanation
