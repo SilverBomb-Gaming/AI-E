@@ -2,6 +2,12 @@
 
 import { useState } from "react";
 import type { LiteEliteRunResult } from "@/lib/aie/liteEliteAgentRuntime";
+import {
+  buildEliteAgentWorkflowSession,
+  listEliteAgentWorkflowStageDefinitions,
+  summarizeEliteAgentWorkflow,
+  type EliteAgentWorkflowSession,
+} from "@/lib/aie/eliteAgentWorkflowEngine";
 
 const sampleTask = {
   taskId: "lite-agent-sample-task",
@@ -33,6 +39,23 @@ const sampleAgent = {
   maxSteps: 7,
 };
 
+const workflowPrompts = [
+  "inspect the inventory system",
+  "prepare a safe movement patch",
+  "apply the patch automatically",
+  "verify the latest gameplay patch",
+];
+
+const initialWorkflows = workflowPrompts.map((prompt, index) => buildEliteAgentWorkflowSession({
+  agentId: sampleAgent.agentId,
+  prompt,
+  allowedPaths: sampleAgent.allowedPaths,
+  forbiddenPaths: sampleAgent.blockedPaths,
+  now: `2026-05-12T12:0${index}:00.000Z`,
+}));
+
+const workflowStageDefinitions = listEliteAgentWorkflowStageDefinitions(sampleAgent.allowedPaths);
+
 function statusClass(status: string): string {
   if (/completed/.test(status)) {
     return "border-emerald-300 bg-emerald-50 text-emerald-800";
@@ -45,6 +68,8 @@ function statusClass(status: string): string {
 
 export function EliteAgentClient() {
   const [result, setResult] = useState<LiteEliteRunResult | null>(null);
+  const [workflows, setWorkflows] = useState<EliteAgentWorkflowSession[]>(initialWorkflows);
+  const [workflowPrompt, setWorkflowPrompt] = useState(workflowPrompts[0] ?? "inspect the inventory system");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,16 +94,114 @@ export function EliteAgentClient() {
     }
   }
 
+  function addWorkflow() {
+    setWorkflows((current) => [
+      buildEliteAgentWorkflowSession({
+        agentId: sampleAgent.agentId,
+        prompt: workflowPrompt,
+        allowedPaths: sampleAgent.allowedPaths,
+        forbiddenPaths: sampleAgent.blockedPaths,
+      }),
+      ...current,
+    ]);
+  }
+
   const summary = result?.summary;
 
   return (
     <main className="min-h-screen bg-[#f6f8fb] px-6 py-8 text-slate-950">
       <div className="mx-auto max-w-6xl space-y-6">
         <header className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700">AI-E-lite Elite Agent Phase 1</p>
-          <h1 className="mt-2 text-3xl font-semibold">Bounded Local Executor</h1>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">AI-E now has the foundation for bounded local elite agents that can execute scoped tasks with file-safety and verification reporting. This is not full autonomy, not AGI, and not unattended operation.</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700">AI-E-lite Elite Agent Phase 2</p>
+          <h1 className="mt-2 text-3xl font-semibold">Supervised Workflow Runtime</h1>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600">AI-E-lite now tracks governed multi-step workflow sessions with ordered stages, approval checkpoints, validation checkpoints, blocked-stage reasons, and rollback preparation. It remains bounded, supervised, and operator-auditable.</p>
         </header>
+
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-700">Workflow Selection</p>
+              <h2 className="mt-2 text-lg font-semibold">Deterministic Supervised Chains</h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <select value={workflowPrompt} onChange={(event) => setWorkflowPrompt(event.target.value)} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm">
+                {workflowPrompts.map((prompt) => <option key={prompt} value={prompt}>{prompt}</option>)}
+              </select>
+              <button type="button" onClick={addWorkflow} className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Generate Workflow</button>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {workflowPrompts.map((prompt) => {
+              const preview = summarizeEliteAgentWorkflow(buildEliteAgentWorkflowSession({
+                agentId: sampleAgent.agentId,
+                prompt,
+                allowedPaths: sampleAgent.allowedPaths,
+                forbiddenPaths: sampleAgent.blockedPaths,
+                now: "2026-05-12T12:00:00.000Z",
+              }));
+              return (
+                <article key={prompt} className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                  <h3 className="text-sm font-semibold">{prompt}</h3>
+                  <p className="mt-2 text-xs leading-5 text-slate-600">{preview.stageTypes.join(" -> ")}</p>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Active Workflows</h2>
+            <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-800">{workflows.length} sessions</span>
+          </div>
+          <div className="mt-4 space-y-4">
+            {workflows.map((workflow) => {
+              const summary = summarizeEliteAgentWorkflow(workflow);
+              return (
+                <article key={workflow.workflowSessionId} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-base font-semibold">{workflow.prompt}</h3>
+                      <p className="mt-1 text-xs text-slate-500">{workflow.workflowSessionId}</p>
+                      <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{workflow.deterministicSelectionReason}</p>
+                    </div>
+                    <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${statusClass(summary.status.toLowerCase())}`}>{summary.status}</span>
+                  </div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div><h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Current Stage</h4><p className="mt-1 text-sm text-slate-700">{summary.currentStage ?? "none"}</p></div>
+                    <div><h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Validation</h4><p className="mt-1 text-sm text-slate-700">{summary.validationCheckpoints.map((checkpoint) => `${checkpoint.stageType}: ${checkpoint.validationState}`).join(", ") || "not required"}</p></div>
+                    <div><h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Approval</h4><p className="mt-1 text-sm text-slate-700">{summary.approvalCheckpoints.map((checkpoint) => `${checkpoint.stageType}: ${checkpoint.approvalState}`).join(", ") || "not required"}</p></div>
+                    <div><h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Rollback</h4><p className="mt-1 text-sm text-slate-700">{summary.rollbackAvailable ? "available" : summary.rollbackPrepared ? "prepared" : "not available"}</p></div>
+                  </div>
+                  {summary.blockedStageReason && <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{summary.blockedStageReason}</p>}
+                  <ol className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                    {workflow.stages.map((stage) => (
+                      <li key={stage.stageId} className="rounded-md border border-slate-200 bg-white p-3 text-sm">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold">{stage.type}</span>
+                          <span className="text-xs text-slate-500">{stage.lifecycleState}</span>
+                        </div>
+                        <p className="mt-2 text-xs leading-5 text-slate-600">Mutation: {stage.mutationPermission}; Validation: {stage.validationState}; Approval: {stage.approvalState}</p>
+                      </li>
+                    ))}
+                  </ol>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-semibold">Stage Governance</h2>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {workflowStageDefinitions.map((definition) => (
+              <article key={definition.type} className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm">
+                <h3 className="font-semibold">{definition.type}</h3>
+                <p className="mt-2 text-xs leading-5 text-slate-600">Mutation: {definition.mutationPermission}; Validation required: {String(definition.validationRequired)}; Rollback support: {String(definition.rollbackSupported)}; External dependency: {String(definition.externalDependencyRequired)}</p>
+              </article>
+            ))}
+          </div>
+        </section>
 
         <section className="grid gap-4 lg:grid-cols-[1fr_1fr]">
           <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">

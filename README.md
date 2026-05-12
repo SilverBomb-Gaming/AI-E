@@ -2,6 +2,53 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_LITE_ELITE_AGENT_PHASE2_MULTI_STEP_SUPERVISED_WORKFLOWS
+
+AI-E-lite now has supervised multi-step workflow architecture for governed operational progression. This evolves the Phase 1 bounded local executor from a single scoped task into lifecycle-aware workflow sessions with deterministic stage chains, approval checkpoints, validation checkpoints, blocked-stage explanations, and rollback preparation metadata.
+
+What became real in this phase:
+
+- workflow session IDs for elite-agent workflow runs
+- ordered workflow stages with lifecycle states: `PENDING`, `APPROVED`, `RUNNING`, `VALIDATING`, `COMPLETED`, `FAILED`, `ROLLBACK_AVAILABLE`, and `BLOCKED`
+- structured stage categories: `READ_REPO_CONTEXT`, `PREPARE_PATCH`, `VALIDATE_PATCH`, `VERIFY_BUILD`, `GENERATE_REPORT`, `REQUEST_APPROVAL`, and `BLOCKED_EXTERNAL_DEPENDENCY`
+- per-stage approval state and validation state
+- partial workflow completion and blocked workflow tracking
+- rollback preparation fields: `rollbackAvailable`, `rollbackPrepared`, and `rollbackReason`
+- deterministic workflow generation through `web/lib/aie/eliteAgentWorkflowEngine.ts`
+- operator workflow visibility on `/operator/agents`
+
+Deterministic workflow examples:
+
+- `inspect the inventory system` -> `READ_REPO_CONTEXT` -> `GENERATE_REPORT`
+- `prepare a safe movement patch` -> `READ_REPO_CONTEXT` -> `PREPARE_PATCH` -> `REQUEST_APPROVAL`
+- `apply the patch automatically` -> `BLOCKED_EXTERNAL_DEPENDENCY`
+- `verify the latest gameplay patch` -> `VERIFY_BUILD` -> `VALIDATE_PATCH` -> `GENERATE_REPORT`
+
+Workflow lifecycle architecture:
+
+- mutation-capable stages require explicit approval before they can run
+- validation-required stages can enter `VALIDATING` and must receive validation success before completion
+- unsafe out-of-order stage transitions are rejected
+- blocked stages retain their blocked reason for operator review
+- rollback metadata is prepared for supported stages, but rollback execution remains operator-directed and is not automatic
+
+Current supervised_real boundaries:
+
+- AI-E-lite can model and advance supervised workflow state inside a bounded runtime contract
+- AI-E-lite can expose workflow summaries, logs, approval checkpoints, validation checkpoints, and rollback preparation markers
+- AI-E-lite does not gain unrestricted repo traversal, unrestricted shell execution, autonomous repo ownership, endless unattended execution, or self-directed coding authority
+- direct Unity editor control and automatic rollback execution remain outside this phase
+- commits and pushes remain operator/tooling actions outside the workflow engine
+
+Validation:
+
+```powershell
+cd web
+.\node_modules\.bin\tsx.cmd --test lib\aie\eliteAgentWorkflowEngine.test.ts
+.\node_modules\.bin\tsx.cmd --test lib\aie\liteEliteAgentRuntime.test.ts
+npm.cmd run build
+```
+
 ## AIE_LITE_ELITE_AGENT_PHASE1_BOUNDED_LOCAL_EXECUTOR
 
 AI-E now has the foundation for bounded local elite agents that can execute scoped tasks with file-safety and verification reporting.
