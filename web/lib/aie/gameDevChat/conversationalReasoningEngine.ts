@@ -1,5 +1,6 @@
 import type { GameDevChatRoute, GameDevSessionContext } from "./gameDevChatTypes";
 import { buildExecutionOwnershipMetadata, type ExecutionOwnershipMetadata } from "./executionIdentityEngine";
+import { selectSupervisedExecutionRoute, type SupervisedExecutionRouteSelection } from "./supervisedExecutionRoutes";
 
 export type ConversationalReasoningConfidence = "LOW" | "MEDIUM" | "HIGH";
 export type RuntimeAvailabilityStatus = "available_supervised" | "available_read_only" | "disabled_or_requires_approval" | "blocked_not_implemented" | "not_applicable";
@@ -29,7 +30,7 @@ export type GameplayFeedbackAnalysis = {
 };
 
 export type ConversationalReasoningResult = {
-  phaseId: "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1" | "DEEP_GAMEPLAY_REASONING_AND_DECOMPOSITION_PHASE1" | "BROADER_REASONING_COVERAGE_AND_SMART_FALLBACK_PHASE1" | "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1" | "INTERNAL_EXECUTION_AND_OPERATOR_OWNERSHIP_PHASE1";
+  phaseId: "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1" | "DEEP_GAMEPLAY_REASONING_AND_DECOMPOSITION_PHASE1" | "BROADER_REASONING_COVERAGE_AND_SMART_FALLBACK_PHASE1" | "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1" | "INTERNAL_EXECUTION_AND_OPERATOR_OWNERSHIP_PHASE1" | "SUPERVISED_REAL_EXECUTION_ROUTES_PHASE1_FOUNDATION";
   inferredIntent: string;
   probableUserGoal: string;
   confidence: ConversationalReasoningConfidence;
@@ -55,6 +56,7 @@ export type ConversationalReasoningResult = {
     blocked: string[];
   };
   executionOwnership: ExecutionOwnershipMetadata;
+  executionRoute: SupervisedExecutionRouteSelection;
   runtimeAwareness: {
     runtimeAvailability: RuntimeAvailabilityStatus;
     realCapabilities: string[];
@@ -798,7 +800,7 @@ function realCapabilitiesFor(route: GameDevChatRoute, subsystem?: ReasoningInput
 }
 
 function isRuntimeIntrospectionRequest(message: string): boolean {
-  return /\b(what is real|what can you actually do|what can you actually do right now|can ai-e execute repo work itself|runtime capabilities.*real|runtime state|what is scaffolded|what still depends on (copilot|codex|external tools|external tooling)|what still requires external tooling|what is still blocked|what.*blocked|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
+  return /\b(what is real|what can you actually do|what can you actually do right now|can ai-e execute repo work itself|can ai-e modify files directly|execute repo work without approval|runtime capabilities.*real|runtime state|what is scaffolded|what still depends on (copilot|codex|external tools|external tooling)|what still requires external tooling|what is still blocked|what.*blocked|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
 }
 
 function runtimeIntrospectionKind(message: string): NonNullable<ConversationalReasoningResult["runtimeIntrospection"]>["kind"] {
@@ -806,7 +808,7 @@ function runtimeIntrospectionKind(message: string): NonNullable<ConversationalRe
   if (/depends on (copilot|codex|external tools|external tooling)|requires external tooling/.test(lower)) {
     return "external_dependency_query";
   }
-  if (/blocked|missing|unavailable/.test(lower)) {
+  if (/blocked|missing|unavailable|without approval|modify files directly/.test(lower)) {
     return "blocked_capability_query";
   }
   if (/what is real|what can you actually do|can ai-e execute repo work itself|runtime capabilities.*real/.test(lower)) {
@@ -852,6 +854,9 @@ function missingCapabilityExplanation(message: string, runtimeAvailability: Runt
   if (/run unity|open unity|control unity|playtest in unity|unity editor/.test(lower)) {
     return "Unity Editor control is not implemented in this operator chat workflow. Making it real would require a trusted editor automation bridge, project-lock handling, scene/playmode validation hooks, and explicit operator approval gates.";
   }
+  if (/without approval|apply .*automatically|modify files directly|edit files directly/.test(lower)) {
+    return "Direct mutation without approval is blocked. AI-E can prepare a supervised execution contract, but patch application requires explicit operator approval, allowed paths, rollback availability, and trusted runtime validation.";
+  }
   if (/overnight|unattended|hands[- ]off|autonomous_real|do everything/.test(lower)) {
     return "Unattended or autonomous_real operation is intentionally unavailable. Current execution remains bounded, supervised, and approval-gated, so long-running or overnight claims require measured runs and explicit operator supervision.";
   }
@@ -895,6 +900,7 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
   const realCapabilities = realCapabilitiesFor(route, input.subsystem);
   const runtimeIntrospection = runtimeIntrospectionFor(message, realCapabilities, blockedCapabilities);
   const executionOwnership = buildExecutionOwnershipMetadata({ message, route, subsystem: input.subsystem, runtimeIntrospectionKind: runtimeIntrospection?.kind });
+  const executionRoute = selectSupervisedExecutionRoute({ message, route, subsystem: input.subsystem });
   const ambiguity = [
     route.confidence === "LOW" ? "Route confidence is low; the user may need to name the target system or desired action." : undefined,
     route.needsClarification ? "The request lacks enough detail to safely choose an implementation path." : undefined,
@@ -913,6 +919,10 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
     ? "Ask one precise clarification before planning or execution."
     : runtimeIntrospection
       ? "Use the real/bounded/external/blocked breakdown to choose either a planning-only answer or an explicitly approved runtime workflow."
+    : executionRoute.contract.executionStatus === "blocked_requires_approval"
+      ? "Ask for a supervised execution contract with explicit approval, allowed paths, rollback, and validation before any patch application."
+    : executionRoute.contract.executionStatus === "blocked_external_dependency"
+      ? "Use a planning-only response or create an approved external bridge/runtime route before claiming validation or mutation."
     : runtimeAvailability === "blocked_not_implemented"
       ? "Use the closest supported supervised repo workflow or ask for a planning-only Unity handoff."
       : route.conversationMode === "OPERATOR_WORK_CYCLE_REQUEST"
@@ -925,9 +935,10 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
   const decomposition = runtimeIntrospection
     ? ["real capabilities", "bounded/supervised capabilities", "external tool dependencies", "blocked capabilities"]
     : decompositionFor(message, route, gameplayFeedback);
+  const routeFoundationActive = executionRoute.routeType !== "CONVERSATIONAL_ONLY";
 
   return {
-    phaseId: executionOwnership.kind !== "bounded_internal_workflow" || route.conversationMode === "OPERATOR_WORK_CYCLE_REQUEST" || route.conversationMode === "SCOPED_EXECUTION_REQUEST" || route.mode === "CODEX_HANDOFF_REQUEST" ? "INTERNAL_EXECUTION_AND_OPERATOR_OWNERSHIP_PHASE1" : gameplayFeedback ? "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1" : "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1",
+    phaseId: routeFoundationActive ? "SUPERVISED_REAL_EXECUTION_ROUTES_PHASE1_FOUNDATION" : executionOwnership.kind !== "bounded_internal_workflow" || route.conversationMode === "OPERATOR_WORK_CYCLE_REQUEST" || route.conversationMode === "SCOPED_EXECUTION_REQUEST" || route.mode === "CODEX_HANDOFF_REQUEST" ? "INTERNAL_EXECUTION_AND_OPERATOR_OWNERSHIP_PHASE1" : gameplayFeedback ? "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1" : "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1",
     inferredIntent: runtimeIntrospection ? "Runtime Introspection" : route.detectedIntent,
     probableUserGoal: gameplayFeedback ? `analyze ${gameplayFeedback.label} feedback into causes, levers, questions, and validation` : probableGoalFor(message, route),
     confidence: route.confidence,
@@ -940,6 +951,7 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
       routeRationale,
       `Context importance: ${contextImportance}.`,
       `Runtime availability: ${runtimeAvailability}.`,
+      `Execution route: ${executionRoute.routeType} (${executionRoute.contract.executionStatus}).`,
       missing ?? "No missing runtime capability was required for the prepared response.",
     ],
     dynamicDecomposition: decomposition,
@@ -952,6 +964,7 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
     gameplayFeedback,
     runtimeIntrospection,
     executionOwnership,
+    executionRoute,
     runtimeAwareness: {
       runtimeAvailability,
       realCapabilities,
@@ -970,18 +983,25 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
 }
 
 export function formatReasoningPreface(reasoning: ConversationalReasoningResult): string {
+  const approvalBoundary = reasoning.executionRoute.contract.approvalStatus === "blocked_missing_approval"
+    ? "Approval boundary: Patch application would still require explicit approval before any mutation."
+    : undefined;
   if (reasoning.runtimeIntrospection) {
     return [
       `Runtime introspection: ${reasoning.runtimeIntrospection.label}.`,
       `Execution owner: ${reasoning.executionOwnership.ownerLabel} (${reasoning.executionOwnership.workflowType}).`,
+      `Execution route: ${reasoning.executionRoute.routeType}; approval ${reasoning.executionRoute.contract.approvalStatus}; mutation ${reasoning.executionRoute.contract.mutationAllowed ? "allowed" : "not allowed"}; validation ${reasoning.executionRoute.contract.validationRequired ? "required" : "not required"}.`,
+      approvalBoundary,
       "Capability breakdown: real capabilities, bounded/supervised capabilities, external dependencies, and blocked capabilities.",
       `Runtime note: ${reasoning.limitationExplanation}`,
       `Next useful step: ${reasoning.nextUsefulStep}`,
-    ].join("\n");
+    ].filter(Boolean).join("\n");
   }
   return [
     `Reasoning summary: I read this as ${reasoning.probableUserGoal}.`,
     `Execution owner: ${reasoning.executionOwnership.ownerLabel} (${reasoning.executionOwnership.workflowType}).`,
+    `Execution route: ${reasoning.executionRoute.routeType}; approval ${reasoning.executionRoute.contract.approvalStatus}; mutation ${reasoning.executionRoute.contract.mutationAllowed ? "allowed" : "not allowed"}; validation ${reasoning.executionRoute.contract.validationRequired ? "required" : "not required"}.`,
+    approvalBoundary,
     `Why this route: ${reasoning.routeRationale}`,
     reasoning.ambiguity.length > 0 ? `Uncertainty: ${reasoning.ambiguity.join(" ")}` : undefined,
     `Runtime note: ${reasoning.limitationExplanation}`,

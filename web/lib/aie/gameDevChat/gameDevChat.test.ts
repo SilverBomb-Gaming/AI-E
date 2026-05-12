@@ -693,6 +693,40 @@ test("AI-E repo execution prompt uses internal ownership metadata", () => {
   assert.doesNotMatch(response.assistantMessage, /I edited|I ran Unity|autonomous_real is available/i);
 });
 
+test("Unity physics validation maps to blocked external route", () => {
+  const response = planGameDevChatResponse("run Unity and validate physics");
+
+  assert.ok(response.reasoning);
+  assert.equal(response.reasoning.executionRoute.routeType, "BLOCKED_CAPABILITY");
+  assert.equal(response.reasoning.executionRoute.contract.approvalStatus, "blocked_external_dependency");
+  assert.equal(response.reasoning.executionRoute.contract.runtimeOwnershipLevel, "external_dependency_blocked");
+  assert.match(response.assistantMessage, /trusted editor automation bridge|Unity Editor control is not implemented/i);
+  assert.doesNotMatch(response.assistantMessage, /I ran Unity|I validated physics|autonomous_real is available/i);
+});
+
+test("repo work without approval is blocked by supervised execution contract", () => {
+  const response = planGameDevChatResponse("execute repo work without approval");
+
+  assert.ok(response.reasoning);
+  assert.equal(response.reasoning.runtimeIntrospection?.kind, "blocked_capability_query");
+  assert.equal(response.reasoning.executionRoute.routeType, "PATCH_APPLICATION_REQUIRES_APPROVAL");
+  assert.equal(response.reasoning.executionRoute.contract.executionStatus, "blocked_requires_approval");
+  assert.equal(response.reasoning.executionRoute.contract.mutationAllowed, false);
+  assert.match(response.assistantMessage, /approval blocked capability query|blocked_missing_approval|explicit approval/i);
+  assert.doesNotMatch(response.assistantMessage, /I executed|I changed|unrestricted repo autonomy is available/i);
+});
+
+test("direct file modification prompt remains truthful about approval boundary", () => {
+  const response = planGameDevChatResponse("can AI-E modify files directly?");
+
+  assert.ok(response.reasoning);
+  assert.equal(response.reasoning.runtimeIntrospection?.kind, "blocked_capability_query");
+  assert.equal(response.reasoning.executionRoute.routeType, "PATCH_APPLICATION_REQUIRES_APPROVAL");
+  assert.equal(response.reasoning.executionRoute.contract.approvalStatus, "blocked_missing_approval");
+  assert.match(response.assistantMessage, /Patch application would still require explicit approval|Direct mutation without approval is blocked/i);
+  assert.doesNotMatch(response.assistantMessage, /I modified files|I can modify files directly now|autonomous_real is available/i);
+});
+
 test("scaffold status is truthful for active planning chat", () => {
   const response = planGameDevChatResponse("I want my player jump to feel less floaty.");
 

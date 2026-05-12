@@ -667,6 +667,9 @@ function formatResponse(message: string, route: GameDevChatRoute, includeHandoff
   }
 
   const bullets = dynamicReasoningBullets(message, route, reasoning).map((entry) => `- ${entry}`).join("\n");
+  const executionRouteLine = reasoning.executionRoute.routeType === "CONVERSATIONAL_ONLY"
+    ? "This remains conversational planning; no supervised execution contract was prepared."
+    : `This request maps to a bounded supervised execution route: ${reasoning.executionRoute.routeType}. AI-E can prepare a supervised execution contract; patch application would still require explicit approval, and validation requires an approved runtime route.`;
   const handoffLine = includeHandoff
     ? "I prepared an AI-E supervised execution brief below. It is a brief only; chat did not edit files, run Unity, or execute an implementation path."
     : "If you want implementation, I can prepare an AI-E supervised execution brief that names exactly what to inspect and how to validate it before an approved implementation path acts.";
@@ -676,6 +679,8 @@ function formatResponse(message: string, route: GameDevChatRoute, includeHandoff
     "",
     bullets,
     "",
+    executionRouteLine,
+    "",
     clarificationFor(message, route),
     "",
     handoffLine,
@@ -683,7 +688,7 @@ function formatResponse(message: string, route: GameDevChatRoute, includeHandoff
 }
 
 function isRuntimeIntrospectionRequest(message: string): boolean {
-  return /\b(what is real|what can you actually do|what can you actually do right now|can ai-e execute repo work itself|runtime capabilities.*real|runtime state|what is scaffolded|what still depends on (copilot|codex|external tools|external tooling)|what still requires external tooling|what is still blocked|what.*blocked|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
+  return /\b(what is real|what can you actually do|what can you actually do right now|can ai-e execute repo work itself|can ai-e modify files directly|execute repo work without approval|runtime capabilities.*real|runtime state|what is scaffolded|what still depends on (copilot|codex|external tools|external tooling)|what still requires external tooling|what is still blocked|what.*blocked|why did .*workflow|what subsystem|explain your runtime|capability is missing)\b/i.test(message);
 }
 
 function isUnityRuntimeBlockedRequest(message: string): boolean {

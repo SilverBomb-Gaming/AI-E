@@ -430,6 +430,12 @@ export function GameDevChatClient() {
                               <p><span className="font-semibold text-zinc-100">Ownership:</span> {message.reasoning.executionOwnership.kind}</p>
                               <p><span className="font-semibold text-zinc-100">Workflow:</span> {message.reasoning.executionOwnership.workflowType}</p>
                               <p><span className="font-semibold text-zinc-100">Approval:</span> {message.reasoning.executionOwnership.approvalRequirement}</p>
+                              <p><span className="font-semibold text-zinc-100">Execution Route:</span> {message.reasoning.executionRoute.routeType}</p>
+                              <p><span className="font-semibold text-zinc-100">Approval Status:</span> {message.reasoning.executionRoute.contract.approvalStatus}</p>
+                              <p><span className="font-semibold text-zinc-100">Mutation Permission:</span> {message.reasoning.executionRoute.contract.mutationAllowed ? "allowed" : "not allowed"}</p>
+                              <p><span className="font-semibold text-zinc-100">Validation Requirement:</span> {message.reasoning.executionRoute.contract.validationRequired ? "required" : "not required"}</p>
+                              <p><span className="font-semibold text-zinc-100">Rollback Availability:</span> {message.reasoning.executionRoute.contract.rollbackAvailable ? "available" : "not available"}</p>
+                              <p><span className="font-semibold text-zinc-100">Runtime Ownership Level:</span> {message.reasoning.executionRoute.contract.runtimeOwnershipLevel}</p>
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Mutation Scope:</span> {message.reasoning.executionOwnership.mutationScope}</p>
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Validation Scope:</span> {message.reasoning.executionOwnership.validationScope}</p>
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Dependency:</span> {message.reasoning.executionOwnership.dependencyExplanation}</p>
@@ -457,6 +463,12 @@ export function GameDevChatClient() {
                               <p><span className="font-semibold text-zinc-100">Ownership:</span> {message.reasoning.executionOwnership.kind}</p>
                               <p><span className="font-semibold text-zinc-100">Workflow:</span> {message.reasoning.executionOwnership.workflowType}</p>
                               <p><span className="font-semibold text-zinc-100">Approval:</span> {message.reasoning.executionOwnership.approvalRequirement}</p>
+                              <p><span className="font-semibold text-zinc-100">Execution Route:</span> {message.reasoning.executionRoute.routeType}</p>
+                              <p><span className="font-semibold text-zinc-100">Approval Status:</span> {message.reasoning.executionRoute.contract.approvalStatus}</p>
+                              <p><span className="font-semibold text-zinc-100">Mutation Permission:</span> {message.reasoning.executionRoute.contract.mutationAllowed ? "allowed" : "not allowed"}</p>
+                              <p><span className="font-semibold text-zinc-100">Validation Requirement:</span> {message.reasoning.executionRoute.contract.validationRequired ? "required" : "not required"}</p>
+                              <p><span className="font-semibold text-zinc-100">Rollback Availability:</span> {message.reasoning.executionRoute.contract.rollbackAvailable ? "available" : "not available"}</p>
+                              <p><span className="font-semibold text-zinc-100">Runtime Ownership Level:</span> {message.reasoning.executionRoute.contract.runtimeOwnershipLevel}</p>
                               {message.reasoning.inferredFeedbackCategory && <p><span className="font-semibold text-zinc-100">Feedback Category:</span> {message.reasoning.inferredFeedbackCategory}</p>}
                               {message.reasoning.categoryMatchKind && <p><span className="font-semibold text-zinc-100">Match:</span> {message.reasoning.categoryMatchKind}</p>}
                               {message.reasoning.matchedPhraseFamily && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Phrase Family:</span> {message.reasoning.matchedPhraseFamily}</p>}

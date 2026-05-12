@@ -114,3 +114,35 @@ test("external tooling prompts expose execution ownership dependency metadata", 
   assert.match(response.assistantMessage, /Execution owner: AI-E Supervised Runtime/);
   assert.match(response.assistantMessage, /Broad code-writing outside approved AI-E supervised workflow lanes/);
 });
+
+test("inspection request maps to read-only supervised execution route contract", () => {
+  const response = planGameDevChatResponse("inspect the inventory system");
+
+  assert.ok(response.reasoning);
+  assert.equal(response.reasoning.phaseId, "SUPERVISED_REAL_EXECUTION_ROUTES_PHASE1_FOUNDATION");
+  assert.equal(response.reasoning.executionRoute.routeType, "READ_ONLY_INSPECTION");
+  assert.equal(response.reasoning.executionRoute.contract.mutationAllowed, false);
+  assert.equal(response.reasoning.executionRoute.contract.approvalStatus, "pending");
+  assert.match(response.assistantMessage, /Execution route: READ_ONLY_INSPECTION/);
+});
+
+test("patch preparation request creates non-mutating supervised contract", () => {
+  const response = planGameDevChatResponse("prepare a safe movement patch");
+
+  assert.ok(response.reasoning);
+  assert.equal(response.reasoning.executionRoute.routeType, "PATCH_PREPARATION");
+  assert.equal(response.reasoning.executionRoute.contract.mutationAllowed, false);
+  assert.equal(response.reasoning.executionRoute.contract.executionStatus, "candidate_prepared");
+  assert.match(response.assistantMessage, /AI-E can prepare a supervised execution contract/);
+});
+
+test("automatic patch application remains blocked on approval contract", () => {
+  const response = planGameDevChatResponse("apply the patch automatically");
+
+  assert.ok(response.reasoning);
+  assert.equal(response.reasoning.executionRoute.routeType, "PATCH_APPLICATION_REQUIRES_APPROVAL");
+  assert.equal(response.reasoning.executionRoute.contract.approvalStatus, "blocked_missing_approval");
+  assert.equal(response.reasoning.executionRoute.contract.rollbackAvailable, true);
+  assert.match(response.assistantMessage, /patch application would still require explicit approval/i);
+  assert.doesNotMatch(response.assistantMessage, /I applied|I modified files|autonomous_real is available/i);
+});
