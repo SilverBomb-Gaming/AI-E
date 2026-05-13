@@ -72,6 +72,48 @@ AI-E should not just show a status badge. It should say what is happening, why i
 
 Look for `Next Recommended Action` first. It tells you whether to run the workflow, request approval, run validation, resume, inspect results, or resolve a blocker.
 
+## Blocked Workflow Recovery
+
+### Engineering Explanation
+
+Blocked workflows now expose recovery guidance derived from the workflow state. The card identifies the blocker, the safety rule, a safe alternative, context-aware recovery actions, and the condition required before continuation. This is guidance and workflow conversion only; it does not add automatic patch application, unrestricted repo mutation, shell execution, Unity execution, or unattended operation.
+
+### YouTuber Explanation
+
+The upgrade is simple: AI-E stops unsafe work and then immediately points to the safe way forward.
+
+### User Explanation
+
+If AI-E blocks a request, use `Safe Recovery Path`. It shows why the workflow stopped and offers buttons such as `Prepare Safe Patch Instead`, `Request Approval`, or `Explain Blocker`.
+
+## Safe Workflow Conversion
+
+### Engineering Explanation
+
+Unsafe automatic mutation requests can be converted into a safe patch-preparation workflow. The original blocked workflow remains visible, the new workflow starts as a supervised `READ_REPO_CONTEXT` -> `PREPARE_PATCH` -> `REQUEST_APPROVAL` chain, and no patch is applied during conversion.
+
+### YouTuber Explanation
+
+Instead of pretending it can auto-apply code, AI-E can turn the request into: make the patch plan first, then wait for approval.
+
+### User Explanation
+
+Click `Prepare Safe Patch Instead` when automatic application is blocked. AI-E creates a safe patch workflow you can review before any approval-gated application step.
+
+## Improved Blocker Explanations
+
+### Engineering Explanation
+
+`Explain Blocker` now answers four questions: why the workflow blocked, which safety rule triggered, what safe alternative exists, and what must happen before proceeding.
+
+### YouTuber Explanation
+
+The blocker explanation is no longer a dead end. It tells the operator the reason, the rule, the safer path, and the approval requirement.
+
+### User Explanation
+
+Use `Explain Blocker` when you need the plain-language reason and the next safe step.
+
 ## Workflow Assistant Summaries
 
 ### Engineering Explanation

@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   advanceEliteAgentWorkflow,
+  buildEliteAgentBlockedWorkflowRecoveryGuidance,
   buildEliteAgentWorkflowSession,
+  convertBlockedWorkflowToSafePatchPreparation,
   listEliteAgentWorkflowStageDefinitions,
   markEliteAgentWorkflowValidation,
   resumeEliteAgentWorkflow,
@@ -35,6 +37,33 @@ test("deterministic workflow generation blocks automatic patch application until
   assert.deepEqual(session.stages.map((stage) => stage.type), ["BLOCKED_EXTERNAL_DEPENDENCY"]);
   assert.equal(session.status, "BLOCKED");
   assert.match(session.blockedStageReason ?? "", /approval|runtime route/i);
+});
+
+test("blocked automatic patch workflows expose safe recovery guidance", () => {
+  const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "apply the patch automatically" });
+  const guidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(session);
+
+  assert.equal(guidance?.title, "Safe Recovery Path");
+  assert.equal(guidance?.kind, "automatic_patch_application");
+  assert.match(guidance?.blockedExplanation ?? "", /Blocked:/);
+  assert.match(guidance?.safetyRuleTriggered ?? "", /Automatic file mutation requires/i);
+  assert.match(guidance?.safeAlternative ?? "", /Prepare the patch first/i);
+  assert.deepEqual(guidance?.actions.map((action) => action.label), [
+    "Prepare Safe Patch Instead",
+    "Request Approval",
+    "Explain Blocker",
+  ]);
+});
+
+test("blocked automatic patch workflows convert to safe patch preparation without applying", () => {
+  const blocked = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "apply the patch automatically" });
+  const safe = convertBlockedWorkflowToSafePatchPreparation(blocked, { now: "2026-05-12T12:14:00.000Z" });
+
+  assert.equal(blocked.status, "BLOCKED");
+  assert.deepEqual(safe.stages.map((stage) => stage.type), ["READ_REPO_CONTEXT", "PREPARE_PATCH", "REQUEST_APPROVAL"]);
+  assert.equal(safe.status, "PENDING");
+  assert.match(safe.deterministicSelectionReason, /original blocked workflow remains visible and no patch was applied/i);
+  assert.doesNotMatch(safe.deterministicSelectionReason, /applied successfully|executed/i);
 });
 
 test("deterministic workflow generation maps verification prompts to verify validate report", () => {

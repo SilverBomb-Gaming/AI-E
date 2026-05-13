@@ -4,13 +4,16 @@ import { FormEvent, useState } from "react";
 import type { LiteEliteRunResult } from "@/lib/aie/liteEliteAgentRuntime";
 import {
   advanceEliteAgentWorkflow,
+  buildEliteAgentBlockedWorkflowRecoveryGuidance,
   buildEliteAgentWorkflowSession,
+  convertBlockedWorkflowToSafePatchPreparation,
   listEliteAgentWorkflowStageDefinitions,
   markEliteAgentWorkflowValidation,
   resumeEliteAgentWorkflow,
   summarizeEliteAgentWorkflow,
   type EliteAgentWorkflowSession,
   type EliteAgentWorkflowStage,
+  type EliteAgentBlockedWorkflowRecoveryActionId,
 } from "@/lib/aie/eliteAgentWorkflowEngine";
 import {
   createAgentWorkflowHistoryStore,
@@ -166,11 +169,12 @@ function buildWorkflow(prompt: string): EliteAgentWorkflowSession {
 
 function workflowAssistantSummary(workflow: EliteAgentWorkflowSession): string {
   const summary = summarizeEliteAgentWorkflow(workflow);
+  const recoveryGuidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow);
   const stage = currentStage(workflow);
   const isReadOnly = workflow.stages.every((entry) => entry.mutationPermission !== "MUTATION_REQUIRES_APPROVAL");
   const approval = firstPendingApproval(workflow);
   if (summary.status === "BLOCKED") {
-    return `This workflow is blocked before it can continue. ${summary.blockedStageReason ?? "A governance requirement or external dependency is missing."}`;
+    return `${recoveryGuidance?.blockedExplanation ?? `This workflow is blocked before it can continue. ${summary.blockedStageReason ?? "A governance requirement or external dependency is missing."}`} Safe next step: ${recoveryGuidance?.safeAlternative ?? "Resolve the blocker before continuing."}`;
   }
   if (summary.status === "COMPLETED") {
     return `This workflow completed all ${workflow.stages.length} planned steps. Review the summary or start another workflow.`;
@@ -203,6 +207,7 @@ function workflowCreationSummary(workflow: EliteAgentWorkflowSession): string {
 
 function nextRecommendedAction(workflow: EliteAgentWorkflowSession): string {
   const summary = summarizeEliteAgentWorkflow(workflow);
+  const recoveryGuidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow);
   const stage = currentStage(workflow);
   if (summary.status === "COMPLETED") {
     return "Inspect results, start another workflow, or review technical details.";
@@ -211,10 +216,7 @@ function nextRecommendedAction(workflow: EliteAgentWorkflowSession): string {
     return `Resume the workflow from ${stageLabel(summary.resumeFromStage ?? summary.currentStage).toLowerCase()}.`;
   }
   if (summary.status === "BLOCKED") {
-    if (firstPendingApproval(workflow) || /approval/i.test(summary.blockedStageReason ?? "")) {
-      return "Approval is required before execution can continue.";
-    }
-    return "Review the blocker and resolve the missing dependency before continuing.";
+    return recoveryGuidance?.suggestedRecovery ?? "Review the blocker and resolve the missing dependency before continuing.";
   }
   if (firstPendingValidation(workflow)) {
     return "Run validation to verify the workflow result.";
@@ -248,6 +250,7 @@ function resumeUnavailableReason(workflow: EliteAgentWorkflowSession): string | 
 
 function primaryActionLabel(workflow: EliteAgentWorkflowSession): string {
   const summary = summarizeEliteAgentWorkflow(workflow);
+  const recoveryGuidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow);
   if (summary.resumeEligible) {
     return "Resume Workflow";
   }
@@ -258,7 +261,7 @@ function primaryActionLabel(workflow: EliteAgentWorkflowSession): string {
     return "Run Validation";
   }
   if (summary.status === "BLOCKED") {
-    return "Explain Blocker";
+    return recoveryGuidance?.actions[0]?.label ?? "Explain Blocker";
   }
   if (summary.status === "COMPLETED") {
     return "Inspect Summary";
@@ -295,6 +298,14 @@ function ActionButton({ label, onClick, disabled, primary }: { label: string; on
       {label}
     </button>
   );
+}
+
+function blockerExplanation(workflow: EliteAgentWorkflowSession): string {
+  const guidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow);
+  if (!guidance) {
+    return "This workflow is not currently blocked.";
+  }
+  return `${guidance.blockedExplanation} Safety rule: ${guidance.safetyRuleTriggered} Safe alternative: ${guidance.safeAlternative} Before proceeding: ${guidance.beforeProceeding}`;
 }
 
 export function EliteAgentClient() {
@@ -448,6 +459,33 @@ export function EliteAgentClient() {
     }
   }
 
+  function handleRecoveryAction(workflow: EliteAgentWorkflowSession, actionId: EliteAgentBlockedWorkflowRecoveryActionId) {
+    const guidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow);
+    if (!guidance) {
+      setAgentReply("This workflow is not blocked, so no recovery path is needed right now.");
+      return;
+    }
+    if (actionId === "PREPARE_SAFE_PATCH_INSTEAD" || actionId === "CONVERT_TO_SAFE_PLANNING_WORKFLOW") {
+      const safeWorkflow = convertBlockedWorkflowToSafePatchPreparation(workflow, { now: new Date().toISOString() });
+      upsertWorkflow(safeWorkflow);
+      setAgentReply(`Created a safe patch preparation workflow. The original blocked workflow remains visible, automatic application remains blocked, and no patch was applied. Next recommended action: ${nextRecommendedAction(safeWorkflow)}`);
+      return;
+    }
+    if (actionId === "REQUEST_APPROVAL") {
+      setAgentReply(`${guidance.beforeProceeding} Approval must be recorded through an approved operator route before any mutation-capable application can continue. Automatic execution remains blocked here.`);
+      return;
+    }
+    if (actionId === "SHOW_REQUIRED_RUNTIME") {
+      setAgentReply(`${guidance.safetyRuleTriggered} Required route: ${guidance.beforeProceeding}`);
+      return;
+    }
+    if (actionId === "REVIEW_SCOPE") {
+      setAgentReply(`Review scope before continuing. Allowed paths: ${workflow.allowedPaths.join(", ") || "none"}. Blocked paths: ${workflow.forbiddenPaths.join(", ") || "none"}. ${guidance.beforeProceeding}`);
+      return;
+    }
+    setAgentReply(blockerExplanation(workflow));
+  }
+
   const latestRun = result?.summary;
   const recentHistory = listRecentAgentWorkflows(historyStore, 4);
   const failedHistory = listFailedAgentWorkflows(historyStore);
@@ -519,6 +557,7 @@ export function EliteAgentClient() {
           <section className="grid gap-4 lg:grid-cols-2">
             {workflows.map((workflow) => {
               const summary = summarizeEliteAgentWorkflow(workflow);
+              const recoveryGuidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow);
               const isSelected = selectedWorkflow?.workflowSessionId === workflow.workflowSessionId;
               const showSummary = summaryWorkflowId === workflow.workflowSessionId;
               const canResume = summary.resumeEligible;
@@ -564,6 +603,27 @@ export function EliteAgentClient() {
                     <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-300/30 dark:bg-amber-400/10 dark:text-amber-100">{summary.blockedStageReason}</p>
                   )}
 
+                  {recoveryGuidance && (
+                    <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-300/30 dark:bg-emerald-400/10">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-800 dark:text-emerald-100">{recoveryGuidance.title}</p>
+                      <div className="mt-3 space-y-2 text-sm leading-6 text-emerald-950 dark:text-emerald-100">
+                        <p><span className="font-semibold">Why blocked:</span> {recoveryGuidance.blockedExplanation}</p>
+                        <p><span className="font-semibold">Safe next step:</span> {recoveryGuidance.safeAlternative}</p>
+                        <p><span className="font-semibold">Before proceeding:</span> {recoveryGuidance.beforeProceeding}</p>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {recoveryGuidance.actions.map((action) => (
+                          <ActionButton key={action.id} label={action.label} onClick={() => handleRecoveryAction(workflow, action.id)} primary={primary === action.label} />
+                        ))}
+                      </div>
+                      <details className="mt-3 text-sm text-emerald-950 dark:text-emerald-100">
+                        <summary className="cursor-pointer font-semibold">Recovery Technical Details</summary>
+                        <p className="mt-2 leading-6">Safety rule: {recoveryGuidance.safetyRuleTriggered}</p>
+                        <p className="mt-1 leading-6">{recoveryGuidance.technicalDetail}</p>
+                      </details>
+                    </div>
+                  )}
+
                   <div className="mt-4 flex flex-wrap gap-2">
                     <ActionButton label="Run Workflow" onClick={() => runWorkflow(workflow)} primary={primary === "Run Workflow"} disabled={runDisabled} />
                     <ActionButton label="Resume Workflow" onClick={() => resumeWorkflow(workflow)} disabled={!canResume} primary={primary === "Resume Workflow"} />
@@ -573,7 +633,7 @@ export function EliteAgentClient() {
                     {!canResume && summary.status !== "COMPLETED" && summary.status !== "BLOCKED" && <ActionButton label="Save for Resume" onClick={() => saveForResume(workflow)} />}
                     <ActionButton label="Inspect" onClick={() => setSelectedWorkflowId(workflow.workflowSessionId)} />
                     <ActionButton label={showSummary ? "Hide Summary" : "Inspect Summary"} onClick={() => setSummaryWorkflowId(showSummary ? null : workflow.workflowSessionId)} primary={primary === "Inspect Summary"} />
-                    {summary.blockedStageReason && <ActionButton label="Explain Blocker" onClick={() => setAgentReply(`${summary.blockedStageReason} Next recommended action: ${nextRecommendedAction(workflow)}`)} primary={primary === "Explain Blocker"} />}
+                    {summary.blockedStageReason && !recoveryGuidance && <ActionButton label="Explain Blocker" onClick={() => setAgentReply(blockerExplanation(workflow))} primary={primary === "Explain Blocker"} />}
                     {needsApproval && <ActionButton label="Request Approval" onClick={() => requestApproval(workflow)} primary={primary === "Request Approval"} />}
                   </div>
 

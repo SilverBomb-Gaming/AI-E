@@ -1,4 +1,5 @@
 import {
+  buildEliteAgentBlockedWorkflowRecoveryGuidance,
   resumeEliteAgentWorkflow,
   summarizeEliteAgentWorkflow,
   type EliteAgentWorkflowApprovalState,
@@ -112,6 +113,7 @@ function buildOperationalSummary(session: EliteAgentWorkflowSession, summary: El
     .map((stage) => `${stage.type}: ${stage.blockedReason}`);
   const validationResults = summary.validationCheckpoints.map((checkpoint) => `${checkpoint.stageType}: ${checkpoint.validationState}`);
   const approvals = summary.approvalCheckpoints.map((checkpoint) => `${checkpoint.stageType}: ${checkpoint.approvalState}`);
+  const recoveryGuidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(session);
   const remainingSteps = session.stages
     .filter((stage) => stage.lifecycleState !== "COMPLETED")
     .map((stage) => stage.type);
@@ -129,7 +131,7 @@ function buildOperationalSummary(session: EliteAgentWorkflowSession, summary: El
     resumeGuidance: summary.resumeEligible && summary.resumeFromStage
       ? `This workflow can be resumed from the ${summary.resumeFromStage} stage.`
       : session.status === "BLOCKED"
-        ? "This workflow remains blocked until the recorded blocker is resolved."
+        ? `This workflow remains blocked until the recorded blocker is resolved. Suggested recovery: ${recoveryGuidance?.suggestedRecovery ?? "Prepare a safe patch workflow or request approval."}`
         : session.status === "INTERRUPTED"
           ? "This workflow was interrupted and requires operator review before it can become resumable."
           : "This workflow is not currently resumable.",

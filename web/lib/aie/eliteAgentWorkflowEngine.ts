@@ -116,6 +116,32 @@ export type EliteAgentWorkflowSummary = {
   truthfulCapabilityBoundary: string;
 };
 
+export type EliteAgentBlockedWorkflowRecoveryKind = "automatic_patch_application" | "external_runtime_dependency" | "missing_approval" | "general_blocker";
+
+export type EliteAgentBlockedWorkflowRecoveryActionId =
+  | "PREPARE_SAFE_PATCH_INSTEAD"
+  | "REQUEST_APPROVAL"
+  | "EXPLAIN_BLOCKER"
+  | "SHOW_REQUIRED_RUNTIME"
+  | "CONVERT_TO_SAFE_PLANNING_WORKFLOW"
+  | "REVIEW_SCOPE";
+
+export type EliteAgentBlockedWorkflowRecoveryGuidance = {
+  kind: EliteAgentBlockedWorkflowRecoveryKind;
+  title: "Safe Recovery Path";
+  blockedExplanation: string;
+  safetyRuleTriggered: string;
+  safeAlternative: string;
+  beforeProceeding: string;
+  suggestedRecovery: string;
+  actions: Array<{
+    id: EliteAgentBlockedWorkflowRecoveryActionId;
+    label: string;
+    description: string;
+  }>;
+  technicalDetail: string;
+};
+
 const TRUTHFUL_WORKFLOW_BOUNDARY = "AI-E-lite Phase 3 provides supervised multi-step workflow continuity with bounded paths, approval checkpoints, validation checkpoints, resumable state tracking, and rollback preparation. It does not provide unrestricted repo control or unattended operation.";
 
 const DEFAULT_FORBIDDEN_PATHS = [".git", "node_modules", "web/node_modules", ".env", "web/.env", "package-lock.json"];
@@ -238,6 +264,16 @@ function selectWorkflowStageTypes(prompt: string): { stageTypes: EliteAgentWorkf
     stageTypes: ["READ_REPO_CONTEXT", "GENERATE_REPORT"],
     reason: "Default supervised workflow selected a read-only inspection and report chain.",
   };
+}
+
+function isAutomaticPatchApplicationPrompt(prompt: string): boolean {
+  const normalizedPrompt = normalizeText(prompt).toLowerCase();
+  return /(apply|auto.?apply|automatically|write it|make the change)/.test(normalizedPrompt) && /patch|change|fix|mutation|file/.test(normalizedPrompt);
+}
+
+function isExternalRuntimeDependencyPrompt(prompt: string): boolean {
+  const normalizedPrompt = normalizeText(prompt).toLowerCase();
+  return /unity|shell|terminal|runtime|external|dependency|execute|run/.test(normalizedPrompt) && !isAutomaticPatchApplicationPrompt(prompt);
 }
 
 function validateAllowedPaths(allowedPaths: string[], forbiddenPaths: string[]): { allowedPaths: string[]; blockers: string[] } {
@@ -590,6 +626,115 @@ export function summarizeEliteAgentWorkflow(session: EliteAgentWorkflowSession):
     resumeFromStage: current?.type ?? null,
     resumeReason: session.resumeReason,
     truthfulCapabilityBoundary: session.truthfulCapabilityBoundary,
+  };
+}
+
+export function buildEliteAgentBlockedWorkflowRecoveryGuidance(session: EliteAgentWorkflowSession): EliteAgentBlockedWorkflowRecoveryGuidance | null {
+  const summary = summarizeEliteAgentWorkflow(session);
+  if (summary.status !== "BLOCKED") {
+    return null;
+  }
+  const blockedStage = session.stages.find((stage) => stage.lifecycleState === "BLOCKED") ?? session.stages.find((stage) => stage.blockedReason) ?? null;
+  const blockedReason = summary.blockedStageReason ?? blockedStage?.blockedReason ?? "A governance requirement or external dependency is missing.";
+  const hasMutationApprovalBlocker = Boolean(blockedStage?.mutationPermission === "MUTATION_REQUIRES_APPROVAL" || /approval/i.test(blockedReason));
+  const kind: EliteAgentBlockedWorkflowRecoveryKind = isAutomaticPatchApplicationPrompt(session.prompt)
+    ? "automatic_patch_application"
+    : isExternalRuntimeDependencyPrompt(session.prompt) || blockedStage?.type === "BLOCKED_EXTERNAL_DEPENDENCY"
+      ? "external_runtime_dependency"
+      : hasMutationApprovalBlocker
+        ? "missing_approval"
+        : "general_blocker";
+
+  if (kind === "automatic_patch_application") {
+    return {
+      kind,
+      title: "Safe Recovery Path",
+      blockedExplanation: `Blocked: ${blockedReason}`,
+      safetyRuleTriggered: "Automatic file mutation requires an approved operator route before application.",
+      safeAlternative: "Prepare the patch first, then request approval before applying it.",
+      beforeProceeding: "AI-E must have explicit operator approval before any mutation-capable application step can continue.",
+      suggestedRecovery: "Prepare a safe patch workflow or request approval.",
+      actions: [
+        { id: "PREPARE_SAFE_PATCH_INSTEAD", label: "Prepare Safe Patch Instead", description: "Create a safe patch-preparation workflow without applying files." },
+        { id: "REQUEST_APPROVAL", label: "Request Approval", description: "Clarify that approval is required before automatic application can proceed." },
+        { id: "EXPLAIN_BLOCKER", label: "Explain Blocker", description: "Explain the blocker, safety rule, safe alternative, and approval requirement." },
+      ],
+      technicalDetail: `Blocked workflow ${session.workflowSessionId} remains blocked. Original request: ${session.prompt}`,
+    };
+  }
+
+  if (kind === "external_runtime_dependency") {
+    return {
+      kind,
+      title: "Safe Recovery Path",
+      blockedExplanation: `Blocked: ${blockedReason}`,
+      safetyRuleTriggered: "An external runtime, approved route, or dependency is required before execution can continue.",
+      safeAlternative: "Convert the request into a safe planning workflow while the runtime dependency remains blocked.",
+      beforeProceeding: "The required runtime or approval route must be available and explicitly authorized before execution.",
+      suggestedRecovery: "Show the required runtime or convert this to a safe planning workflow.",
+      actions: [
+        { id: "SHOW_REQUIRED_RUNTIME", label: "Show Required Runtime", description: "Show what external runtime or route is missing." },
+        { id: "CONVERT_TO_SAFE_PLANNING_WORKFLOW", label: "Convert to Safe Planning Workflow", description: "Create a planning-only workflow that does not execute the external dependency." },
+        { id: "EXPLAIN_BLOCKER", label: "Explain Blocker", description: "Explain the blocker, safety rule, safe alternative, and approval requirement." },
+      ],
+      technicalDetail: `Blocked workflow ${session.workflowSessionId} is waiting on ${blockedStage?.type ?? "a blocked stage"}.`,
+    };
+  }
+
+  if (kind === "missing_approval") {
+    return {
+      kind,
+      title: "Safe Recovery Path",
+      blockedExplanation: `Blocked: ${blockedReason}`,
+      safetyRuleTriggered: "Mutation-capable work cannot continue until explicit operator approval is recorded.",
+      safeAlternative: "Review the scope and request approval before continuing the mutation-capable step.",
+      beforeProceeding: "Approval must be recorded for the relevant stage, and existing validation rules still apply afterward.",
+      suggestedRecovery: "Request approval or review scope before continuing.",
+      actions: [
+        { id: "REQUEST_APPROVAL", label: "Request Approval", description: "Start the approval-first continuation path." },
+        { id: "REVIEW_SCOPE", label: "Review Scope", description: "Inspect allowed paths, blocked paths, and mutation permission before approval." },
+        { id: "EXPLAIN_BLOCKER", label: "Explain Blocker", description: "Explain the blocker, safety rule, safe alternative, and approval requirement." },
+      ],
+      technicalDetail: `Approval state: ${blockedStage?.approvalState ?? "unknown"}; mutation permission: ${blockedStage?.mutationPermission ?? "unknown"}.`,
+    };
+  }
+
+  return {
+    kind,
+    title: "Safe Recovery Path",
+    blockedExplanation: `Blocked: ${blockedReason}`,
+    safetyRuleTriggered: "A supervised workflow boundary prevented continuation.",
+    safeAlternative: "Review the blocker and choose a planning, approval, validation, or scope-review path before continuing.",
+    beforeProceeding: "The recorded blocker must be resolved without bypassing approval, validation, path scope, or runtime boundaries.",
+    suggestedRecovery: "Explain the blocker or review scope before continuing.",
+    actions: [
+      { id: "REVIEW_SCOPE", label: "Review Scope", description: "Inspect the workflow scope and governance metadata." },
+      { id: "EXPLAIN_BLOCKER", label: "Explain Blocker", description: "Explain the blocker, safety rule, safe alternative, and approval requirement." },
+    ],
+    technicalDetail: `Blocked workflow ${session.workflowSessionId} remains blocked until the recorded blocker is resolved.`,
+  };
+}
+
+export function convertBlockedWorkflowToSafePatchPreparation(session: EliteAgentWorkflowSession, params?: { now?: string }): EliteAgentWorkflowSession {
+  const guidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(session);
+  if (!guidance) {
+    throw new Error("Only blocked workflows can be converted into a safe recovery workflow.");
+  }
+  const now = normalizeText(params?.now) || new Date().toISOString();
+  const recovery = buildEliteAgentWorkflowSession({
+    agentId: `${session.agentId}-safe-recovery`,
+    prompt: "prepare a safe patch for operator review",
+    allowedPaths: session.allowedPaths,
+    forbiddenPaths: session.forbiddenPaths,
+    now,
+  });
+  return {
+    ...recovery,
+    deterministicSelectionReason: `${recovery.deterministicSelectionReason} Converted from blocked workflow ${session.workflowSessionId}; original blocked workflow remains visible and no patch was applied.`,
+    logs: [
+      ...recovery.logs,
+      createLog(now, recovery.stages[0] ?? null, `Safe recovery conversion created from blocked workflow ${session.workflowSessionId}; automatic application remains blocked.`),
+    ],
   };
 }
 

@@ -48,6 +48,7 @@ Route: `/operator/agents`
 8. Use other workflow card action buttons such as `Run Workflow`, `Resume Workflow`, `Run Validation`, `Inspect Summary`, `Explain Blocker`, `Request Approval`, or `Save for Resume` when available.
 9. Open `Show Technical Details` only when lifecycle states, approval checkpoints, validation checkpoints, blocked reasons, path scope, or rollback markers need deeper review.
 10. Review recent workflow history after a workflow has been created or updated.
+11. For blocked workflows, read `Safe Recovery Path` before opening technical details.
 
 Screenshot TODO: `/operator/agents` workflow selection and active workflow cards.
 
@@ -84,6 +85,10 @@ Workflow cards may show these actions:
 - `Explain Blocker`: repeats the recorded blocked reason in the agent response area.
 - `Request Approval`: records approval for an approval-gated step when the workflow exposes one.
 - `Save for Resume`: pauses a workflow and marks it resumable under the same governance rules.
+- `Prepare Safe Patch Instead`: creates a safe patch-preparation workflow from an unsafe automatic-application request; it does not apply the patch.
+- `Show Required Runtime`: explains which runtime or approved route is missing.
+- `Convert to Safe Planning Workflow`: creates a planning-only recovery workflow while the original blocked workflow remains visible.
+- `Review Scope`: shows allowed paths, blocked paths, and mutation boundaries before approval.
 
 These buttons do not grant new backend authority. They use the existing supervised workflow runtime and preserve approval, validation, path-scope, and blocked-state rules.
 
@@ -214,6 +219,42 @@ Blocked examples:
 
 Screenshot TODO: blocked workflow card with visible blocked-stage reason.
 
+### Safe Recovery Path
+
+Blocked workflow cards now show `Safe Recovery Path` before technical details.
+
+### Engineering Explanation
+
+The recovery path is a UI and workflow-guidance layer over the existing blocked state. It derives why the workflow blocked, the safety rule that triggered, the safe alternative, the next recovery action, and the approval or runtime condition that must exist before continuation. It does not unblock automatic mutation, run shell commands, execute Unity, or apply patches.
+
+### YouTuber Explanation
+
+AI-E no longer just says no. It stops the unsafe action and immediately shows the safe lane: prepare the patch first, request approval, or convert the task into planning.
+
+### End-User Explanation
+
+When a workflow is blocked, read `Safe Recovery Path`. It tells you why it stopped, what safe option exists, and which button to press next.
+
+For automatic patch application, expected actions are:
+
+- `Prepare Safe Patch Instead`
+- `Request Approval`
+- `Explain Blocker`
+
+For an external runtime dependency, expected actions are:
+
+- `Show Required Runtime`
+- `Convert to Safe Planning Workflow`
+- `Explain Blocker`
+
+For missing approval, expected actions are:
+
+- `Request Approval`
+- `Review Scope`
+- `Explain Blocker`
+
+The safe conversion behavior creates a new patch-preparation workflow and keeps the original blocked workflow visible. The conversion explains that automatic application remains blocked and does not claim that files were changed.
+
 ## Rollback Markers
 
 Rollback markers are preparation metadata, not automatic rollback execution.
@@ -240,3 +281,4 @@ When reviewing an AI-E operational workflow:
 8. Open `Show Technical Details` if approval, validation, mutation, rollback, path scope, or blocked reason must be audited.
 9. If a workflow is resumable, confirm that approval and validation rules still make sense before continuing.
 10. If a workflow is blocked, use `Explain Blocker` and resolve the missing approval, validation, dependency, or scope issue before continuing.
+11. If `Safe Recovery Path` is visible, choose the safe recovery action before inspecting lifecycle details.

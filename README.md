@@ -2,6 +2,34 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_AGENT_BLOCKED_WORKFLOW_RECOVERY_GUIDANCE_PHASE1
+
+AI-E Agents now guide operators out of blocked workflows instead of leaving them at a dead end. This phase keeps the existing governance boundaries intact while adding a `Safe Recovery Path` to blocked workflow cards.
+
+What changed:
+
+- blocked workflows now show why the workflow stopped, which safety rule triggered, what safe alternative exists, and what must happen before proceeding
+- automatic patch-application blockers expose `Prepare Safe Patch Instead`, `Request Approval`, and `Explain Blocker`
+- external runtime blockers expose `Show Required Runtime`, `Convert to Safe Planning Workflow`, and `Explain Blocker`
+- missing-approval blockers expose `Request Approval`, `Review Scope`, and `Explain Blocker`
+- unsafe automatic mutation requests can be converted into a safe patch-preparation workflow while the original blocked workflow remains visible
+- `Explain Blocker` now describes the blocker, safety rule, safe alternative, and approval requirement
+- Recent Workflow History now includes suggested recovery wording for blocked entries
+- manual and glossary docs now explain blocked workflow recovery, safe recovery paths, safe workflow conversion, and approval-first continuation
+
+Governance preserved:
+
+- no automatic patch application was added
+- no mutation without approval was added
+- no unrestricted repo access, shell execution, Unity execution, unattended operation, AGI behavior, or `autonomous_real` behavior was added
+- recovery buttons are local supervised workflow actions or guidance actions; they do not fake execution
+
+Current limitations:
+
+- recovery guidance improves the operator path after a block, but it does not resolve the blocked condition by itself
+- approval still has to come from an approved operator route before mutation-capable application can proceed
+- safe conversion prepares a patch workflow; it does not apply a patch or claim files changed
+
 ## AIE_AGENT_NEXT_STEP_GUIDANCE_AND_WORKFLOW_ASSISTANT_PHASE1
 
 AI-E Agents now have a first next-step guidance layer for human workflow operation. This phase moves `/operator/agents` beyond passive workflow cards toward guided operational assistance: each workflow explains what is happening, why the state matters, and what the operator should do next.

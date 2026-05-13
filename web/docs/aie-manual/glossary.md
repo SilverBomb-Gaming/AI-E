@@ -18,6 +18,11 @@ This glossary translates AI-E engineering language into language that creators a
 | approval checkpoint | A stop point before sensitive work | The operator must approve before the workflow can continue |
 | validation checkpoint | A proof point after or during work | The workflow waits for evidence before it can complete the stage |
 | blocked workflow | A workflow that correctly stopped | AI-E refused to continue because approval, validation, path scope, or external dependency was missing |
+| blocked workflow recovery | The guided path after a workflow correctly stops | AI-E shows why it stopped, what safe alternative exists, and which recovery action to choose |
+| Safe Recovery Path | The blocked-card section that turns a stop into a safe next step | Read this section when AI-E blocks a workflow and you need to know what to do next |
+| safe workflow conversion | Turning an unsafe request into a governed planning or patch-preparation workflow | AI-E can prepare a safe patch workflow while keeping automatic application blocked |
+| Prepare Safe Patch Instead | The recovery action for unsafe automatic patch application | AI-E creates a reviewable patch-preparation workflow and does not apply the patch |
+| approval-first continuation | Continuing only after the required approval is recorded | Sensitive mutation or runtime work waits for operator approval before proceeding |
 | external dependency | Something outside AI-E's current authority | AI-E may need a human, a build system, Unity, credentials, or another approved route |
 | reasoning visibility | The operator-facing explanation of why AI-E routed a request | Operators can inspect the thinking category, route, approval need, and runtime boundary |
 | runtime ownership level | The degree of real runtime authority available | Shows whether AI-E is only planning, supervising, validating, or executing in a bounded way |
@@ -88,6 +93,9 @@ Use these:
 - "Next recommended action: run validation to verify the workflow result."
 - "Resume Workflow is disabled until the workflow is saved for resume or marked resumable."
 - "AI-E Agent Summary: this workflow is using read-only analysis steps."
+- "Safe Recovery Path: prepare the patch first, then request approval before applying it."
+- "This was blocked because automatic file mutation requires approval. AI-E can safely prepare the patch first, then wait for operator approval before application."
+- "The original blocked workflow remains visible, and no patch was applied."
 
 Avoid these:
 
@@ -112,3 +120,17 @@ AI-E can now pick up certain governed jobs from where they stopped, but only whe
 ### End-User Explanation
 
 If a workflow was paused or reviewed, AI-E can show where it stopped and whether it can continue. Blocked workflows stay blocked until the reason is fixed.
+
+## Blocked Recovery Translation
+
+### Engineering Explanation
+
+Blocked recovery guidance is a product UX layer over existing governance. It can create a safe planning or patch-preparation workflow, but it cannot auto-apply patches, widen repo scope, bypass approval, run shell commands, execute Unity, or continue unattended.
+
+### YouTuber Explanation
+
+AI-E does not just stop unsafe actions. It shows the safe route forward.
+
+### End-User Explanation
+
+When blocked, look for `Safe Recovery Path`. Use it to prepare a safe patch, request approval, review scope, or understand the blocker.

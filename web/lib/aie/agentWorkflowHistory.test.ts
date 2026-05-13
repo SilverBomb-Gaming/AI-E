@@ -120,6 +120,7 @@ test("failed and blocked workflow history can be queried", () => {
   assert.equal(failed.length, 1);
   assert.equal(failed[0]?.outcome, "blocked");
   assert.match(failed[0]?.blockedStages[0]?.reason ?? "", /approval|runtime route/i);
+  assert.match(failed[0]?.summary.resumeGuidance ?? "", /Suggested recovery: Prepare a safe patch workflow or request approval/i);
 });
 
 test("recent workflow history is ordered by update time", () => {
