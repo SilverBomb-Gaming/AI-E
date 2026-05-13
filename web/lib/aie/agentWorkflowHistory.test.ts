@@ -123,6 +123,31 @@ test("failed and blocked workflow history can be queried", () => {
   assert.match(failed[0]?.summary.resumeGuidance ?? "", /Suggested recovery: Prepare a safe patch workflow or request approval/i);
 });
 
+test("workflow history records approval request grant and denial events", () => {
+  const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
+  const patchStage = session.stages[1]!;
+  const approved = advanceEliteAgentWorkflow(session, {
+    stageId: patchStage.stageId,
+    action: "APPROVE_STAGE",
+    reason: "Operator approved this supervised stage only.",
+    now: "2026-05-12T12:14:00.000Z",
+  });
+  const denied = advanceEliteAgentWorkflow(session, {
+    stageId: patchStage.stageId,
+    action: "DENY_STAGE_APPROVAL",
+    reason: "Operator denied this supervised stage.",
+    now: "2026-05-12T12:15:00.000Z",
+  });
+  const approvedStore = recordAgentWorkflowHistory(createAgentWorkflowHistoryStore(), approved, { now: "2026-05-12T12:16:00.000Z" });
+  const deniedStore = recordAgentWorkflowHistory(createAgentWorkflowHistoryStore(), denied, { now: "2026-05-12T12:17:00.000Z" });
+
+  assert.equal(approvedStore.entries[0]?.approvalEvents.some((event) => event.approvalGateState === "APPROVED_BY_OPERATOR"), true);
+  assert.equal(deniedStore.entries[0]?.approvalEvents.some((event) => event.approvalGateState === "APPROVAL_DENIED"), true);
+  assert.match(approvedStore.entries[0]?.summary.approvalHistory ?? "", /APPROVAL_REQUIRED/);
+  assert.match(approvedStore.entries[0]?.summary.approvalHistory ?? "", /APPROVED_BY_OPERATOR/);
+  assert.match(deniedStore.entries[0]?.summary.approvalHistory ?? "", /APPROVAL_DENIED/);
+});
+
 test("recent workflow history is ordered by update time", () => {
   const first = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "inspect the inventory system", now: "2026-05-12T12:00:00.000Z" });
   const second = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "verify the latest gameplay patch", now: "2026-05-12T12:01:00.000Z" });

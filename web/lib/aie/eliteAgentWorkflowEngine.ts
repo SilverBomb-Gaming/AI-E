@@ -23,6 +23,7 @@ export type EliteAgentWorkflowLifecycleState =
 export type EliteAgentWorkflowApprovalState = "NOT_REQUIRED" | "PENDING" | "APPROVED" | "REJECTED" | "BLOCKED";
 export type EliteAgentWorkflowValidationState = "NOT_REQUIRED" | "PENDING" | "SUCCESS" | "FAILED" | "BLOCKED";
 export type EliteAgentWorkflowMutationPermission = "READ_ONLY" | "MUTATION_REQUIRES_APPROVAL" | "NO_MUTATION";
+export type EliteAgentApprovalGateState = "APPROVAL_REQUIRED" | "WAITING_FOR_APPROVAL" | "APPROVED_BY_OPERATOR" | "APPROVAL_DENIED";
 
 export type EliteAgentWorkflowStageDefinition = {
   type: EliteAgentWorkflowStageType;
@@ -57,6 +58,16 @@ export type EliteAgentWorkflowLogEntry = {
   rollbackAvailable: boolean;
 };
 
+export type EliteAgentWorkflowApprovalEvent = {
+  at: string;
+  stageId: string;
+  stageType: EliteAgentWorkflowStageType;
+  approvalGateState: EliteAgentApprovalGateState;
+  approvalState: EliteAgentWorkflowApprovalState;
+  message: string;
+  resultingWorkflowState: EliteAgentWorkflowSessionStatus;
+};
+
 export type EliteAgentWorkflowSessionStatus = "PENDING" | "RUNNING" | "PARTIALLY_COMPLETED" | "COMPLETED" | "BLOCKED" | "FAILED" | "ROLLBACK_AVAILABLE" | "PAUSED" | "INTERRUPTED" | "RESUMABLE";
 
 export type EliteAgentWorkflowSession = {
@@ -80,6 +91,7 @@ export type EliteAgentWorkflowSession = {
   deterministicSelectionReason: string;
   truthfulCapabilityBoundary: string;
   logs: EliteAgentWorkflowLogEntry[];
+  approvalEvents: EliteAgentWorkflowApprovalEvent[];
 };
 
 export type BuildEliteAgentWorkflowInput = {
@@ -92,7 +104,7 @@ export type BuildEliteAgentWorkflowInput = {
 
 export type AdvanceEliteAgentWorkflowInput = {
   stageId: string;
-  action: "APPROVE_STAGE" | "START_STAGE" | "BEGIN_VALIDATION" | "COMPLETE_STAGE" | "FAIL_STAGE" | "BLOCK_STAGE" | "PREPARE_ROLLBACK" | "PAUSE_WORKFLOW" | "INTERRUPT_WORKFLOW" | "MARK_RESUMABLE";
+  action: "APPROVE_STAGE" | "DENY_STAGE_APPROVAL" | "START_STAGE" | "BEGIN_VALIDATION" | "COMPLETE_STAGE" | "FAIL_STAGE" | "BLOCK_STAGE" | "PREPARE_ROLLBACK" | "PAUSE_WORKFLOW" | "INTERRUPT_WORKFLOW" | "MARK_RESUMABLE";
   reason?: string;
   now?: string;
 };
@@ -140,6 +152,25 @@ export type EliteAgentBlockedWorkflowRecoveryGuidance = {
     description: string;
   }>;
   technicalDetail: string;
+};
+
+export type EliteAgentApprovalGateGuidance = {
+  title: "Approval Required";
+  approvalGateState: EliteAgentApprovalGateState;
+  actionBeingApproved: string;
+  workflowStage: EliteAgentWorkflowStageType;
+  stageId: string;
+  allowedPathScope: string[];
+  mutationPermission: EliteAgentWorkflowMutationPermission;
+  validationRequirement: string;
+  rollbackAvailability: string;
+  riskLevel: "low" | "moderate" | "high";
+  whatHappensAfterApproval: string;
+  whyApprovalRequired: string;
+  whatCouldGoWrong: string;
+  allowedToDo: string;
+  notAllowedToDo: string;
+  validationAfterward: string;
 };
 
 const TRUTHFUL_WORKFLOW_BOUNDARY = "AI-E-lite Phase 3 provides supervised multi-step workflow continuity with bounded paths, approval checkpoints, validation checkpoints, resumable state tracking, and rollback preparation. It does not provide unrestricted repo control or unattended operation.";
@@ -331,6 +362,19 @@ function createLog(now: string, stage: EliteAgentWorkflowStage | null, message: 
   };
 }
 
+function approvalGateStateForApprovalState(approvalState: EliteAgentWorkflowApprovalState): EliteAgentApprovalGateState {
+  if (approvalState === "APPROVED") {
+    return "APPROVED_BY_OPERATOR";
+  }
+  if (approvalState === "REJECTED" || approvalState === "BLOCKED") {
+    return "APPROVAL_DENIED";
+  }
+  if (approvalState === "PENDING") {
+    return "WAITING_FOR_APPROVAL";
+  }
+  return "APPROVAL_REQUIRED";
+}
+
 function deriveSessionStatus(stages: EliteAgentWorkflowStage[]): EliteAgentWorkflowSessionStatus {
   if (stages.some((stage) => stage.lifecycleState === "INTERRUPTED")) {
     return "INTERRUPTED";
@@ -360,6 +404,24 @@ function deriveSessionStatus(stages: EliteAgentWorkflowStage[]): EliteAgentWorkf
     return "PARTIALLY_COMPLETED";
   }
   return "PENDING";
+}
+
+function createApprovalEvent(now: string, stage: EliteAgentWorkflowStage, approvalGateState: EliteAgentApprovalGateState, message: string, stages: EliteAgentWorkflowStage[]): EliteAgentWorkflowApprovalEvent {
+  return {
+    at: now,
+    stageId: stage.stageId,
+    stageType: stage.type,
+    approvalGateState,
+    approvalState: stage.approvalState,
+    message,
+    resultingWorkflowState: deriveSessionStatus(stages),
+  };
+}
+
+function createInitialApprovalEvents(now: string, stages: EliteAgentWorkflowStage[]): EliteAgentWorkflowApprovalEvent[] {
+  return stages
+    .filter((stage) => stage.approvalState === "PENDING")
+    .map((stage) => createApprovalEvent(now, stage, "APPROVAL_REQUIRED", "Approval requested for supervised workflow stage.", stages));
 }
 
 function recomputeSession(session: EliteAgentWorkflowSession): EliteAgentWorkflowSession {
@@ -413,6 +475,7 @@ export function buildEliteAgentWorkflowSession(input: BuildEliteAgentWorkflowInp
     deterministicSelectionReason: selection.reason,
     truthfulCapabilityBoundary: TRUTHFUL_WORKFLOW_BOUNDARY,
     logs: [createLog(now, stages[0] ?? null, `Workflow created: ${selection.reason}`)],
+    approvalEvents: createInitialApprovalEvents(now, stages),
   };
   return recomputeSession(session);
 }
@@ -426,12 +489,12 @@ export function advanceEliteAgentWorkflow(session: EliteAgentWorkflowSession, in
   }
   const stage = next.stages[stageIndex]!;
   const previousStage = stageIndex > 0 ? next.stages[stageIndex - 1] : null;
-  if (previousStage && previousStage.lifecycleState !== "COMPLETED") {
-    throw new Error(`Unsafe workflow transition rejected: ${stage.stageId} cannot run before ${previousStage.stageId} completes.`);
-  }
   if (stage.lifecycleState === "BLOCKED") {
     next.logs.push(createLog(now, stage, input.reason ?? "Blocked stage remained blocked.", "BLOCKED"));
     return recomputeSession(next);
+  }
+  if (previousStage && previousStage.lifecycleState !== "COMPLETED" && input.action !== "APPROVE_STAGE" && input.action !== "DENY_STAGE_APPROVAL") {
+    throw new Error(`Unsafe workflow transition rejected: ${stage.stageId} cannot run before ${previousStage.stageId} completes.`);
   }
   if ((stage.lifecycleState === "PAUSED" || stage.lifecycleState === "INTERRUPTED") && input.action !== "MARK_RESUMABLE") {
     throw new Error(`Workflow stage ${stage.stageId} must be marked resumable before continuation.`);
@@ -444,9 +507,24 @@ export function advanceEliteAgentWorkflow(session: EliteAgentWorkflowSession, in
     if (stage.approvalState === "NOT_REQUIRED") {
       throw new Error(`Approval is not required for stage ${stage.stageId}.`);
     }
+    if (stage.approvalState === "REJECTED") {
+      throw new Error(`Approval was denied for stage ${stage.stageId}; create a new supervised workflow before retrying.`);
+    }
     stage.approvalState = "APPROVED";
-    stage.lifecycleState = "APPROVED";
-    next.logs.push(createLog(now, stage, input.reason ?? "Stage approved by operator checkpoint."));
+    next.logs.push(createLog(now, stage, input.reason ?? "Stage approved by operator checkpoint.", stage.lifecycleState));
+    next.approvalEvents = [...(next.approvalEvents ?? []), createApprovalEvent(now, stage, "APPROVED_BY_OPERATOR", input.reason ?? "Approval granted by operator for this supervised stage only.", next.stages)];
+  }
+
+  if (input.action === "DENY_STAGE_APPROVAL") {
+    if (stage.approvalState === "NOT_REQUIRED") {
+      throw new Error(`Approval is not required for stage ${stage.stageId}.`);
+    }
+    stage.approvalState = "REJECTED";
+    stage.lifecycleState = "BLOCKED";
+    stage.blockedReason = input.reason ?? "Approval denied by operator; workflow remains safely stopped.";
+    next.logs.push(createLog(now, stage, stage.blockedReason, "BLOCKED"));
+    next.approvalEvents = [...(next.approvalEvents ?? []), createApprovalEvent(now, stage, "APPROVAL_DENIED", stage.blockedReason, next.stages)];
+    return recomputeSession(next);
   }
 
   if (input.action === "START_STAGE") {
@@ -455,6 +533,7 @@ export function advanceEliteAgentWorkflow(session: EliteAgentWorkflowSession, in
       stage.approvalState = "BLOCKED";
       stage.blockedReason = "Mutation-capable stage cannot start until explicit operator approval is recorded.";
       next.logs.push(createLog(now, stage, stage.blockedReason, "BLOCKED"));
+        next.approvalEvents = [...(next.approvalEvents ?? []), createApprovalEvent(now, stage, "WAITING_FOR_APPROVAL", stage.blockedReason, next.stages)];
       return recomputeSession(next);
     }
     stage.lifecycleState = "RUNNING";
@@ -735,6 +814,54 @@ export function convertBlockedWorkflowToSafePatchPreparation(session: EliteAgent
       ...recovery.logs,
       createLog(now, recovery.stages[0] ?? null, `Safe recovery conversion created from blocked workflow ${session.workflowSessionId}; automatic application remains blocked.`),
     ],
+  };
+}
+
+function approvalRiskLevel(stage: EliteAgentWorkflowStage): EliteAgentApprovalGateGuidance["riskLevel"] {
+  if (stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL") {
+    return "moderate";
+  }
+  if (stage.externalDependencyRequired) {
+    return "high";
+  }
+  return "low";
+}
+
+export function buildEliteAgentApprovalGateGuidance(session: EliteAgentWorkflowSession): EliteAgentApprovalGateGuidance | null {
+  const stage = session.stages.find((candidate) => candidate.approvalState === "PENDING" && candidate.mutationPermission === "MUTATION_REQUIRES_APPROVAL")
+    ?? session.stages.find((candidate) => (candidate.approvalState === "REJECTED" || candidate.approvalState === "APPROVED") && candidate.mutationPermission === "MUTATION_REQUIRES_APPROVAL")
+    ?? session.stages.find((candidate) => candidate.approvalState === "PENDING")
+    ?? session.stages.find((candidate) => candidate.approvalState === "REJECTED" || candidate.approvalState === "APPROVED")
+    ?? null;
+  if (!stage || stage.approvalState === "NOT_REQUIRED") {
+    return null;
+  }
+  const approvalGateState = approvalGateStateForApprovalState(stage.approvalState);
+  const actionBeingApproved = stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL"
+    ? "Patch preparation only"
+    : stage.type === "REQUEST_APPROVAL"
+      ? "Operator approval checkpoint"
+      : stage.title;
+  const whatHappensAfterApproval = stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL"
+    ? "AI-E may run the approved patch-preparation step when workflow order reaches it. It will not apply files automatically."
+    : "AI-E records the approval checkpoint and keeps the remaining workflow under supervised ordering.";
+  return {
+    title: "Approval Required",
+    approvalGateState,
+    actionBeingApproved,
+    workflowStage: stage.type,
+    stageId: stage.stageId,
+    allowedPathScope: [...stage.allowedPathScope],
+    mutationPermission: stage.mutationPermission,
+    validationRequirement: stage.validationRequired ? "Validation is required after this stage before it can be considered complete." : "No validation checkpoint is required for this approval stage.",
+    rollbackAvailability: stage.rollbackSupported ? "Rollback preparation metadata can be recorded for operator review." : "Rollback preparation is not available for this stage.",
+    riskLevel: approvalRiskLevel(stage),
+    whatHappensAfterApproval,
+    whyApprovalRequired: stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL" ? "This stage can prepare mutation-capable work, so a human operator must approve the exact stage before it can run." : "This workflow stage represents an operator approval checkpoint.",
+    whatCouldGoWrong: "Approving the wrong scope could let AI-E prepare work for files or paths the operator did not intend. Approval still does not apply files automatically.",
+    allowedToDo: "AI-E may update supervised workflow state and run only the approved stage inside the existing bounded model when workflow order allows it.",
+    notAllowedToDo: "AI-E is not allowed to auto-apply patches, mutate files without a real approved route, run Unity, use unrestricted shell access, or continue unattended.",
+    validationAfterward: stage.validationRequired ? "After the approved stage runs, validation evidence must be recorded before completion." : "After approval, continue following the next supervised workflow step.",
   };
 }
 

@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import type { LiteEliteRunResult } from "@/lib/aie/liteEliteAgentRuntime";
 import {
   advanceEliteAgentWorkflow,
+  buildEliteAgentApprovalGateGuidance,
   buildEliteAgentBlockedWorkflowRecoveryGuidance,
   buildEliteAgentWorkflowSession,
   convertBlockedWorkflowToSafePatchPreparation,
@@ -14,6 +15,7 @@ import {
   type EliteAgentWorkflowSession,
   type EliteAgentWorkflowStage,
   type EliteAgentBlockedWorkflowRecoveryActionId,
+  type EliteAgentApprovalGateGuidance,
 } from "@/lib/aie/eliteAgentWorkflowEngine";
 import {
   createAgentWorkflowHistoryStore,
@@ -218,8 +220,15 @@ function nextRecommendedAction(workflow: EliteAgentWorkflowSession): string {
   if (summary.status === "BLOCKED") {
     return recoveryGuidance?.suggestedRecovery ?? "Review the blocker and resolve the missing dependency before continuing.";
   }
+  const approvedMutationStage = workflow.stages.find((entry) => entry.approvalState === "APPROVED" && entry.mutationPermission === "MUTATION_REQUIRES_APPROVAL" && entry.lifecycleState !== "COMPLETED");
+  if (approvedMutationStage) {
+    return stage?.stageId === approvedMutationStage.stageId ? "Run the approved step." : "Complete earlier supervised steps, then run the approved step.";
+  }
   if (firstPendingValidation(workflow)) {
     return "Run validation to verify the workflow result.";
+  }
+  if (stage?.approvalState === "APPROVED" && stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL") {
+    return "Run the approved step.";
   }
   if (stage?.lifecycleState === "VALIDATING") {
     return "Wait for validation evidence, then record the validation result.";
@@ -254,8 +263,8 @@ function primaryActionLabel(workflow: EliteAgentWorkflowSession): string {
   if (summary.resumeEligible) {
     return "Resume Workflow";
   }
-  if (approvalActionStage(workflow)) {
-    return "Request Approval";
+  if (buildEliteAgentApprovalGateGuidance(workflow)?.approvalGateState === "WAITING_FOR_APPROVAL") {
+    return "Approve This Step";
   }
   if (firstPendingValidation(workflow)) {
     return "Run Validation";
@@ -306,6 +315,20 @@ function blockerExplanation(workflow: EliteAgentWorkflowSession): string {
     return "This workflow is not currently blocked.";
   }
   return `${guidance.blockedExplanation} Safety rule: ${guidance.safetyRuleTriggered} Safe alternative: ${guidance.safeAlternative} Before proceeding: ${guidance.beforeProceeding}`;
+}
+
+function approvalGateLabel(guidance: EliteAgentApprovalGateGuidance): string {
+  const labels: Record<EliteAgentApprovalGateGuidance["approvalGateState"], string> = {
+    APPROVAL_REQUIRED: "Approval required",
+    WAITING_FOR_APPROVAL: "Waiting for approval",
+    APPROVED_BY_OPERATOR: "Approved by operator",
+    APPROVAL_DENIED: "Approval denied",
+  };
+  return labels[guidance.approvalGateState];
+}
+
+function approvalRiskExplanation(guidance: EliteAgentApprovalGateGuidance): string {
+  return `Approval is required because ${guidance.whyApprovalRequired} Risk: ${guidance.whatCouldGoWrong} Allowed: ${guidance.allowedToDo} Not allowed: ${guidance.notAllowedToDo} Validation afterward: ${guidance.validationAfterward}`;
 }
 
 export function EliteAgentClient() {
@@ -383,19 +406,52 @@ export function EliteAgentClient() {
     }
   }
 
-  function requestApproval(workflow: EliteAgentWorkflowSession) {
-    const stage = approvalActionStage(workflow);
-    if (!stage) {
-      setAgentReply("Approval is not available yet. Complete the earlier supervised steps first.");
+  function approveThisStep(workflow: EliteAgentWorkflowSession) {
+    const guidance = buildEliteAgentApprovalGateGuidance(workflow);
+    if (!guidance || guidance.approvalGateState !== "WAITING_FOR_APPROVAL") {
+      setAgentReply("No approval-ready stage is waiting for operator approval right now.");
       return;
     }
     try {
-      const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "APPROVE_STAGE", reason: "Operator requested approval from the workflow card." });
+      const next = advanceEliteAgentWorkflow(workflow, { stageId: guidance.stageId, action: "APPROVE_STAGE", reason: "Operator approved this supervised stage only from the Approval Required panel." });
       upsertWorkflow(next);
-      setAgentReply(`${stageLabel(stage.type)} is now approved. Next recommended action: ${nextRecommendedAction(next)}`);
+      setAgentReply(`${stageLabel(guidance.workflowStage)} is approved for this stage only. AI-E will not apply files automatically. Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "Approval could not be recorded for this step.");
     }
+  }
+
+  function denyApproval(workflow: EliteAgentWorkflowSession) {
+    const guidance = buildEliteAgentApprovalGateGuidance(workflow);
+    if (!guidance || guidance.approvalGateState !== "WAITING_FOR_APPROVAL") {
+      setAgentReply("No approval-ready stage is waiting for denial right now.");
+      return;
+    }
+    try {
+      const next = advanceEliteAgentWorkflow(workflow, { stageId: guidance.stageId, action: "DENY_STAGE_APPROVAL", reason: "Approval denied by operator from the Approval Required panel." });
+      upsertWorkflow(next);
+      setAgentReply(`${stageLabel(guidance.workflowStage)} approval was denied. The workflow remains safely stopped, and no mutation or execution was performed.`);
+    } catch (caught) {
+      setAgentReply(caught instanceof Error ? caught.message : "Approval denial could not be recorded for this step.");
+    }
+  }
+
+  function reviewApprovalScope(workflow: EliteAgentWorkflowSession) {
+    const guidance = buildEliteAgentApprovalGateGuidance(workflow);
+    if (!guidance) {
+      setAgentReply("No approval scope is available for this workflow right now.");
+      return;
+    }
+    setAgentReply(`Approval scope review: action ${guidance.actionBeingApproved}; stage ${stageLabel(guidance.workflowStage)}; allowed paths ${guidance.allowedPathScope.join(", ") || "none"}; mutation permission ${guidance.mutationPermission}; validation ${guidance.validationRequirement}; rollback ${guidance.rollbackAvailability}.`);
+  }
+
+  function explainApprovalRisk(workflow: EliteAgentWorkflowSession) {
+    const guidance = buildEliteAgentApprovalGateGuidance(workflow);
+    if (!guidance) {
+      setAgentReply("No approval risk explanation is available for this workflow right now.");
+      return;
+    }
+    setAgentReply(approvalRiskExplanation(guidance));
   }
 
   function runValidation(workflow: EliteAgentWorkflowSession) {
@@ -558,6 +614,7 @@ export function EliteAgentClient() {
             {workflows.map((workflow) => {
               const summary = summarizeEliteAgentWorkflow(workflow);
               const recoveryGuidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow);
+              const approvalGuidance = buildEliteAgentApprovalGateGuidance(workflow);
               const isSelected = selectedWorkflow?.workflowSessionId === workflow.workflowSessionId;
               const showSummary = summaryWorkflowId === workflow.workflowSessionId;
               const canResume = summary.resumeEligible;
@@ -624,6 +681,32 @@ export function EliteAgentClient() {
                     </div>
                   )}
 
+                  {approvalGuidance && !recoveryGuidance && (
+                    <div className="mt-3 rounded-md border border-violet-200 bg-violet-50 p-4 dark:border-violet-300/30 dark:bg-violet-400/10">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-800 dark:text-violet-100">{approvalGuidance.title}</p>
+                        <span className="rounded-full border border-violet-300 px-2 py-1 text-xs font-semibold text-violet-900 dark:border-violet-200/40 dark:text-violet-100">{approvalGateLabel(approvalGuidance)}</span>
+                      </div>
+                      <div className="mt-3 grid gap-2 text-sm leading-6 text-violet-950 dark:text-violet-100 sm:grid-cols-2">
+                        <p><span className="font-semibold">Action being approved:</span> {approvalGuidance.actionBeingApproved}</p>
+                        <p><span className="font-semibold">Workflow stage:</span> {stageLabel(approvalGuidance.workflowStage)}</p>
+                        <p><span className="font-semibold">Allowed path scope:</span> {approvalGuidance.allowedPathScope.join(", ") || "none"}</p>
+                        <p><span className="font-semibold">Mutation permission:</span> {approvalGuidance.mutationPermission}</p>
+                        <p><span className="font-semibold">Validation requirement:</span> {approvalGuidance.validationRequirement}</p>
+                        <p><span className="font-semibold">Rollback availability:</span> {approvalGuidance.rollbackAvailability}</p>
+                        <p><span className="font-semibold">Risk level:</span> {approvalGuidance.riskLevel}</p>
+                        <p><span className="font-semibold">After approval:</span> {approvalGuidance.whatHappensAfterApproval}</p>
+                      </div>
+                      <p className="mt-3 rounded-md border border-violet-200 bg-white p-3 text-sm leading-6 text-violet-950 dark:border-violet-200/20 dark:bg-[#070b12] dark:text-violet-100">You are approving this step only. AI-E will not apply files automatically.</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <ActionButton label="Approve This Step" onClick={() => approveThisStep(workflow)} primary={primary === "Approve This Step"} disabled={approvalGuidance.approvalGateState !== "WAITING_FOR_APPROVAL"} />
+                        <ActionButton label="Deny Approval" onClick={() => denyApproval(workflow)} disabled={approvalGuidance.approvalGateState !== "WAITING_FOR_APPROVAL"} />
+                        <ActionButton label="Review Scope" onClick={() => reviewApprovalScope(workflow)} />
+                        <ActionButton label="Explain Risk" onClick={() => explainApprovalRisk(workflow)} />
+                      </div>
+                    </div>
+                  )}
+
                   <div className="mt-4 flex flex-wrap gap-2">
                     <ActionButton label="Run Workflow" onClick={() => runWorkflow(workflow)} primary={primary === "Run Workflow"} disabled={runDisabled} />
                     <ActionButton label="Resume Workflow" onClick={() => resumeWorkflow(workflow)} disabled={!canResume} primary={primary === "Resume Workflow"} />
@@ -634,7 +717,7 @@ export function EliteAgentClient() {
                     <ActionButton label="Inspect" onClick={() => setSelectedWorkflowId(workflow.workflowSessionId)} />
                     <ActionButton label={showSummary ? "Hide Summary" : "Inspect Summary"} onClick={() => setSummaryWorkflowId(showSummary ? null : workflow.workflowSessionId)} primary={primary === "Inspect Summary"} />
                     {summary.blockedStageReason && !recoveryGuidance && <ActionButton label="Explain Blocker" onClick={() => setAgentReply(blockerExplanation(workflow))} primary={primary === "Explain Blocker"} />}
-                    {needsApproval && <ActionButton label="Request Approval" onClick={() => requestApproval(workflow)} primary={primary === "Request Approval"} />}
+                    {needsApproval && !approvalGuidance && <ActionButton label="Approve This Step" onClick={() => approveThisStep(workflow)} primary={primary === "Approve This Step"} />}
                   </div>
 
                   {resumeReason && <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-zinc-400">{resumeReason}</p>}

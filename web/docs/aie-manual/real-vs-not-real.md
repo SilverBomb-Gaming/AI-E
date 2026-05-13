@@ -34,6 +34,10 @@ AI-E can enforce scoped paths in bounded executor and workflow architecture. Tas
 
 AI-E can show reasoning visibility, workflow stages, approval indicators, validation indicators, blocked states, and rollback markers in operator-facing UI.
 
+### Guided Approval Flow
+
+AI-E can show approval-gated action details, path scope, mutation permission, validation requirements, rollback availability, risk explanations, approval decisions, and approval history for supervised workflow stages.
+
 ## NOT REAL
 
 ### AGI
@@ -43,6 +47,10 @@ AI-E is not AGI. Do not describe it as general intelligence.
 ### Unrestricted Repo Ownership
 
 AI-E does not own the repository and does not have unrestricted mutation authority.
+
+### Approval As Unlimited Permission
+
+Approval of one supervised stage is not unrestricted repo authority, shell authority, Unity authority, or unattended autonomy.
 
 ### Unattended Endless Execution
 
@@ -79,6 +87,8 @@ Use:
 - "bounded supervised workflow"
 - "governed execution route"
 - "approval-aware execution"
+- "guided approval flow"
+- "supervised action gate"
 - "validation checkpoint"
 - "rollback preparation"
 - "operator-visible workflow state"
@@ -92,6 +102,7 @@ Do not use:
 - "AI-E can mutate anything"
 - "AI-E self-improves recursively"
 - "AI-E has unrestricted shell access"
+- "approval lets AI-E do anything"
 
 ## Why This Doctrine Matters
 

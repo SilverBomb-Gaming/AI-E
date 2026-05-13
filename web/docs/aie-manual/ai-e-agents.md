@@ -114,6 +114,48 @@ The blocker explanation is no longer a dead end. It tells the operator the reaso
 
 Use `Explain Blocker` when you need the plain-language reason and the next safe step.
 
+## Guided Approval Flow
+
+### Engineering Explanation
+
+Approval-gated agent workflows now expose a supervised action gate. The `Approval Required` panel is derived from workflow stage metadata and shows the action being approved, stage, path scope, mutation permission, validation requirement, rollback availability, risk level, and post-approval behavior. Approval changes workflow approval state only; it does not apply patches or grant unrestricted execution.
+
+### YouTuber Explanation
+
+The operator is no longer asked to approve a vague black box. AI-E shows exactly what the approval covers, what could go wrong, and what happens next.
+
+### User Explanation
+
+Before approving, read `Approval Required`. It tells you what the approval means and confirms that AI-E will not apply files automatically.
+
+## Approval-Gated Actions
+
+### Engineering Explanation
+
+`Approve This Step` records `APPROVED_BY_OPERATOR` for the displayed stage. `Deny Approval` records `APPROVAL_DENIED` and blocks the workflow safely. `Review Scope` surfaces path and permission metadata. `Explain Risk` renders the approval rationale, risk, allowed behavior, disallowed behavior, and validation expectation.
+
+### YouTuber Explanation
+
+The approval button now has guardrails around it: approve, deny, inspect scope, or ask why the approval is risky.
+
+### User Explanation
+
+Use `Review Scope` before approval if you are unsure. Use `Deny Approval` when the scope or risk does not match your intent.
+
+## Approval History
+
+### Engineering Explanation
+
+Workflow history records approval request, approval grant, and approval denial events with timestamps, affected stage, approval state, and resulting workflow state.
+
+### YouTuber Explanation
+
+AI-E can show the approval trail: what was requested, what was approved or denied, and what state the workflow ended in.
+
+### User Explanation
+
+Recent Workflow History keeps approval decisions visible so the operator can audit what happened later.
+
 ## Workflow Assistant Summaries
 
 ### Engineering Explanation

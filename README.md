@@ -2,6 +2,34 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_AGENT_APPROVAL_FLOW_AND_SUPERVISED_ACTION_GATE_PHASE1
+
+AI-E Agents now provide a guided approval flow for supervised workflow actions. Approval is no longer only a status label: approval-gated workflow cards explain what the operator is approving, why approval matters, what scope and risk apply, what happens after approval, and how to approve or deny the stage safely.
+
+What changed:
+
+- approval-gated workflows now show an `Approval Required` panel
+- the panel lists action being approved, workflow stage, allowed path scope, mutation permission, validation requirement, rollback availability, risk level, and what happens after approval
+- approval actions now include `Approve This Step`, `Deny Approval`, `Review Scope`, and `Explain Risk`
+- approval state now records `APPROVAL_REQUIRED`, `WAITING_FOR_APPROVAL`, `APPROVED_BY_OPERATOR`, and `APPROVAL_DENIED` events
+- denied approval blocks the workflow safely and records the denial
+- approved state is visible through workflow approval checkpoints and history
+- approval history records requested, granted, and denied approval events with timestamps, affected stages, and resulting workflow state
+- post-approval guidance makes clear that approval is stage-scoped and does not apply files automatically
+
+Governance preserved:
+
+- no automatic patch application was added
+- no mutation without approval was added
+- no unrestricted repo access, shell expansion, Unity execution, unattended execution, AGI behavior, or `autonomous_real` behavior was added
+- approval updates workflow state only inside the supervised model unless a separate real approved mutation route exists
+
+Current limitations:
+
+- approval is a supervised workflow gate, not a universal execution permission
+- approval does not prove validation; validation evidence must still be recorded when required
+- approval does not grant unrestricted autonomy, shell access, Unity control, or automatic repo mutation
+
 ## AIE_AGENT_BLOCKED_WORKFLOW_RECOVERY_GUIDANCE_PHASE1
 
 AI-E Agents now guide operators out of blocked workflows instead of leaving them at a dead end. This phase keeps the existing governance boundaries intact while adding a `Safe Recovery Path` to blocked workflow cards.

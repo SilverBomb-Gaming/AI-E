@@ -16,6 +16,13 @@ This glossary translates AI-E engineering language into language that creators a
 | workflow session ID | A stable label for one workflow run | Operators can refer to a specific workflow instance |
 | stage lifecycle state | The current status of a workflow stage | A stage can be pending, approved, running, validating, completed, failed, rollback available, or blocked |
 | approval checkpoint | A stop point before sensitive work | The operator must approve before the workflow can continue |
+| Approval Required panel | The guided approval review shown before a supervised stage is approved | It tells you what you are approving, what scope applies, what risk exists, and what happens next |
+| supervised action gate | A stage-level approval boundary in the workflow engine | AI-E can record approval or denial for one stage without gaining broad autonomy |
+| APPROVAL_REQUIRED | An approval gate exists for a supervised workflow stage | The workflow has a stage that needs operator approval |
+| WAITING_FOR_APPROVAL | The stage is ready for an operator approval decision | You can approve or deny this step |
+| APPROVED_BY_OPERATOR | The operator approved one supervised stage | AI-E may proceed only inside the displayed stage and workflow rules |
+| APPROVAL_DENIED | The operator denied approval | The workflow stays safely stopped |
+| Explain Risk | Approval helper text that explains risk and boundaries | It tells you why approval is needed, what could go wrong, what AI-E can do, and what remains forbidden |
 | validation checkpoint | A proof point after or during work | The workflow waits for evidence before it can complete the stage |
 | blocked workflow | A workflow that correctly stopped | AI-E refused to continue because approval, validation, path scope, or external dependency was missing |
 | blocked workflow recovery | The guided path after a workflow correctly stops | AI-E shows why it stopped, what safe alternative exists, and which recovery action to choose |
@@ -96,6 +103,9 @@ Use these:
 - "Safe Recovery Path: prepare the patch first, then request approval before applying it."
 - "This was blocked because automatic file mutation requires approval. AI-E can safely prepare the patch first, then wait for operator approval before application."
 - "The original blocked workflow remains visible, and no patch was applied."
+- "You are approving this step only. AI-E will not apply files automatically."
+- "Approval denied; the workflow remains safely stopped."
+- "Approval records operator intent but does not replace validation evidence."
 
 Avoid these:
 
@@ -134,3 +144,17 @@ AI-E does not just stop unsafe actions. It shows the safe route forward.
 ### End-User Explanation
 
 When blocked, look for `Safe Recovery Path`. Use it to prepare a safe patch, request approval, review scope, or understand the blocker.
+
+## Approval Flow Translation
+
+### Engineering Explanation
+
+Approval flow is a supervised state transition, not execution authority expansion. Approval events record `APPROVAL_REQUIRED`, `WAITING_FOR_APPROVAL`, `APPROVED_BY_OPERATOR`, and `APPROVAL_DENIED` with the affected stage and resulting workflow state.
+
+### YouTuber Explanation
+
+AI-E shows the operator exactly what the approval covers before anything moves forward.
+
+### End-User Explanation
+
+Approve only when the displayed stage, paths, risk, and next step match what you intend. Deny approval to keep the workflow stopped.

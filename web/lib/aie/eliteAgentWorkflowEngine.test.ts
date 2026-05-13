@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   advanceEliteAgentWorkflow,
+  buildEliteAgentApprovalGateGuidance,
   buildEliteAgentBlockedWorkflowRecoveryGuidance,
   buildEliteAgentWorkflowSession,
   convertBlockedWorkflowToSafePatchPreparation,
@@ -134,6 +135,55 @@ test("approval checkpoints allow mutation-capable stages to start but still requ
   assert.equal(running.stages[1]?.lifecycleState, "RUNNING");
   assert.equal(blockedCompletion.stages[1]?.lifecycleState, "BLOCKED");
   assert.match(blockedCompletion.blockedStageReason ?? "", /Validation-required/);
+});
+
+test("approval gate guidance explains the supervised action before approval", () => {
+  const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
+  const guidance = buildEliteAgentApprovalGateGuidance(session);
+
+  assert.equal(guidance?.title, "Approval Required");
+  assert.equal(guidance?.approvalGateState, "WAITING_FOR_APPROVAL");
+  assert.equal(guidance?.workflowStage, "PREPARE_PATCH");
+  assert.equal(guidance?.actionBeingApproved, "Patch preparation only");
+  assert.deepEqual(guidance?.allowedPathScope, ["runner_artifacts/lite_elite_agent"]);
+  assert.equal(guidance?.mutationPermission, "MUTATION_REQUIRES_APPROVAL");
+  assert.match(guidance?.whatHappensAfterApproval ?? "", /will not apply files automatically/i);
+  assert.match(guidance?.notAllowedToDo ?? "", /auto-apply patches|unrestricted shell/i);
+});
+
+test("approval grant records approved-by-operator event without fake execution", () => {
+  const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
+  const patchStage = session.stages[1]!;
+  const approved = advanceEliteAgentWorkflow(session, {
+    stageId: patchStage.stageId,
+    action: "APPROVE_STAGE",
+    reason: "Operator approved this supervised stage only.",
+    now: "2026-05-12T12:15:00.000Z",
+  });
+
+  assert.equal(approved.stages[1]?.approvalState, "APPROVED");
+  assert.equal(approved.approvalEvents.at(-1)?.approvalGateState, "APPROVED_BY_OPERATOR");
+  assert.equal(approved.approvalEvents.at(-1)?.stageType, "PREPARE_PATCH");
+  assert.doesNotMatch(approved.approvalEvents.at(-1)?.message ?? "", /applied|executed automatically/i);
+});
+
+test("approval denial safely blocks the workflow and records denial history", () => {
+  const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
+  const patchStage = session.stages[1]!;
+  const denied = advanceEliteAgentWorkflow(session, {
+    stageId: patchStage.stageId,
+    action: "DENY_STAGE_APPROVAL",
+    reason: "Approval denied by operator.",
+    now: "2026-05-12T12:16:00.000Z",
+  });
+
+  assert.equal(denied.status, "BLOCKED");
+  assert.equal(denied.stages[1]?.approvalState, "REJECTED");
+  assert.equal(denied.approvalEvents.at(-1)?.approvalGateState, "APPROVAL_DENIED");
+  assert.match(denied.blockedStageReason ?? "", /denied/i);
+  const stillBlocked = advanceEliteAgentWorkflow(denied, { stageId: patchStage.stageId, action: "START_STAGE" });
+  assert.equal(stillBlocked.status, "BLOCKED");
+  assert.equal(stillBlocked.stages[1]?.approvalState, "REJECTED");
 });
 
 test("validation-required stages support validation pending and success before completion", () => {

@@ -49,6 +49,7 @@ Route: `/operator/agents`
 9. Open `Show Technical Details` only when lifecycle states, approval checkpoints, validation checkpoints, blocked reasons, path scope, or rollback markers need deeper review.
 10. Review recent workflow history after a workflow has been created or updated.
 11. For blocked workflows, read `Safe Recovery Path` before opening technical details.
+12. For approval-gated workflows, read `Approval Required` before approving or denying a stage.
 
 Screenshot TODO: `/operator/agents` workflow selection and active workflow cards.
 
@@ -89,6 +90,9 @@ Workflow cards may show these actions:
 - `Show Required Runtime`: explains which runtime or approved route is missing.
 - `Convert to Safe Planning Workflow`: creates a planning-only recovery workflow while the original blocked workflow remains visible.
 - `Review Scope`: shows allowed paths, blocked paths, and mutation boundaries before approval.
+- `Approve This Step`: records operator approval for the displayed supervised stage only.
+- `Deny Approval`: records denial and keeps the workflow safely stopped.
+- `Explain Risk`: explains why approval is required, what can go wrong, what AI-E may do, what AI-E may not do, and what validation should follow.
 
 These buttons do not grant new backend authority. They use the existing supervised workflow runtime and preserve approval, validation, path-scope, and blocked-state rules.
 
@@ -205,6 +209,42 @@ Look for:
 
 Screenshot TODO: approval checkpoint view for a `PREPARE_PATCH` workflow.
 
+### Approval Required Panel
+
+Approval-gated workflow cards show `Approval Required` before the operator approves or denies a stage.
+
+Fields shown:
+
+- action being approved
+- workflow stage
+- allowed path scope
+- mutation permission
+- validation requirement
+- rollback availability
+- risk level
+- what happens after approval
+
+### Engineering Explanation
+
+The approval panel is a supervised action gate over the workflow engine. `Approve This Step` records approval for one stage. `Deny Approval` records a rejected approval state and blocks the workflow. Neither action applies patches, runs Unity, expands shell access, or bypasses validation.
+
+### YouTuber Explanation
+
+AI-E now shows the operator exactly what the approval means before they click yes or no.
+
+### End-User Explanation
+
+Use `Approval Required` to review the action, scope, risk, and next step. Approve only when the displayed stage and path scope match what you intend.
+
+Approval states:
+
+- `APPROVAL_REQUIRED`: an approval gate exists for the workflow.
+- `WAITING_FOR_APPROVAL`: the operator can approve or deny the stage.
+- `APPROVED_BY_OPERATOR`: the operator approved this stage only.
+- `APPROVAL_DENIED`: the operator denied this stage and the workflow stayed stopped.
+
+`Explain Risk` should answer why approval is needed, what could go wrong, what AI-E is allowed to do, what AI-E is not allowed to do, and what validation should happen afterward.
+
 ## Blocked States
 
 Blocked states are intentional. They tell the operator that AI-E respected a governance boundary.
@@ -282,3 +322,4 @@ When reviewing an AI-E operational workflow:
 9. If a workflow is resumable, confirm that approval and validation rules still make sense before continuing.
 10. If a workflow is blocked, use `Explain Blocker` and resolve the missing approval, validation, dependency, or scope issue before continuing.
 11. If `Safe Recovery Path` is visible, choose the safe recovery action before inspecting lifecycle details.
+12. If `Approval Required` is visible, review scope and risk before choosing `Approve This Step` or `Deny Approval`.

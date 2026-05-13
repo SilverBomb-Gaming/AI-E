@@ -3,6 +3,7 @@ import {
   resumeEliteAgentWorkflow,
   summarizeEliteAgentWorkflow,
   type EliteAgentWorkflowApprovalState,
+  type EliteAgentWorkflowApprovalEvent,
   type EliteAgentWorkflowSession,
   type EliteAgentWorkflowSessionStatus,
   type EliteAgentWorkflowStageType,
@@ -29,6 +30,7 @@ export type AgentWorkflowHistoryEntry = {
   blockedStages: Array<{ stageId: string; stageType: EliteAgentWorkflowStageType; reason: string }>;
   validationResults: Array<{ stageId: string; stageType: EliteAgentWorkflowStageType; validationState: EliteAgentWorkflowValidationState }>;
   approvalCheckpoints: Array<{ stageId: string; stageType: EliteAgentWorkflowStageType; approvalState: EliteAgentWorkflowApprovalState }>;
+  approvalEvents: EliteAgentWorkflowApprovalEvent[];
   rollbackAvailable: boolean;
   rollbackPrepared: boolean;
   rollbackReason: string | null;
@@ -46,6 +48,7 @@ export type AgentWorkflowOperationalSummary = {
   blockedStages: string;
   validationResults: string;
   approvalsReceived: string;
+  approvalHistory: string;
   rollbackAvailability: string;
   remainingSteps: string;
   resumeGuidance: string;
@@ -113,6 +116,7 @@ function buildOperationalSummary(session: EliteAgentWorkflowSession, summary: El
     .map((stage) => `${stage.type}: ${stage.blockedReason}`);
   const validationResults = summary.validationCheckpoints.map((checkpoint) => `${checkpoint.stageType}: ${checkpoint.validationState}`);
   const approvals = summary.approvalCheckpoints.map((checkpoint) => `${checkpoint.stageType}: ${checkpoint.approvalState}`);
+  const approvalHistory = session.approvalEvents.map((event) => `${event.stageType}: ${event.approvalGateState} at ${event.at}; result ${event.resultingWorkflowState}`);
   const recoveryGuidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(session);
   const remainingSteps = session.stages
     .filter((stage) => stage.lifecycleState !== "COMPLETED")
@@ -124,6 +128,7 @@ function buildOperationalSummary(session: EliteAgentWorkflowSession, summary: El
     blockedStages: summarizeList(blockedStages, "No blocked stages recorded."),
     validationResults: summarizeList(validationResults, "No validation checkpoints recorded."),
     approvalsReceived: summarizeList(approvals, "No approval checkpoints recorded."),
+    approvalHistory: summarizeList(approvalHistory, "No approval decisions recorded."),
     rollbackAvailability: summary.rollbackAvailable || summary.rollbackPrepared
       ? `Rollback preparation is ${summary.rollbackPrepared ? "prepared" : "available"}${summary.rollbackReason ? `: ${summary.rollbackReason}` : "."}`
       : "Rollback preparation is not available for the current workflow state.",
@@ -176,6 +181,7 @@ export function recordAgentWorkflowHistory(store: AgentWorkflowHistoryStore, ses
     blockedStages,
     validationResults: workflowSummary.validationCheckpoints,
     approvalCheckpoints: workflowSummary.approvalCheckpoints,
+    approvalEvents: [...(session.approvalEvents ?? [])],
     rollbackAvailable: session.rollbackAvailable,
     rollbackPrepared: session.rollbackPrepared,
     rollbackReason: session.rollbackReason,
