@@ -2,6 +2,83 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_AGENT_WORKFLOW_PROGRESSION_CLARITY_PHASE1
+
+AI-E Agents now make workflow progression clearer for human operators. Workflow cards no longer ask the operator to infer whether a button starts, continues, completes, or repeats a step. The active card now shows the current step, current status, what just happened, and the exact next action that moves the workflow forward.
+
+What changed:
+
+- the workflow creation button is labeled `Start Workflow`
+- workflow-step action labels are now state-specific: `Run Current Step`, `Run Approved Step`, `Current Step Running`, `Validation In Progress`, `Workflow Blocked`, or `Workflow Complete`
+- `Complete Step` was renamed to `Mark Current Step Complete`
+- the completion button now explains that it records the current supervised step as finished, not the whole workflow
+- each workflow card now shows a `Current Workflow Step` panel with current step, status, what just happened, and next action
+- stage timelines now visually distinguish `Complete`, `Active`, and `Locked` stages
+- important workflow actions record visible feedback such as approval recorded, stage started, validation waiting, stage completed, workflow completed, and safe conversion created
+- workflow cards scroll into focus after workflow creation, approval, denial, run, validation, completion, resume, save-for-resume, or safe recovery conversion
+- completed workflows show `Workflow Completed` and next options instead of re-emphasizing a confusing run action
+
+Governance preserved:
+
+- no automatic patch application was added
+- no new repo mutation authority was added
+- no Unity execution, shell execution, automatic validation, unrestricted autonomy, unattended execution, AGI behavior, or `autonomous_real` behavior was added
+- workflow progression clarity is a UX layer over the existing supervised workflow model
+
+Current limitations:
+
+- button clarity does not prove external work happened; it only reflects recorded supervised workflow state
+- `Mark Current Step Complete` records operator completion inside the workflow model and still respects validation-required blockers
+- completed workflow cards still rely on the existing local UI state and history store until persistent workflow storage is added
+
+## PRODUCTION_READY_AI_TRUST_ARCHITECTURE_SEED
+
+AI-E now records the strategic direction for production-ready public AI trust systems: hallucinations, jailbreaks, and prompt injection should be treated as architecture problems, not only model problems.
+
+Future public-facing stack:
+
+- base LLM
+- RAG retrieval pipeline
+- guardrails
+- tool-use layer
+- scoped memory
+- permission system
+- sandboxing
+- verification loops
+- audit logs
+- red-team and evaluation suites
+
+Trust architecture backlog:
+
+1. Design the full AI architecture: LLM + RAG + tools + memory + guardrails.
+2. Build a RAG retrieval pipeline with source ranking, citations, and freshness handling.
+3. Add evidence-only answer mode for factual, company, user-data, and support questions.
+4. Add fallback behavior that says "I don't know" or "not enough evidence" when retrieval fails.
+5. Add a hallucination verifier that checks final answers against retrieved sources.
+6. Add a tool-use layer for calculations, APIs, database lookups, code execution, and file-system operations.
+7. Add jailbreak and prompt-injection detection.
+8. Add retrieval sanitization so retrieved docs are untrusted data, not instructions.
+9. Add a scoped permission system for tool and data access.
+10. Add sandboxing, especially for code execution and file operations.
+11. Add output safety and policy checks before final responses.
+12. Add audit logs for prompts, retrieved docs, tool calls, and final responses.
+13. Add a red-team test suite for jailbreaks, prompt injections, poisoned docs, and hallucination traps.
+14. Add evaluation metrics for hallucination rate, citation accuracy, retrieval precision, jailbreak resistance, tool-call success rate, response latency, and user satisfaction.
+15. Prioritize trust architecture because grounding, safety, and verification make AI-E more commercially viable sooner.
+
+Prompt-injection doctrine:
+
+- retrieved content must be treated as data, not instructions
+- risky retrieved sources include webpages, PDFs, Slack messages, GitHub repos, emails, docs, user uploads, and database records
+- system and developer instructions must remain isolated from user input, retrieved documents, tool outputs, and external files
+- retrieved text may support an answer, but it must not override policy, developer instructions, tool permissions, or execution boundaries
+
+No new autonomy claim:
+
+- this seed is roadmap and doctrine, not an implemented public RAG stack
+- no production retrieval pipeline, tool sandbox, hallucination verifier, jailbreak detector, or policy engine was made real by this documentation update alone
+- the current product remains bounded, supervised, approval-aware, and auditable
+
 ## AIE_AGENT_APPROVAL_FLOW_AND_SUPERVISED_ACTION_GATE_PHASE1
 
 AI-E Agents now provide a guided approval flow for supervised workflow actions. Approval is no longer only a status label: approval-gated workflow cards explain what the operator is approving, why approval matters, what scope and risk apply, what happens after approval, and how to approve or deny the stage safely.

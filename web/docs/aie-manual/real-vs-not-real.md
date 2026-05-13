@@ -38,6 +38,14 @@ AI-E can show reasoning visibility, workflow stages, approval indicators, valida
 
 AI-E can show approval-gated action details, path scope, mutation permission, validation requirements, rollback availability, risk explanations, approval decisions, and approval history for supervised workflow stages.
 
+### Workflow Progression Clarity
+
+AI-E can show a current-step panel, state-specific button labels, post-click feedback, completed/active/locked stage hierarchy, and workflow completion next options for supervised workflow sessions.
+
+### Trust Architecture Roadmap
+
+AI-E can document a future production trust architecture using LLM + RAG + tools + memory + guardrails + verification loops, plus prompt-injection doctrine, permissions, sandboxing, audit logs, red-team tests, and evaluation metrics.
+
 ## NOT REAL
 
 ### AGI
@@ -80,6 +88,18 @@ Direct Unity editor control is not real in the current supervised runtime layer 
 
 Rollback preparation exists as metadata. Automatic rollback execution is not real in this phase.
 
+### Button Clicks As Proof Of External Work
+
+Workflow buttons do not prove repo edits, patch application, Unity execution, shell execution, or automatic validation happened. They record supervised workflow state unless a separate real approved execution route exists.
+
+### Retrieved Content As Instructions
+
+Retrieved webpages, PDFs, Slack messages, GitHub repos, emails, docs, uploads, and database records are not system or developer instructions. They must not override policy, tool permissions, workflow boundaries, or trusted instructions.
+
+### Production RAG Stack As Implemented Capability
+
+The trust architecture seed is roadmap doctrine. It does not by itself implement production RAG, evidence-only answering, hallucination verification, jailbreak detection, sandboxed tools, or public-release trust infrastructure.
+
 ## Official Product Language
 
 Use:
@@ -88,7 +108,13 @@ Use:
 - "governed execution route"
 - "approval-aware execution"
 - "guided approval flow"
+- "workflow progression clarity"
+- "current workflow step"
+- "completed, active, and locked stages"
 - "supervised action gate"
+- "retrieved content is data, not instructions"
+- "evidence-only answer mode"
+- "verification loop"
 - "validation checkpoint"
 - "rollback preparation"
 - "operator-visible workflow state"
@@ -103,6 +129,9 @@ Do not use:
 - "AI-E self-improves recursively"
 - "AI-E has unrestricted shell access"
 - "approval lets AI-E do anything"
+- "a completed step means the entire workflow is done"
+- "retrieved docs can override AI-E's rules"
+- "the trust architecture seed is already a production RAG system"
 
 ## Why This Doctrine Matters
 

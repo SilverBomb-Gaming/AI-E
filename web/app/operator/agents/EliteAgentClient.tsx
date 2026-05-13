@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import type { LiteEliteRunResult } from "@/lib/aie/liteEliteAgentRuntime";
 import {
   advanceEliteAgentWorkflow,
@@ -236,7 +236,74 @@ function nextRecommendedAction(workflow: EliteAgentWorkflowSession): string {
   if (summary.status === "RUNNING") {
     return `Wait for ${stageLabel(summary.currentStage).toLowerCase()} to complete.`;
   }
-  return "Run the workflow to continue execution.";
+  return "Run the current step to continue.";
+}
+
+function latestWorkflowEvent(workflow: EliteAgentWorkflowSession): string {
+  const latestApproval = workflow.approvalEvents.at(-1);
+  const latestLog = workflow.logs.at(-1);
+  if (latestApproval?.approvalGateState === "APPROVED_BY_OPERATOR") {
+    return "Approval recorded. The next action is to run the approved step.";
+  }
+  if (latestApproval?.approvalGateState === "APPROVAL_DENIED") {
+    return "Approval denied. The workflow remains safely stopped.";
+  }
+  if (latestLog?.message) {
+    return latestLog.message;
+  }
+  return "Workflow created. Follow the highlighted next action to move forward.";
+}
+
+function activeStageStatus(workflow: EliteAgentWorkflowSession, stage: EliteAgentWorkflowStage | null): string {
+  if (!stage) {
+    return workflow.status === "COMPLETED" ? "Workflow complete" : "No active step";
+  }
+  if (workflow.status === "BLOCKED") {
+    return "Stopped for operator review";
+  }
+  if (stage.approvalState === "PENDING" && stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL") {
+    return "Waiting for operator approval";
+  }
+  if (stage.approvalState === "APPROVED" && stage.lifecycleState === "PENDING") {
+    return "Approved and ready to run";
+  }
+  if (stage.lifecycleState === "RUNNING") {
+    return "Current step is running";
+  }
+  if (stage.lifecycleState === "VALIDATING") {
+    return "Waiting for validation evidence";
+  }
+  if (stage.lifecycleState === "PENDING") {
+    return workflow.completedStageCount > 0 ? "Ready for the next workflow step" : "Ready to start";
+  }
+  return statusLabel(stage.lifecycleState);
+}
+
+function runStepButtonLabel(workflow: EliteAgentWorkflowSession): string {
+  const summary = summarizeEliteAgentWorkflow(workflow);
+  const stage = currentStage(workflow);
+  if (summary.status === "COMPLETED") {
+    return "Workflow Complete";
+  }
+  if (summary.status === "BLOCKED") {
+    return "Workflow Blocked";
+  }
+  if (summary.resumeEligible) {
+    return "Resume Workflow";
+  }
+  if (!stage) {
+    return "No Step Available";
+  }
+  if (stage.lifecycleState === "RUNNING") {
+    return "Current Step Running";
+  }
+  if (stage.lifecycleState === "VALIDATING") {
+    return "Validation In Progress";
+  }
+  if (stage.approvalState === "APPROVED" && stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL") {
+    return "Run Approved Step";
+  }
+  return "Run Current Step";
 }
 
 function resumeUnavailableReason(workflow: EliteAgentWorkflowSession): string | null {
@@ -276,20 +343,57 @@ function primaryActionLabel(workflow: EliteAgentWorkflowSession): string {
     return "Inspect Summary";
   }
   if (summary.status === "RUNNING") {
-    return "Complete Step";
+    return "Mark Current Step Complete";
   }
-  return "Run Workflow";
+  return runStepButtonLabel(workflow);
 }
 
 function StageTimeline({ workflow }: { workflow: EliteAgentWorkflowSession }) {
+  const active = currentStage(workflow);
   return (
-    <ol className="mt-4 flex flex-wrap gap-2">
-      {workflow.stages.map((stage) => (
-        <li key={stage.stageId} className={`rounded-full border px-3 py-1 text-xs font-semibold ${statusClass(stage.lifecycleState.toLowerCase())}`}>
-          {stageLabel(stage.type)}
+    <ol className="mt-4 grid gap-2 sm:grid-cols-3">
+      {workflow.stages.map((stage) => {
+        const isComplete = stage.lifecycleState === "COMPLETED";
+        const isActive = active?.stageId === stage.stageId && workflow.status !== "COMPLETED";
+        const stateLabel = isComplete ? "Complete" : isActive ? "Active" : "Locked";
+        const classes = isComplete
+          ? "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-300/40 dark:bg-emerald-400/10 dark:text-emerald-100"
+          : isActive
+            ? "border-cyan-400 bg-cyan-50 text-cyan-950 ring-2 ring-cyan-400/20 dark:border-cyan-300/60 dark:bg-cyan-400/10 dark:text-cyan-100"
+            : "border-slate-200 bg-slate-50 text-slate-500 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400";
+        return (
+        <li key={stage.stageId} className={`rounded-md border px-3 py-2 text-xs ${classes}`}>
+          <span className="block font-semibold uppercase tracking-[0.12em]">{stateLabel}</span>
+          <span className="mt-1 block font-semibold text-sm normal-case tracking-normal">{stageLabel(stage.type)}</span>
+          <span className="mt-1 block">{statusLabel(stage.lifecycleState)}</span>
         </li>
-      ))}
+        );
+      })}
     </ol>
+  );
+}
+
+function CurrentWorkflowStepPanel({ workflow, feedback }: { workflow: EliteAgentWorkflowSession; feedback?: string }) {
+  const stage = currentStage(workflow);
+  return (
+    <div data-current-step-panel className="mt-3 rounded-md border border-cyan-300 bg-cyan-50 p-4 shadow-sm dark:border-cyan-300/30 dark:bg-cyan-400/10">
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Current Workflow Step</p>
+      <div className="mt-3 grid gap-3 md:grid-cols-3">
+        <div>
+          <p className="text-xs font-semibold text-cyan-700 dark:text-cyan-200">Current Step</p>
+          <p className="mt-1 text-sm font-semibold text-cyan-950 dark:text-cyan-100">{stageLabel(stage?.type ?? null)}</p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold text-cyan-700 dark:text-cyan-200">Status</p>
+          <p className="mt-1 text-sm font-semibold text-cyan-950 dark:text-cyan-100">{activeStageStatus(workflow, stage)}</p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold text-cyan-700 dark:text-cyan-200">Next</p>
+          <p className="mt-1 text-sm font-semibold text-cyan-950 dark:text-cyan-100">{nextRecommendedAction(workflow)}</p>
+        </div>
+      </div>
+      <p className="mt-3 rounded-md border border-cyan-200 bg-white p-3 text-sm leading-6 text-cyan-950 dark:border-cyan-200/20 dark:bg-[#070b12] dark:text-cyan-100"><span className="font-semibold">What just happened:</span> {feedback ?? latestWorkflowEvent(workflow)}</p>
+    </div>
   );
 }
 
@@ -332,20 +436,39 @@ function approvalRiskExplanation(guidance: EliteAgentApprovalGateGuidance): stri
 }
 
 export function EliteAgentClient() {
+  const workflowCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const [result, setResult] = useState<LiteEliteRunResult | null>(null);
   const [workflows, setWorkflows] = useState<EliteAgentWorkflowSession[]>([]);
   const [historyStore, setHistoryStore] = useState<AgentWorkflowHistoryStore>(() => createAgentWorkflowHistoryStore());
   const [workflowPrompt, setWorkflowPrompt] = useState(examplePrompts[0] ?? "inspect the inventory system");
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [summaryWorkflowId, setSummaryWorkflowId] = useState<string | null>(null);
+  const [workflowFeedback, setWorkflowFeedback] = useState<Record<string, string>>({});
+  const [pendingFocusWorkflowId, setPendingFocusWorkflowId] = useState<string | null>(null);
   const [agentReply, setAgentReply] = useState("Ask for a workflow and I will plan the next supervised steps without pretending to have unrestricted execution.");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function upsertWorkflow(workflow: EliteAgentWorkflowSession) {
+  useEffect(() => {
+    if (!pendingFocusWorkflowId) {
+      return;
+    }
+    const target = workflowCardRefs.current[pendingFocusWorkflowId];
+    if (target) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.focus({ preventScroll: true });
+      setPendingFocusWorkflowId(null);
+    }
+  }, [pendingFocusWorkflowId, workflows]);
+
+  function upsertWorkflow(workflow: EliteAgentWorkflowSession, feedback?: string) {
     setWorkflows((current) => [workflow, ...current.filter((entry) => entry.workflowSessionId !== workflow.workflowSessionId)]);
     setHistoryStore((current) => recordAgentWorkflowHistory(current, workflow));
     setSelectedWorkflowId(workflow.workflowSessionId);
+    setPendingFocusWorkflowId(workflow.workflowSessionId);
+    if (feedback) {
+      setWorkflowFeedback((current) => ({ ...current, [workflow.workflowSessionId]: feedback }));
+    }
   }
 
   function submitWorkflow(event: FormEvent<HTMLFormElement>) {
@@ -355,7 +478,8 @@ export function EliteAgentClient() {
       return;
     }
     const workflow = buildWorkflow(prompt);
-    upsertWorkflow(workflow);
+    const feedback = `${workflowCreationSummary(workflow)} Next action: ${nextRecommendedAction(workflow)}`;
+    upsertWorkflow(workflow, feedback);
     setAgentReply(`${workflowCreationSummary(workflow)} Next recommended action: ${nextRecommendedAction(workflow)}`);
   }
 
@@ -389,8 +513,9 @@ export function EliteAgentClient() {
     }
     try {
       const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "START_STAGE" });
-      upsertWorkflow(next);
-      setAgentReply(`${stageLabel(stage.type)} is now running under supervised workflow rules. Next recommended action: ${nextRecommendedAction(next)}`);
+      const feedback = `${stageLabel(stage.type)} started. This is the current supervised step; it has not completed yet.`;
+      upsertWorkflow(next, feedback);
+      setAgentReply(`${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "The workflow could not start safely.");
     }
@@ -399,8 +524,9 @@ export function EliteAgentClient() {
   function resumeWorkflow(workflow: EliteAgentWorkflowSession) {
     try {
       const next = resumeEliteAgentWorkflow(workflow);
-      upsertWorkflow(next);
-      setAgentReply(`Resumed from ${stageLabel(summarizeEliteAgentWorkflow(next).currentStage)}. Approval and validation rules still apply. Next recommended action: ${nextRecommendedAction(next)}`);
+      const feedback = `Resumed from ${stageLabel(summarizeEliteAgentWorkflow(next).currentStage)}. Approval and validation rules still apply.`;
+      upsertWorkflow(next, feedback);
+      setAgentReply(`${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "This workflow is not currently resumable.");
     }
@@ -414,8 +540,9 @@ export function EliteAgentClient() {
     }
     try {
       const next = advanceEliteAgentWorkflow(workflow, { stageId: guidance.stageId, action: "APPROVE_STAGE", reason: "Operator approved this supervised stage only from the Approval Required panel." });
-      upsertWorkflow(next);
-      setAgentReply(`${stageLabel(guidance.workflowStage)} is approved for this stage only. AI-E will not apply files automatically. Next recommended action: ${nextRecommendedAction(next)}`);
+      const feedback = "Approval recorded. The next action is to run the approved step.";
+      upsertWorkflow(next, feedback);
+      setAgentReply(`${feedback} AI-E will not apply files automatically. Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "Approval could not be recorded for this step.");
     }
@@ -429,8 +556,9 @@ export function EliteAgentClient() {
     }
     try {
       const next = advanceEliteAgentWorkflow(workflow, { stageId: guidance.stageId, action: "DENY_STAGE_APPROVAL", reason: "Approval denied by operator from the Approval Required panel." });
-      upsertWorkflow(next);
-      setAgentReply(`${stageLabel(guidance.workflowStage)} approval was denied. The workflow remains safely stopped, and no mutation or execution was performed.`);
+      const feedback = `${stageLabel(guidance.workflowStage)} approval was denied. The workflow remains safely stopped.`;
+      upsertWorkflow(next, feedback);
+      setAgentReply(`${feedback} No mutation or execution was performed.`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "Approval denial could not be recorded for this step.");
     }
@@ -462,8 +590,9 @@ export function EliteAgentClient() {
     }
     try {
       const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "BEGIN_VALIDATION", reason: "Operator opened validation from the workflow guidance card." });
-      upsertWorkflow(next);
-      setAgentReply(`${stageLabel(stage.type)} is now waiting for validation evidence. Next recommended action: ${nextRecommendedAction(next)}`);
+      const feedback = `${stageLabel(stage.type)} is waiting for validation evidence.`;
+      upsertWorkflow(next, feedback);
+      setAgentReply(`${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "Validation could not begin for this workflow.");
     }
@@ -477,8 +606,9 @@ export function EliteAgentClient() {
     }
     try {
       const next = markEliteAgentWorkflowValidation(workflow, { stageId: stage.stageId, validationState: "SUCCESS", reason: "Operator recorded validation evidence as passed from the guidance card." });
-      upsertWorkflow(next);
-      setAgentReply(`Validation passed for ${stageLabel(stage.type)}. Next recommended action: ${nextRecommendedAction(next)}`);
+      const feedback = `Validation passed for ${stageLabel(stage.type)}.`;
+      upsertWorkflow(next, feedback);
+      setAgentReply(`${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "Validation result could not be recorded.");
     }
@@ -492,8 +622,11 @@ export function EliteAgentClient() {
     }
     try {
       const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "COMPLETE_STAGE", reason: "Operator completed the current guided workflow step." });
-      upsertWorkflow(next);
-      setAgentReply(`${stageLabel(stage.type)} completed. Next recommended action: ${nextRecommendedAction(next)}`);
+      const feedback = next.status === "COMPLETED"
+        ? "Workflow completed. You can inspect results or start another workflow."
+        : `${stageLabel(stage.type)} completed. Next step: ${stageLabel(summarizeEliteAgentWorkflow(next).currentStage).toLowerCase()}.`;
+      upsertWorkflow(next, feedback);
+      setAgentReply(`${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "The current step could not be completed safely.");
     }
@@ -508,8 +641,9 @@ export function EliteAgentClient() {
     try {
       const paused = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "PAUSE_WORKFLOW", reason: "Operator saved this workflow for later continuation." });
       const resumable = advanceEliteAgentWorkflow(paused, { stageId: stage.stageId, action: "MARK_RESUMABLE", reason: "This workflow can safely resume from the saved step." });
-      upsertWorkflow(resumable);
-      setAgentReply(`Saved ${stageLabel(stage.type)} for later continuation. Next recommended action: ${nextRecommendedAction(resumable)}`);
+      const feedback = `Saved ${stageLabel(stage.type)} for later continuation.`;
+      upsertWorkflow(resumable, feedback);
+      setAgentReply(`${feedback} Next recommended action: ${nextRecommendedAction(resumable)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "This workflow could not be saved for resume.");
     }
@@ -523,8 +657,9 @@ export function EliteAgentClient() {
     }
     if (actionId === "PREPARE_SAFE_PATCH_INSTEAD" || actionId === "CONVERT_TO_SAFE_PLANNING_WORKFLOW") {
       const safeWorkflow = convertBlockedWorkflowToSafePatchPreparation(workflow, { now: new Date().toISOString() });
-      upsertWorkflow(safeWorkflow);
-      setAgentReply(`Created a safe patch preparation workflow. The original blocked workflow remains visible, automatic application remains blocked, and no patch was applied. Next recommended action: ${nextRecommendedAction(safeWorkflow)}`);
+      const feedback = "Created a safe patch preparation workflow. Automatic application remains blocked, and no patch was applied.";
+      upsertWorkflow(safeWorkflow, feedback);
+      setAgentReply(`${feedback} Next recommended action: ${nextRecommendedAction(safeWorkflow)}`);
       return;
     }
     if (actionId === "REQUEST_APPROVAL") {
@@ -571,7 +706,7 @@ export function EliteAgentClient() {
                   placeholder="inspect the inventory system"
                   className="min-h-11 flex-1 rounded-md border border-slate-300 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 dark:border-white/10 dark:bg-[#070b12] dark:text-zinc-100 dark:placeholder:text-zinc-500"
                 />
-                <button type="submit" className="rounded-md bg-cyan-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-cyan-600 dark:bg-cyan-500 dark:text-[#061018] dark:hover:bg-cyan-400">Run Workflow</button>
+                <button type="submit" className="rounded-md bg-cyan-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-cyan-600 dark:bg-cyan-500 dark:text-[#061018] dark:hover:bg-cyan-400">Start Workflow</button>
               </div>
               <div className="flex flex-wrap gap-2">
                 {examplePrompts.map((prompt) => (
@@ -624,9 +759,15 @@ export function EliteAgentClient() {
               const validatingStage = workflow.stages.find((stage) => stage.lifecycleState === "VALIDATING" && stage.validationState === "PENDING");
               const resumeReason = resumeUnavailableReason(workflow);
               const primary = primaryActionLabel(workflow);
+              const runLabel = runStepButtonLabel(workflow);
               const runDisabled = !activeStage || summary.status === "COMPLETED" || summary.status === "BLOCKED" || activeStage.lifecycleState === "RUNNING" || activeStage.lifecycleState === "VALIDATING" || summary.resumeEligible;
               return (
-                <article key={workflow.workflowSessionId} className={`rounded-lg border bg-white p-5 shadow-sm transition dark:bg-[#0d1420] ${isSelected ? "border-cyan-400 ring-2 ring-cyan-400/20 dark:border-cyan-300/60" : "border-slate-200 dark:border-white/10"}`}>
+                <article
+                  key={workflow.workflowSessionId}
+                  ref={(element) => { workflowCardRefs.current[workflow.workflowSessionId] = element; }}
+                  tabIndex={-1}
+                  className={`scroll-mt-6 rounded-lg border bg-white p-5 shadow-sm outline-none transition focus:ring-2 focus:ring-cyan-400/30 dark:bg-[#0d1420] ${isSelected ? "border-cyan-400 ring-2 ring-cyan-400/20 dark:border-cyan-300/60" : "border-slate-200 dark:border-white/10"}`}
+                >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <h2 className="text-lg font-semibold">{workflow.prompt}</h2>
@@ -640,6 +781,8 @@ export function EliteAgentClient() {
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-zinc-400">AI-E Agent Summary</p>
                     <p className="mt-2 text-sm leading-6 text-slate-700 dark:text-zinc-200">{workflowAssistantSummary(workflow)}</p>
                   </div>
+
+                  <CurrentWorkflowStepPanel workflow={workflow} feedback={workflowFeedback[workflow.workflowSessionId]} />
 
                   <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 p-4 dark:border-cyan-300/20 dark:bg-cyan-400/10">
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Next Recommended Action</p>
@@ -708,11 +851,11 @@ export function EliteAgentClient() {
                   )}
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <ActionButton label="Run Workflow" onClick={() => runWorkflow(workflow)} primary={primary === "Run Workflow"} disabled={runDisabled} />
+                    {summary.status !== "COMPLETED" && !canResume && <ActionButton label={runLabel} onClick={() => runWorkflow(workflow)} primary={!runDisabled && primary === runLabel} disabled={runDisabled} />}
                     <ActionButton label="Resume Workflow" onClick={() => resumeWorkflow(workflow)} disabled={!canResume} primary={primary === "Resume Workflow"} />
                     {pendingValidation && <ActionButton label="Run Validation" onClick={() => runValidation(workflow)} primary={primary === "Run Validation"} />}
                     {validatingStage && <ActionButton label="Record Validation Pass" onClick={() => recordValidationPass(workflow)} primary />}
-                    {summary.status === "RUNNING" && !pendingValidation && !validatingStage && <ActionButton label="Complete Step" onClick={() => completeCurrentStep(workflow)} primary={primary === "Complete Step"} />}
+                    {summary.status === "RUNNING" && !pendingValidation && !validatingStage && <ActionButton label="Mark Current Step Complete" onClick={() => completeCurrentStep(workflow)} primary={primary === "Mark Current Step Complete"} />}
                     {!canResume && summary.status !== "COMPLETED" && summary.status !== "BLOCKED" && <ActionButton label="Save for Resume" onClick={() => saveForResume(workflow)} />}
                     <ActionButton label="Inspect" onClick={() => setSelectedWorkflowId(workflow.workflowSessionId)} />
                     <ActionButton label={showSummary ? "Hide Summary" : "Inspect Summary"} onClick={() => setSummaryWorkflowId(showSummary ? null : workflow.workflowSessionId)} primary={primary === "Inspect Summary"} />
@@ -721,6 +864,10 @@ export function EliteAgentClient() {
                   </div>
 
                   {resumeReason && <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-zinc-400">{resumeReason}</p>}
+
+                  {summary.status === "RUNNING" && !pendingValidation && !validatingStage && (
+                    <p className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">Mark Current Step Complete records that the current supervised step finished. It does not mean the entire workflow is complete.</p>
+                  )}
 
                   {summary.status === "COMPLETED" && (
                     <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-300/30 dark:bg-emerald-400/10">

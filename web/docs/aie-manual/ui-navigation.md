@@ -41,15 +41,16 @@ Route: `/operator/agents`
 1. Open `/operator/agents`.
 2. Use the field labeled "Ask an AI-E Agent to help with a workflow".
 3. Enter a plain-language request or choose an example prompt chip.
-4. Select `Run Workflow` to create a supervised step-by-step workflow.
+4. Select `Start Workflow` to create a supervised step-by-step workflow.
 5. Read the `AI-E Agent Summary` to understand what the workflow is doing and whether approval is needed.
-6. Read `Next Recommended Action`; treat it as the primary guidance layer.
-7. Use the emphasized action button first when it matches the operator's intent.
-8. Use other workflow card action buttons such as `Run Workflow`, `Resume Workflow`, `Run Validation`, `Inspect Summary`, `Explain Blocker`, `Request Approval`, or `Save for Resume` when available.
-9. Open `Show Technical Details` only when lifecycle states, approval checkpoints, validation checkpoints, blocked reasons, path scope, or rollback markers need deeper review.
-10. Review recent workflow history after a workflow has been created or updated.
-11. For blocked workflows, read `Safe Recovery Path` before opening technical details.
-12. For approval-gated workflows, read `Approval Required` before approving or denying a stage.
+6. Read `Current Workflow Step` to see the active step, status, what just happened, and the exact next action.
+7. Read `Next Recommended Action`; treat it as the primary guidance layer.
+8. Use the emphasized action button first when it matches the operator's intent.
+9. Use other workflow card action buttons such as `Run Current Step`, `Run Approved Step`, `Resume Workflow`, `Run Validation`, `Inspect Summary`, `Explain Blocker`, `Request Approval`, or `Save for Resume` when available.
+10. Open `Show Technical Details` only when lifecycle states, approval checkpoints, validation checkpoints, blocked reasons, path scope, or rollback markers need deeper review.
+11. Review recent workflow history after a workflow has been created or updated.
+12. For blocked workflows, read `Safe Recovery Path` before opening technical details.
+13. For approval-gated workflows, read `Approval Required` before approving or denying a stage.
 
 Screenshot TODO: `/operator/agents` workflow selection and active workflow cards.
 
@@ -65,9 +66,12 @@ Beginner-facing controls appear first:
 - example prompt chips
 - compact workflow cards
 - AI-E Agent Summary panels
+- Current Workflow Step panels
 - Next Recommended Action panels
 - current step labels
+- completed, active, and locked stage hierarchy
 - action buttons for the next operator decision
+- post-click feedback messages
 - disabled action explanations
 - an empty state when no workflows exist
 
@@ -77,7 +81,13 @@ Operator and engineering details remain available through expandable technical p
 
 Workflow cards may show these actions:
 
-- `Run Workflow`: starts the current supervised step when allowed.
+- `Start Workflow`: creates a workflow from the prompt at the top of the page.
+- `Run Current Step`: starts the active pending stage when previous stages are complete.
+- `Run Approved Step`: starts the active approved stage without claiming file application or validation.
+- `Current Step Running`: disabled label showing the active step is already running.
+- `Validation In Progress`: disabled label showing the active step is waiting for validation evidence.
+- `Workflow Blocked`: disabled label showing the workflow stopped on a governance boundary.
+- `Workflow Complete`: disabled label showing the workflow has no runnable stages left.
 - `Resume Workflow`: continues a workflow only when resume state is eligible.
 - `Run Validation`: opens a validation checkpoint for a running validation-required step.
 - `Record Validation Pass`: records operator-provided validation success for a validating step.
@@ -93,10 +103,56 @@ Workflow cards may show these actions:
 - `Approve This Step`: records operator approval for the displayed supervised stage only.
 - `Deny Approval`: records denial and keeps the workflow safely stopped.
 - `Explain Risk`: explains why approval is required, what can go wrong, what AI-E may do, what AI-E may not do, and what validation should follow.
+- `Mark Current Step Complete`: records that the current supervised step finished; it does not mean the whole workflow is complete.
 
 These buttons do not grant new backend authority. They use the existing supervised workflow runtime and preserve approval, validation, path-scope, and blocked-state rules.
 
 Unavailable buttons are intentionally disabled. For example, `Resume Workflow` stays disabled until the workflow is saved for resume or otherwise becomes resume eligible. The card explains why the action is unavailable.
+
+### Current Workflow Step
+
+The `Current Workflow Step` panel is the active-stage focus area. It shows:
+
+- current step
+- status
+- what just happened
+- next action
+
+Example after approval:
+
+```text
+Current Step: Prepare safe patch
+Status: Approved and ready to run
+What just happened: Approval recorded. The next action is to run the approved step.
+Next: Run the approved step.
+```
+
+This panel prevents the operator from confusing approval, execution, completion, and validation.
+
+### Stage Hierarchy
+
+Workflow timelines visually separate:
+
+- `Complete`: the step was recorded as finished
+- `Active`: the current step that needs attention
+- `Locked`: planned future steps that are not ready yet
+
+Operators should follow the `Active` marker instead of treating all stages as equally important.
+
+### Post-Click Feedback and Focus
+
+After important actions, the changed workflow card scrolls into focus and updates `What just happened`.
+
+Examples:
+
+- `Approval recorded. The next action is to run the approved step.`
+- `Read project context completed. Next step: prepare safe patch.`
+- `Prepare safe patch is waiting for validation evidence.`
+- `Workflow completed. You can inspect results or start another workflow.`
+
+### Workflow Completion
+
+When every stage is complete, the card shows `Workflow Completed` with next options to inspect results, start another workflow, or review technical details. It should not re-emphasize a run action after completion.
 
 ### Next-Step Guidance
 
@@ -244,6 +300,22 @@ Approval states:
 - `APPROVAL_DENIED`: the operator denied this stage and the workflow stayed stopped.
 
 `Explain Risk` should answer why approval is needed, what could go wrong, what AI-E is allowed to do, what AI-E is not allowed to do, and what validation should happen afterward.
+
+## Production Trust Architecture Seed
+
+Future AI-E public-facing systems should be designed as trust architecture, not just a model prompt. The target stack is base LLM plus RAG, tools, memory, guardrails, permissions, sandboxing, verification loops, audit logs, red-team tests, and evaluation metrics.
+
+### Engineering Explanation
+
+RAG sources should be ranked, cited, freshness-checked, and treated as untrusted data. Evidence-only answer mode should answer only from retrieved support for factual, company, user-data, and support questions. A verifier should check the final response against retrieved sources before delivery.
+
+### YouTuber Explanation
+
+AI-E needs receipts and safety rails: find sources, cite them, verify the answer, restrict tools, and block poisoned instructions.
+
+### End-User Explanation
+
+For important factual answers, AI-E should show evidence or admit when it does not know. Uploaded files, webpages, emails, or docs should not be able to secretly change AI-E's rules.
 
 ## Blocked States
 

@@ -72,6 +72,62 @@ AI-E should not just show a status badge. It should say what is happening, why i
 
 Look for `Next Recommended Action` first. It tells you whether to run the workflow, request approval, run validation, resume, inspect results, or resolve a blocker.
 
+## Workflow Progression Clarity
+
+### Engineering Explanation
+
+The `/operator/agents` workflow card now separates workflow creation, current-stage execution, stage completion, validation, approval, and final completion. Button labels are derived from workflow state so the same control does not imply start, repeat, advance, and finish at the same time.
+
+### YouTuber Explanation
+
+AI-E should feel like a guided wizard: here is what happened, here is the active step, here is what is already done, and here is the exact button that moves the job forward.
+
+### User Explanation
+
+Read `Current Workflow Step`. It shows where you are, what just happened, and what to do next. If a step is running, `Mark Current Step Complete` only marks that one step finished.
+
+## Button Meaning Guide
+
+### Engineering Explanation
+
+`Start Workflow` creates the supervised workflow from the prompt. `Run Current Step` starts the active pending stage. `Run Approved Step` starts the approved mutation-sensitive stage without claiming file application. `Mark Current Step Complete` records that the current supervised stage finished, while validation-required stages still require validation evidence before completion.
+
+### YouTuber Explanation
+
+The buttons now say what they do. Start means start, run means run the active step, and mark complete means record that this one step is done.
+
+### User Explanation
+
+Use the button that matches the `Next` line in the current-step panel. When the workflow is complete, AI-E says `Workflow Completed` instead of asking you to run it again.
+
+## Stage Hierarchy
+
+### Engineering Explanation
+
+The stage timeline now separates `Complete`, `Active`, and `Locked` stages. Completed steps are visually de-emphasized as finished, the current stage is highlighted, and upcoming steps stay locked until ordered progression allows them.
+
+### YouTuber Explanation
+
+The workflow now has a visual path: done steps, the step you are on, and future steps that are not ready yet.
+
+### User Explanation
+
+Look for `Active` to know what AI-E is waiting on right now. `Locked` steps are planned but not ready.
+
+## Focus and Feedback
+
+### Engineering Explanation
+
+Important actions update the workflow feedback message and focus the affected workflow card. This includes workflow creation, stage start, approval, denial, validation, stage completion, resume, save-for-resume, and safe recovery conversion.
+
+### YouTuber Explanation
+
+After a click, AI-E brings you back to the changed card and tells you what changed.
+
+### User Explanation
+
+After you click an important button, watch the highlighted workflow card. The `What just happened` line explains the result.
+
 ## Blocked Workflow Recovery
 
 ### Engineering Explanation
@@ -155,6 +211,48 @@ AI-E can show the approval trail: what was requested, what was approved or denie
 ### User Explanation
 
 Recent Workflow History keeps approval decisions visible so the operator can audit what happened later.
+
+## Production-Ready AI Trust Architecture Seed
+
+### Engineering Explanation
+
+Future public-facing AI-E trust architecture should combine a base LLM with RAG, tools, scoped memory, guardrails, permission checks, sandboxing, verification loops, audit logs, red-team testing, and evaluation metrics. Hallucination, jailbreak, and prompt-injection failures should be handled as architecture failures requiring evidence, isolation, and verification.
+
+### YouTuber Explanation
+
+The goal is not just "use a smarter model." The production system needs sources, checks, tool limits, memory rules, safety filters, and a second pass that catches bad answers before users see them.
+
+### User Explanation
+
+For public use, AI-E should answer from trusted evidence when facts matter, say when it does not know, limit what tools can do, and keep records of important decisions.
+
+## RAG, Evidence, and Verification
+
+### Engineering Explanation
+
+RAG retrieves candidate sources, ranks them, checks freshness, cites evidence, and feeds the answer layer with bounded context. Evidence-only answer mode should reject unsupported claims. A hallucination verifier should compare the final answer against retrieved sources before response delivery.
+
+### YouTuber Explanation
+
+AI-E should bring receipts: find the right docs, cite them, and check that the answer matches those docs.
+
+### User Explanation
+
+When a question depends on facts, AI-E should show what evidence it used or say there is not enough evidence.
+
+## Prompt-Injection Doctrine
+
+### Engineering Explanation
+
+Retrieved content is untrusted data, not instructions. Webpages, PDFs, Slack messages, GitHub repos, emails, docs, user uploads, and database records must not override system instructions, developer instructions, tool permissions, policy checks, or execution boundaries.
+
+### YouTuber Explanation
+
+Documents can inform AI-E, but they cannot boss AI-E around.
+
+### User Explanation
+
+AI-E should not obey hidden instructions found inside uploaded files, webpages, emails, or retrieved docs.
 
 ## Workflow Assistant Summaries
 

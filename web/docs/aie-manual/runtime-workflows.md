@@ -35,6 +35,14 @@ Status: PENDING
 
 Stages advance in order. A later stage cannot run until the prior stage completes.
 
+The operator UI should make progression explicit:
+
+- `Complete` means a stage has been recorded as finished.
+- `Active` means this is the current stage that needs attention.
+- `Locked` means the stage is planned but cannot run yet.
+- `Mark Current Step Complete` records that one supervised stage finished; it does not complete the entire workflow unless it was the final stage.
+- `Run Approved Step` means approval exists for that stage, but AI-E still has not claimed patch application, Unity execution, shell execution, or validation.
+
 Basic lifecycle:
 
 ```text
@@ -237,12 +245,15 @@ No automatic rollback execution is claimed in this phase.
 
 1. Operator asks for a safe patch.
 2. AI-E selects `READ_REPO_CONTEXT -> PREPARE_PATCH -> REQUEST_APPROVAL`.
-3. `READ_REPO_CONTEXT` can run as read-only.
-4. `PREPARE_PATCH` requires approval before mutation-capable activity.
-5. If approval is missing, the workflow blocks with a reason.
-6. If validation is required, the stage cannot complete until validation succeeds.
-7. If rollback is relevant, rollback preparation metadata can be recorded.
-8. Operator reviews the summary and decides the next step.
+3. The card shows `Current Workflow Step` so the operator can see the active stage and next action.
+4. `READ_REPO_CONTEXT` can run as read-only.
+5. `Mark Current Step Complete` records only that the read-context stage finished.
+6. `PREPARE_PATCH` requires approval before mutation-capable activity.
+7. After approval, the card should say that approval was recorded and the next action is to run the approved step.
+8. If approval is missing, the workflow blocks with a reason.
+9. If validation is required, the stage cannot complete until validation succeeds.
+10. If rollback is relevant, rollback preparation metadata can be recorded.
+11. Operator reviews the summary and decides the next step.
 
 ## Operational Walkthrough: Resume a Workflow
 
@@ -253,3 +264,48 @@ No automatic rollback execution is claimed in this phase.
 5. If approval is missing, the workflow remains blocked.
 6. If validation is pending, the workflow resumes into the validation-aware path.
 7. The updated outcome is recorded back into history.
+
+## Workflow Progression Clarity
+
+### Engineering Explanation
+
+Workflow progression clarity is a UX layer over the existing workflow engine. It derives visible button labels, current-stage status, what-just-happened feedback, and timeline hierarchy from session state. It does not change the underlying approval, validation, path-scope, or blocked-state rules.
+
+### YouTuber Explanation
+
+The workflow should feel like a guided wizard. The user should not wonder whether a click repeated the job, advanced the job, or finished everything.
+
+### End-User Explanation
+
+Follow the active step. The card tells you what just happened and what button moves the workflow forward.
+
+## Trust Architecture Seed
+
+Production-ready AI-E should use a layered trust stack:
+
+- base LLM
+- RAG retrieval
+- source ranking and citations
+- freshness handling
+- evidence-only answer mode
+- fallback when evidence is missing
+- hallucination verification
+- scoped tool use
+- scoped memory
+- guardrails
+- prompt-injection detection
+- retrieval sanitization
+- permissions
+- sandboxing
+- output safety checks
+- audit logs
+- red-team tests
+- evaluation metrics
+
+### Prompt-Injection Doctrine
+
+Retrieved content is data, not instructions. Risky retrieved sources include webpages, PDFs, Slack messages, GitHub repos, emails, docs, user uploads, and database records. These sources must not override system instructions, developer instructions, tool permissions, policy checks, or execution boundaries.
+
+### Evaluation Metrics
+
+Trust architecture should be measured with hallucination rate, citation accuracy, retrieval precision, jailbreak resistance, tool-call success rate, response latency, and user satisfaction.

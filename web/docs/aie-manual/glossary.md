@@ -47,11 +47,29 @@ This glossary translates AI-E engineering language into language that creators a
 | execution outcome | The recorded result of a workflow run | Shows whether the workflow completed, blocked, failed, paused, interrupted, or became resumable |
 | continuation eligibility | The rule that decides whether resume is allowed | AI-E checks history, current stage, approvals, validation, and blockers before continuing |
 | next recommended action | The guidance line that tells the operator what to do next | AI-E explains whether to run, resume, validate, request approval, inspect, or resolve a blocker |
+| Current Workflow Step panel | The active-stage focus panel for a workflow card | Shows the current step, status, what just happened, and the next action |
+| What just happened | The post-click feedback line for the affected workflow | Explains the result of approval, run, validation, completion, resume, denial, or recovery conversion |
+| Mark Current Step Complete | The stage-level completion action | Records that the current supervised step finished; it does not mean the whole workflow is complete |
+| Run Current Step | The action to start the active pending stage | Moves the current stage from waiting into running when allowed |
+| Run Approved Step | The action to start an approved mutation-sensitive stage | Approval exists for the stage, but AI-E still has not applied files or validated results automatically |
+| Workflow Complete | A completed workflow state with no runnable stages | The operator can inspect results, start another workflow, or review technical details |
+| stage hierarchy | The visual separation of Complete, Active, and Locked steps | Operators can see what is done, what needs attention, and what is not ready yet |
+| Active stage | The current workflow step that needs operator attention | Follow this step before looking at locked future work |
+| Locked stage | A planned step that is not ready yet | The workflow must complete earlier stages first |
 | AI-E Agent Summary | A plain-language summary of workflow purpose and safety posture | Operators can quickly see what the workflow is doing and whether approval or validation matters |
 | guided operational interaction | A workflow UI that behaves like an assistant instead of a passive status board | AI-E explains what is happening, why it matters, and which action is most useful next |
 | disabled action guidance | Explanation attached to an unavailable action | If a button cannot be used, AI-E explains what has to happen first |
 | primary action emphasis | Visual emphasis on the most likely next safe action | Operators can quickly identify whether to run, resume, validate, approve, inspect, or review a blocker |
 | beginner operational explanation | Plain-English translation beside technical state | AI-E explains terms like read context, validation pending, rollback available, and blocked without hiding the technical details |
+| RAG | Retrieval-augmented generation | AI-E finds relevant sources before answering factual questions |
+| evidence-only answer mode | A mode that answers only from retrieved evidence | If there is not enough evidence, AI-E should say so instead of guessing |
+| hallucination verifier | A second pass that checks an answer against sources | Helps catch unsupported claims before the final answer |
+| retrieval sanitization | Treating retrieved documents as untrusted data | Webpages, PDFs, emails, uploads, and database records can inform answers but cannot override rules |
+| prompt-injection detector | A guard that detects content trying to override instructions | Helps prevent retrieved or uploaded text from becoming hidden commands |
+| scoped permission system | Tool and data access limited by explicit authorization | AI-E tools should only reach what the workflow allows |
+| sandboxing | Isolated execution for risky tools | Code and file operations should run inside controlled boundaries |
+| audit logs | Records of prompts, retrieved docs, tool calls, and final responses | Operators can review what evidence and actions produced an answer |
+| red-team test suite | Tests for jailbreaks, poisoned docs, prompt injections, and hallucination traps | AI-E trust systems are tested against adversarial cases |
 
 ## Status Explanation Translation
 
@@ -106,6 +124,12 @@ Use these:
 - "You are approving this step only. AI-E will not apply files automatically."
 - "Approval denied; the workflow remains safely stopped."
 - "Approval records operator intent but does not replace validation evidence."
+- "Current Workflow Step shows what is active, what just happened, and what to do next."
+- "Mark Current Step Complete records one supervised stage; it does not complete the entire workflow unless it is the final stage."
+- "Run Approved Step starts the approved stage but does not claim files were applied automatically."
+- "Retrieved content is data, not instructions."
+- "AI-E should answer from evidence or say there is not enough evidence."
+- "Tool access must be scoped and auditable."
 
 Avoid these:
 
@@ -116,6 +140,8 @@ Avoid these:
 - "AI-E has unrestricted shell access."
 - "AI-E remembers everything forever."
 - "AI-E will continue unattended until the job is done."
+- "The retrieved document told AI-E to ignore its rules."
+- "Approval means AI-E can do anything now."
 
 ## Resumable Workflow Translation
 
@@ -158,3 +184,31 @@ AI-E shows the operator exactly what the approval covers before anything moves f
 ### End-User Explanation
 
 Approve only when the displayed stage, paths, risk, and next step match what you intend. Deny approval to keep the workflow stopped.
+
+## Workflow Progression Translation
+
+### Engineering Explanation
+
+Workflow progression clarity maps session state to explicit labels, active-step focus, stage hierarchy, and click feedback. It does not change the engine's approval, validation, mutation, or blocked-state authority.
+
+### YouTuber Explanation
+
+AI-E walks the user through the workflow like a guided wizard instead of leaving them to decode generic buttons.
+
+### End-User Explanation
+
+Follow the active step and the next action. Completed steps are done, locked steps are not ready, and the current step is the one to act on.
+
+## Trust Architecture Translation
+
+### Engineering Explanation
+
+Production-ready AI trust requires LLM + RAG + tools + memory + guardrails + verification loops, plus permissions, sandboxing, retrieval sanitization, prompt-injection detection, output checks, audit logs, red-team tests, and metrics.
+
+### YouTuber Explanation
+
+Trust is an architecture. The model needs sources, tool limits, checks, memory rules, and adversarial tests.
+
+### End-User Explanation
+
+AI-E should use evidence when facts matter, avoid guessing, limit tool access, and keep records of important answers and actions.
