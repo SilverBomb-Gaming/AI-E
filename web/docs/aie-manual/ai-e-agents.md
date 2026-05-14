@@ -226,6 +226,20 @@ AI-E should feel like a guided wizard: here is what happened, here is the active
 
 Read `Workflow Progress` first for the overall state, then read `Current Workflow Step` for the active stage. If a step is running, `Mark Current Step Complete` only marks that one step finished. The workflow is not finished until AI-E shows `Workflow Complete`.
 
+## Conversation-First Operational UX
+
+### Engineering Explanation
+
+Operational workflow cards now default to a compact `Operational Result` surface. The workflow engine still tracks lifecycle, approval, validation, execution state, history, and metadata, but the default card only foregrounds the conversational outcome, lightweight progress, next meaningful action, and compact execution truth. Full operational details are available through `View Technical Details`. This intentionally converges on familiar chat-first AI patterns while preserving AI-E's distinct governed execution model underneath.
+
+### YouTuber Explanation
+
+The engine is still there, but it no longer takes over the screen. AI-E can feel familiar, like a modern AI assistant, while being different where it matters: approvals, truth boundaries, and not pretending work happened.
+
+### User Explanation
+
+Read `Operational Result` first. Use the visible approval or next-action buttons when AI-E needs you. Open `View Technical Details` only when you want the workflow timeline, approval boundary internals, full execution-state panel, or technical metadata. Familiar chat layout is expected; AI-E's difference is the operational honesty behind the conversation.
+
 ## Execution State Clarity
 
 ### Engineering Explanation

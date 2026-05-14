@@ -2,6 +2,38 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_CONVERSATION_FIRST_OPERATIONAL_UX_SIMPLIFICATION
+
+Human testing after execution-state clarity showed that the workflow engine is now believable enough to stop proving itself on every card. The next UX frontier is operational complexity compression: preserve truth, governance, approvals, and lifecycle realism while making the default experience feel conversational and immediate.
+
+Follow-up product realization:
+
+- AI-E does not need visual eccentricity to be differentiated
+- familiar chat-first patterns are interaction-pattern convergence, not product weakness
+- differentiation should come from operational behavior, truth architecture, governed escalation, and non-fake execution claims
+- workflows should become quiet infrastructure beneath a familiar conversational assistant surface
+
+Implementation update:
+
+- operational workflow cards now default to a compact `Operational Result` surface instead of a dashboard-like stack of panels
+- the default surface shows the current conversational outcome, lightweight progress, next meaningful action, and a compact execution truth line
+- detailed workflow panels now sit behind `View Technical Details`, including full execution state, workflow progress, current step, timeline, approval internals, recovery internals, and technical metadata
+- completion no longer keeps expanding into repeated lifecycle panels; final actions stay visible while machinery remains optional
+- the familiar interaction goal is ask, lightweight processing/result, approval if required, completion, and optional technical detail
+
+Trust boundary:
+
+- execution-state truth remains present in the compact line
+- technical details remain available on demand
+- approval CTAs remain prominent when needed
+- no workflow simplification implies mutation, validation, playtest confirmation, deployment, or hidden execution
+
+UX principle:
+
+- AI-E should feel like a conversational operational game-development assistant with trustworthy workflow infrastructure in the background
+- users should experience ask, processing/result, approval if needed, and completion before they encounter workflow ontology
+- familiar UI patterns are acceptable when AI-E's operational truthfulness remains the differentiator
+
 ## AIE_EXECUTION_STATE_CLARITY_AND_MUTATION_STATUS_FRONTIER
 
 Human testing confirmed that the supervised workflow UI is now believable enough that `Workflow Complete` and `100%` can be emotionally interpreted as actual implementation completion. That is only safe if AI-E visibly separates workflow lifecycle from mutation, validation, playtest, and deploy reality.

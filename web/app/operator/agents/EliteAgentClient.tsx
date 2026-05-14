@@ -408,6 +408,18 @@ function workflowExecutionStateItems(workflow: EliteAgentWorkflowSession): Workf
   ];
 }
 
+function compactExecutionTruth(workflow: EliteAgentWorkflowSession): string {
+  const items = workflowExecutionStateItems(workflow);
+  const itemByLabel = Object.fromEntries(items.map((item) => [item.label, item.value]));
+  return [
+    `Workflow ${itemByLabel["Workflow Status"] ?? "Unknown"}`,
+    `Mutation ${itemByLabel["Mutation Status"] ?? "Unknown"}`,
+    `Validation ${itemByLabel["Validation Status"] ?? "Unknown"}`,
+    `Playtest ${itemByLabel["Playtest Status"] ?? "Unknown"}`,
+    `Deploy ${itemByLabel["Deploy Status"] ?? "Unknown"}`,
+  ].join(" | ");
+}
+
 function latestWorkflowEvent(workflow: EliteAgentWorkflowSession): string {
   const latestApproval = workflow.approvalEvents.at(-1);
   const latestLog = workflow.logs.at(-1);
@@ -696,6 +708,42 @@ function WorkflowExecutionStatePanel({ workflow }: { workflow: EliteAgentWorkflo
           </div>
         ))}
       </div>
+    </section>
+  );
+}
+
+function ConversationalWorkflowResult({ workflow, feedback }: { workflow: EliteAgentWorkflowSession; feedback?: string }) {
+  const summary = summarizeEliteAgentWorkflow(workflow);
+  const progress = workflowProgress(workflow);
+  const approvalGuidance = buildEliteAgentApprovalGateGuidance(workflow);
+  const active = currentStage(workflow);
+  const waitingForApproval = approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL";
+  const title = summary.status === "COMPLETED"
+    ? "I prepared the workflow result."
+    : waitingForApproval
+      ? "I need your approval to continue."
+      : isEliteAgentWorkflowStageAutoAdvancable(active)
+        ? `Inspecting ${stageLabel(active?.type ?? null).toLowerCase()}...`
+        : "I prepared the next operational step.";
+  const body = feedback ?? workflowAssistantSummary(workflow);
+  return (
+    <section data-conversation-first-workflow className="mt-4 rounded-md border border-cyan-200 bg-cyan-50 p-4 shadow-sm dark:border-cyan-300/20 dark:bg-cyan-400/10">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Operational Result</p>
+          <h3 className="mt-1 text-lg font-semibold text-cyan-950 dark:text-cyan-100">{title}</h3>
+        </div>
+        <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${statusClass(summary.status.toLowerCase())}`}>{statusLabel(summary.status)}</span>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-cyan-950 dark:text-cyan-100">{body}</p>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white dark:bg-[#070b12]" aria-label={`Workflow progress ${progress.percent}%`}>
+        <div className="h-full rounded-full bg-cyan-600 transition-all dark:bg-cyan-300" style={{ width: `${waitingForApproval ? 12 : progress.percent}%` }} />
+      </div>
+      <div className="mt-3 grid gap-2 text-sm text-cyan-950 dark:text-cyan-100 md:grid-cols-[minmax(0,1fr)_auto]">
+        <p className="font-semibold">Next: {nextRecommendedAction(workflow)}</p>
+        <p className="rounded-md border border-cyan-200 bg-white px-3 py-2 text-xs font-semibold text-cyan-900 dark:border-cyan-200/20 dark:bg-[#070b12] dark:text-cyan-100">{waitingForApproval ? "Approval needed" : `${progress.percent}%`}</p>
+      </div>
+      <p className="mt-3 rounded-md border border-amber-200 bg-white p-3 text-xs leading-5 text-amber-900 dark:border-amber-300/20 dark:bg-[#070b12] dark:text-amber-100">{compactExecutionTruth(workflow)}</p>
     </section>
   );
 }
@@ -1516,8 +1564,7 @@ export function EliteAgentClient() {
               const isAutoAdvancingStage = isEliteAgentWorkflowStageAutoAdvancable(activeStage);
               const hasActionBanner = summary.status === "COMPLETED" || approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL" || isAutoAdvancingStage || Boolean(pendingValidation) || canResume || Boolean(recoveryGuidance);
               const runDisabled = !activeStage || isAutoAdvancingStage || summary.status === "COMPLETED" || summary.status === "BLOCKED" || activeStage.lifecycleState === "RUNNING" || activeStage.lifecycleState === "VALIDATING" || summary.resumeEligible;
-              const visibility = workflowVisibility[workflow.workflowSessionId] ?? "full";
-              const showWorkflowRuntime = visibility === "full" || Boolean(expandedWorkflowDetails[workflow.workflowSessionId]);
+              const showWorkflowRuntime = Boolean(expandedWorkflowDetails[workflow.workflowSessionId]);
               const progress = workflowProgress(workflow);
               return (
                 <article
@@ -1535,7 +1582,7 @@ export function EliteAgentClient() {
                     <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${statusClass(summary.status.toLowerCase())}`}>{statusLabel(summary.status)}</span>
                   </div>
 
-                  <WorkflowExecutionStatePanel workflow={workflow} />
+                  <ConversationalWorkflowResult workflow={workflow} feedback={workflowFeedback[workflow.workflowSessionId]} />
 
                   <WorkflowActionBanner
                     workflow={workflow}
@@ -1550,6 +1597,9 @@ export function EliteAgentClient() {
                     onCopyReport={() => copyWorkflowReport(workflow)}
                     onAskFollowUp={() => setWorkflowPrompt(`What should I understand from ${workflow.prompt}?`)}
                   />
+
+                  {showWorkflowRuntime && <>
+                  <WorkflowExecutionStatePanel workflow={workflow} />
 
                   <WorkflowProgressPanel workflow={workflow} hasActionBanner={hasActionBanner} />
 
@@ -1572,22 +1622,14 @@ export function EliteAgentClient() {
                     <p className="mt-2 text-sm leading-6 text-slate-700 dark:text-zinc-200">{workflowAssistantSummary(workflow)}</p>
                   </div>
 
-                  {visibility === "minimal" && !showWorkflowRuntime && (
-                    <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 p-4 dark:border-cyan-300/20 dark:bg-cyan-400/10">
-                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Guided Exploration</p>
-                      <p className="mt-2 text-sm leading-6 text-cyan-950 dark:text-cyan-100">{workflowFeedback[workflow.workflowSessionId] ?? "This is a safe read-only exploration. Runtime details stay minimized until you open them."}</p>
-                      <p className="mt-2 text-sm font-semibold text-cyan-950 dark:text-cyan-100">Next: {nextRecommendedAction(workflow)}</p>
-                    </div>
-                  )}
-
-                  {showWorkflowRuntime && <CurrentWorkflowStepPanel workflow={workflow} feedback={workflowFeedback[workflow.workflowSessionId]} />}
+                  <CurrentWorkflowStepPanel workflow={workflow} feedback={workflowFeedback[workflow.workflowSessionId]} />
 
                   <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 p-4 dark:border-cyan-300/20 dark:bg-cyan-400/10">
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Next Recommended Action</p>
                     <p className="mt-2 text-sm font-semibold leading-6 text-cyan-950 dark:text-cyan-100">{nextRecommendedAction(workflow)}</p>
                   </div>
 
-                  {showWorkflowRuntime && <p className="mt-3 rounded-md border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-600 dark:border-white/10 dark:bg-[#070b12] dark:text-zinc-300">{statusExplanation(summary.status)}</p>}
+                  <p className="mt-3 rounded-md border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-600 dark:border-white/10 dark:bg-[#070b12] dark:text-zinc-300">{statusExplanation(summary.status)}</p>
 
                   {summary.status !== "COMPLETED" && (
                     <p className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
@@ -1597,13 +1639,13 @@ export function EliteAgentClient() {
                     </p>
                   )}
 
-                  {showWorkflowRuntime && <StageTimeline workflow={workflow} />}
+                  <StageTimeline workflow={workflow} />
 
-                  {showWorkflowRuntime && <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
                     <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs text-slate-500 dark:text-zinc-400">Validation</p><p className="mt-1 text-sm font-semibold">{summary.validationCheckpoints[0]?.validationState.replace(/_/g, " ") ?? "Not required"}</p></div>
                     <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs text-slate-500 dark:text-zinc-400">Approval</p><p className="mt-1 text-sm font-semibold">{summary.approvalCheckpoints[0]?.approvalState.replace(/_/g, " ") ?? "Not required"}</p></div>
                     <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs text-slate-500 dark:text-zinc-400">Rollback</p><p className="mt-1 text-sm font-semibold">{summary.rollbackAvailable ? "Available" : "Not needed"}</p></div>
-                  </div>}
+                  </div>
 
                   {summary.blockedStageReason && (
                     <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-300/30 dark:bg-amber-400/10 dark:text-amber-100">{summary.blockedStageReason}</p>
@@ -1666,16 +1708,16 @@ export function EliteAgentClient() {
                       </div>
                     </details>
                   )}
+                  </>}
 
                   <div className="mt-4 flex flex-wrap gap-2">
                     {summary.status !== "COMPLETED" && !canResume && !needsApproval && <ActionButton label={runLabel} onClick={() => runWorkflow(workflow)} primary={!runDisabled && primary === runLabel} disabled={runDisabled} />}
-                    <ActionButton label="Resume Workflow" onClick={() => resumeWorkflow(workflow)} disabled={!canResume} primary={primary === "Resume Workflow"} />
+                    {canResume && <ActionButton label="Resume Workflow" onClick={() => resumeWorkflow(workflow)} primary={primary === "Resume Workflow"} />}
                     {pendingValidation && <ActionButton label="Run Validation" onClick={() => runValidation(workflow)} primary={primary === "Run Validation"} />}
                     {validatingStage && <ActionButton label="Record Validation Pass" onClick={() => recordValidationPass(workflow)} primary />}
                     {summary.status === "RUNNING" && !pendingValidation && !validatingStage && <ActionButton label="Mark Current Step Complete" onClick={() => completeCurrentStep(workflow)} primary={primary === "Mark Current Step Complete"} />}
-                    {!canResume && summary.status !== "COMPLETED" && summary.status !== "BLOCKED" && <ActionButton label="Save for Resume" onClick={() => saveForResume(workflow)} />}
-                    <ActionButton label="Inspect" onClick={() => setSelectedWorkflowId(workflow.workflowSessionId)} />
-                    {visibility === "minimal" && <ActionButton label={showWorkflowRuntime ? "Hide Workflow Details" : "Show Workflow Details"} onClick={() => toggleWorkflowDetails(workflow.workflowSessionId)} />}
+                    {showWorkflowRuntime && !canResume && summary.status !== "COMPLETED" && summary.status !== "BLOCKED" && <ActionButton label="Save for Resume" onClick={() => saveForResume(workflow)} />}
+                    <ActionButton label={showWorkflowRuntime ? "Hide Technical Details" : "View Technical Details"} onClick={() => toggleWorkflowDetails(workflow.workflowSessionId)} />
                     <ActionButton label={showSummary ? "Hide Summary" : "Inspect Summary"} onClick={() => setSummaryWorkflowId(showSummary ? null : workflow.workflowSessionId)} primary={primary === "Inspect Summary"} />
                     {summary.blockedStageReason && !recoveryGuidance && <ActionButton label="Explain Blocker" onClick={() => setAgentReply(blockerExplanation(workflow))} primary={primary === "Explain Blocker"} />}
                     {needsApproval && !approvalGuidance && <ActionButton label="Approve This Step" onClick={() => approveThisStep(workflow)} primary={primary === "Approve This Step"} />}
@@ -1687,7 +1729,7 @@ export function EliteAgentClient() {
                     <p className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">Mark Current Step Complete records that the current supervised step finished. It does not mean the entire workflow is complete.</p>
                   )}
 
-                  {summary.status === "COMPLETED" && (
+                  {showWorkflowRuntime && summary.status === "COMPLETED" && (
                     <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-300/30 dark:bg-emerald-400/10">
                       <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-100">Workflow Complete</p>
                       <p className="mt-2 text-sm leading-6 text-emerald-800 dark:text-emerald-100">AI-E finished {workflowPurposeSentence(workflow)}. This is the final workflow lifecycle state; mutation, validation, playtest, and deploy remain separate statuses above.</p>
