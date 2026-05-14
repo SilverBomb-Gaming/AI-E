@@ -25,6 +25,7 @@ Implementation update:
 Trust boundary:
 
 - the sticky banner does not auto-approve workflows
+- completed workflows transition the banner into passive final-state guidance instead of leaving active operational controls visible
 - approvals, denial, scope review, and risk explanation remain explicit
 - AI-E still does not claim file application, Unity/browser validation, commits, pushes, deployment, or external execution without evidence
 

@@ -332,6 +332,8 @@ Before approving, read `Session Scope Approval` or `Approval Required`. It tells
 
 Approval-gated workflow cards now place the primary decision in a sticky `Workflow Action` banner before dense workflow detail. When a concrete dev session waits for approval, the banner says `Approval Needed`, explains the scoped session in one sentence, and keeps `Approve Scoped Session`, `Review Scope`, `Deny Approval`, and `Explain Risk` immediately visible. The full approval boundary metadata remains available below as expandable governance detail.
 
+When the workflow reaches `Workflow Complete`, the banner resolves into passive final-state guidance with summary, report copy, and follow-up actions. Active approval controls must not remain visible after operational finality.
+
 ### YouTuber Explanation
 
 The approval button now has guardrails around it and stays visually anchored: approve the scoped room, deny it, inspect scope, or ask why the approval is risky.

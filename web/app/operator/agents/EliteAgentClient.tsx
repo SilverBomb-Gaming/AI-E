@@ -522,6 +522,9 @@ function WorkflowActionBanner({
   onResume,
   onRunValidation,
   onRecoveryAction,
+  onViewSummary,
+  onCopyReport,
+  onAskFollowUp,
 }: {
   workflow: EliteAgentWorkflowSession;
   onApprove: () => void;
@@ -531,6 +534,9 @@ function WorkflowActionBanner({
   onResume: () => void;
   onRunValidation: () => void;
   onRecoveryAction: (actionId: EliteAgentBlockedWorkflowRecoveryActionId) => void;
+  onViewSummary: () => void;
+  onCopyReport: () => void;
+  onAskFollowUp: () => void;
 }) {
   const summary = summarizeEliteAgentWorkflow(workflow);
   const approvalGuidance = buildEliteAgentApprovalGateGuidance(workflow);
@@ -539,7 +545,25 @@ function WorkflowActionBanner({
   const autoAdvancing = isEliteAgentWorkflowStageAutoAdvancable(currentStage(workflow));
   const waitingForApproval = approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL";
   const showBanner = waitingForApproval || autoAdvancing || Boolean(pendingValidation) || summary.resumeEligible || Boolean(recoveryGuidance);
-  if (!showBanner || summary.status === "COMPLETED") {
+  if (summary.status === "COMPLETED") {
+    return (
+      <div className="mt-4 rounded-md border border-emerald-300 bg-emerald-50 p-4 text-emerald-950 shadow-sm dark:border-emerald-300/40 dark:bg-emerald-400/10 dark:text-emerald-100">
+        <div className="flex flex-col gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-800 dark:text-emerald-100">Workflow Finalized</p>
+            <h3 className="mt-1 text-lg font-semibold">Workflow Complete</h3>
+            <p className="mt-1 max-w-3xl text-sm leading-6">AI-E finished this supervised workflow. No active approval, validation, or blocker action remains.</p>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <ActionButton label="View Summary" onClick={onViewSummary} primary />
+            <ActionButton label="Copy Report" onClick={onCopyReport} />
+            <ActionButton label="Ask Follow-Up" onClick={onAskFollowUp} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (!showBanner) {
     return null;
   }
 
@@ -1400,7 +1424,7 @@ export function EliteAgentClient() {
               const primary = primaryActionLabel(workflow);
               const runLabel = runStepButtonLabel(workflow);
               const isAutoAdvancingStage = isEliteAgentWorkflowStageAutoAdvancable(activeStage);
-              const hasActionBanner = approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL" || isAutoAdvancingStage || Boolean(pendingValidation) || canResume || Boolean(recoveryGuidance);
+              const hasActionBanner = summary.status === "COMPLETED" || approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL" || isAutoAdvancingStage || Boolean(pendingValidation) || canResume || Boolean(recoveryGuidance);
               const runDisabled = !activeStage || isAutoAdvancingStage || summary.status === "COMPLETED" || summary.status === "BLOCKED" || activeStage.lifecycleState === "RUNNING" || activeStage.lifecycleState === "VALIDATING" || summary.resumeEligible;
               const visibility = workflowVisibility[workflow.workflowSessionId] ?? "full";
               const showWorkflowRuntime = visibility === "full" || Boolean(expandedWorkflowDetails[workflow.workflowSessionId]);
@@ -1430,6 +1454,9 @@ export function EliteAgentClient() {
                     onResume={() => resumeWorkflow(workflow)}
                     onRunValidation={() => runValidation(workflow)}
                     onRecoveryAction={(actionId) => handleRecoveryAction(workflow, actionId)}
+                    onViewSummary={() => setSummaryWorkflowId(workflow.workflowSessionId)}
+                    onCopyReport={() => copyWorkflowReport(workflow)}
+                    onAskFollowUp={() => setWorkflowPrompt(`What should I understand from ${workflow.prompt}?`)}
                   />
 
                   <WorkflowProgressPanel workflow={workflow} hasActionBanner={hasActionBanner} />
