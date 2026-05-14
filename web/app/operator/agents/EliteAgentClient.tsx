@@ -225,7 +225,7 @@ function workflowAssistantSummary(workflow: EliteAgentWorkflowSession): string {
     return `${recoveryGuidance?.blockedExplanation ?? `This workflow is blocked before it can continue. ${summary.blockedStageReason ?? "A governance requirement or external dependency is missing."}`} Safe next step: ${recoveryGuidance?.safeAlternative ?? "Resolve the blocker before continuing."}`;
   }
   if (summary.status === "COMPLETED") {
-    return `This workflow completed all ${workflow.stages.length} planned steps. Review the summary or start another workflow.`;
+    return `This workflow completed all ${workflow.stages.length} planned workflow steps. Mutation, gameplay validation, playtest confirmation, and deployment remain separate execution states.`;
   }
   if (summary.resumeEligible) {
     return `This workflow is ready to resume from ${stageLabel(summary.resumeFromStage ?? summary.currentStage)} while keeping the same approval and validation rules.`;
@@ -341,6 +341,71 @@ function workflowActionBannerBody(workflow: EliteAgentWorkflowSession): string {
     return buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow)?.blockedExplanation ?? "AI-E stopped at a governance boundary before continuing.";
   }
   return nextRecommendedAction(workflow);
+}
+
+type ExecutionStateTone = "success" | "warning" | "info" | "danger";
+
+type WorkflowExecutionStateItem = {
+  label: string;
+  value: string;
+  detail: string;
+  tone: ExecutionStateTone;
+};
+
+function executionStateToneClass(tone: ExecutionStateTone): string {
+  const tones: Record<ExecutionStateTone, string> = {
+    success: "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-300/40 dark:bg-emerald-400/10 dark:text-emerald-100",
+    warning: "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-300/40 dark:bg-amber-400/10 dark:text-amber-100",
+    info: "border-cyan-300 bg-cyan-50 text-cyan-950 dark:border-cyan-300/40 dark:bg-cyan-400/10 dark:text-cyan-100",
+    danger: "border-rose-300 bg-rose-50 text-rose-950 dark:border-rose-300/40 dark:bg-rose-400/10 dark:text-rose-100",
+  };
+  return tones[tone];
+}
+
+function workflowExecutionStateItems(workflow: EliteAgentWorkflowSession): WorkflowExecutionStateItem[] {
+  const summary = summarizeEliteAgentWorkflow(workflow);
+  const validationStates = summary.validationCheckpoints.map((checkpoint) => checkpoint.validationState);
+  const hasPendingMutationApproval = workflow.stages.some((stage) => stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL" && stage.approvalState === "PENDING");
+  const preparedPatch = workflow.stages.some((stage) => stage.type === "PREPARE_PATCH" && stage.lifecycleState === "COMPLETED");
+  const validationStatus = validationStates.length === 0
+    ? { value: "Not Run", detail: "No validation evidence is attached to this workflow.", tone: "warning" as const }
+    : validationStates.some((state) => state === "FAILED" || state === "BLOCKED")
+      ? { value: "Failed", detail: "A validation checkpoint failed or was blocked.", tone: "danger" as const }
+      : validationStates.some((state) => state === "PENDING")
+        ? { value: "Pending", detail: "Validation is still waiting for real evidence.", tone: "warning" as const }
+        : { value: "Passed", detail: "Validation evidence was explicitly recorded as passed.", tone: "success" as const };
+  return [
+    {
+      label: "Workflow Status",
+      value: statusLabel(summary.status),
+      detail: summary.status === "COMPLETED" ? "Lifecycle complete only; this does not prove implementation." : statusExplanation(summary.status),
+      tone: summary.status === "COMPLETED" ? "success" : summary.status === "BLOCKED" || summary.status === "FAILED" ? "danger" : "info",
+    },
+    {
+      label: "Mutation Status",
+      value: hasPendingMutationApproval ? "Pending Approval" : "Not Applied",
+      detail: preparedPatch ? "A patch may be prepared, but no repo mutation receipt is attached." : "No file write or repo mutation receipt is attached.",
+      tone: "warning",
+    },
+    {
+      label: "Validation Status",
+      value: validationStatus.value,
+      detail: validationStatus.detail,
+      tone: validationStatus.tone,
+    },
+    {
+      label: "Playtest Status",
+      value: "Not Confirmed",
+      detail: "No gameplay loop or playable-result confirmation is attached.",
+      tone: "warning",
+    },
+    {
+      label: "Deploy Status",
+      value: "Not Deployed",
+      detail: "No staged or live deployment receipt is attached.",
+      tone: "warning",
+    },
+  ];
 }
 
 function latestWorkflowEvent(workflow: EliteAgentWorkflowSession): string {
@@ -552,7 +617,7 @@ function WorkflowActionBanner({
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-800 dark:text-emerald-100">Workflow Finalized</p>
             <h3 className="mt-1 text-lg font-semibold">Workflow Complete</h3>
-            <p className="mt-1 max-w-3xl text-sm leading-6">AI-E finished this supervised workflow. No active approval, validation, or blocker action remains.</p>
+            <p className="mt-1 max-w-3xl text-sm leading-6">AI-E finished this supervised workflow lifecycle. Check Execution State before assuming files changed, gameplay was validated, or anything was deployed.</p>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
             <ActionButton label="View Summary" onClick={onViewSummary} primary />
@@ -607,6 +672,31 @@ function WorkflowActionBanner({
         </div>
       </div>
     </div>
+  );
+}
+
+function WorkflowExecutionStatePanel({ workflow }: { workflow: EliteAgentWorkflowSession }) {
+  const items = workflowExecutionStateItems(workflow);
+  return (
+    <section data-execution-state-panel className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-zinc-400">Execution State</p>
+          <h3 className="mt-1 text-lg font-semibold text-slate-950 dark:text-zinc-100">Workflow completion is not implementation completion</h3>
+        </div>
+        <span className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900 dark:border-amber-300/40 dark:bg-amber-400/10 dark:text-amber-100">Truth boundary</span>
+      </div>
+      <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-zinc-300">AI-E tracks lifecycle, mutation, validation, playtest, and deploy as separate facts. A completed workflow does not automatically mean files changed or gameplay was proven.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {items.map((item) => (
+          <div key={item.label} className={`rounded-md border p-3 ${executionStateToneClass(item.tone)}`}>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] opacity-80">{item.label}</p>
+            <p className="mt-1 text-base font-semibold">{item.value}</p>
+            <p className="mt-2 text-xs leading-5 opacity-90">{item.detail}</p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1445,6 +1535,8 @@ export function EliteAgentClient() {
                     <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${statusClass(summary.status.toLowerCase())}`}>{statusLabel(summary.status)}</span>
                   </div>
 
+                  <WorkflowExecutionStatePanel workflow={workflow} />
+
                   <WorkflowActionBanner
                     workflow={workflow}
                     onApprove={() => approveThisStep(workflow)}
@@ -1598,7 +1690,7 @@ export function EliteAgentClient() {
                   {summary.status === "COMPLETED" && (
                     <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-300/30 dark:bg-emerald-400/10">
                       <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-100">Workflow Complete</p>
-                      <p className="mt-2 text-sm leading-6 text-emerald-800 dark:text-emerald-100">AI-E finished {workflowPurposeSentence(workflow)}. This is the final workflow state, not just the current step ending.</p>
+                      <p className="mt-2 text-sm leading-6 text-emerald-800 dark:text-emerald-100">AI-E finished {workflowPurposeSentence(workflow)}. This is the final workflow lifecycle state; mutation, validation, playtest, and deploy remain separate statuses above.</p>
                       <div className="mt-3 flex flex-wrap gap-2">
                         <ActionButton label="View Summary" onClick={() => setSummaryWorkflowId(workflow.workflowSessionId)} primary />
                         <ActionButton label="Copy Report" onClick={() => copyWorkflowReport(workflow)} />

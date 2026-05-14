@@ -2,6 +2,30 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_EXECUTION_STATE_CLARITY_AND_MUTATION_STATUS_FRONTIER
+
+Human testing confirmed that the supervised workflow UI is now believable enough that `Workflow Complete` and `100%` can be emotionally interpreted as actual implementation completion. That is only safe if AI-E visibly separates workflow lifecycle from mutation, validation, playtest, and deploy reality.
+
+Implementation update:
+
+- operational workflow cards now show an `Execution State` panel near the top of the card
+- the panel independently surfaces `Workflow Status`, `Mutation Status`, `Validation Status`, `Playtest Status`, and `Deploy Status`
+- completed BABYLON-style workflows can show `Workflow Status: Done` while still showing `Mutation Status: Not Applied`, `Validation Status: Not Run`, `Playtest Status: Not Confirmed`, and `Deploy Status: Not Deployed`
+- final workflow banners now describe lifecycle completion and direct operators to the execution-state truth boundary before assuming files changed, gameplay was validated, or anything was deployed
+
+Trust boundary:
+
+- workflow completion does not imply repo mutation
+- patch preparation does not imply file application
+- approval does not imply mutation execution
+- validation status requires explicit validation evidence
+- playtest and deploy remain unconfirmed unless a separate receipt is attached
+
+Product principle:
+
+- AI-E should be the system that never implies work happened when it did not
+- operational realism must increase truthfulness, not create false implementation confidence
+
 ## AIE_APPROVAL_GATE_VISIBILITY_AND_STICKY_ACTION_UX_MILESTONE
 
 Human testing after the session-level approval model confirmed that workflow state could be correct while the interface still felt stalled. The BABYLON prompt created the right supervised workflow and paused at the right approval boundary, but the primary approval action was buried under expanding conversation, summary, progress, and governance detail sections.

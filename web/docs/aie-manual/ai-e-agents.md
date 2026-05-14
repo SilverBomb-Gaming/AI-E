@@ -226,6 +226,20 @@ AI-E should feel like a guided wizard: here is what happened, here is the active
 
 Read `Workflow Progress` first for the overall state, then read `Current Workflow Step` for the active stage. If a step is running, `Mark Current Step Complete` only marks that one step finished. The workflow is not finished until AI-E shows `Workflow Complete`.
 
+## Execution State Clarity
+
+### Engineering Explanation
+
+Operational workflow cards now include an `Execution State` panel near the top of the card. It separates `Workflow Status`, `Mutation Status`, `Validation Status`, `Playtest Status`, and `Deploy Status` so lifecycle completion cannot be confused with repo mutation, gameplay validation, playable confirmation, or deployment.
+
+### YouTuber Explanation
+
+AI-E can say the workflow is done without pretending the game changed. The panel is the truth ledger: did the workflow finish, were files applied, did validation run, was gameplay confirmed, and did anything go live?
+
+### User Explanation
+
+Read `Execution State` before interpreting `Workflow Complete` or `100%`. A workflow can be complete while mutation is still `Not Applied`, validation is `Not Run`, playtest is `Not Confirmed`, and deploy is `Not Deployed`.
+
 ## Button Meaning Guide
 
 ### Engineering Explanation
