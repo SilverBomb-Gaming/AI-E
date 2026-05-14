@@ -1456,8 +1456,38 @@ export function EliteAgentClient() {
                     ))}
                     <div ref={conversationEndRef} aria-hidden="true" />
                   </div>
+                  {selectedWorkflow && (
+                    <div data-inline-operational-intelligence className="rounded-md border border-cyan-300 bg-white p-4 shadow-sm dark:border-cyan-300/30 dark:bg-[#070b12]">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Inline Operational Intelligence</p>
+                          <h3 className="mt-1 text-base font-semibold text-slate-950 dark:text-zinc-100">AI-E is handling the workflow behind this conversation</h3>
+                        </div>
+                        <span className="rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-800 dark:border-cyan-300/20 dark:bg-cyan-400/10 dark:text-cyan-100">Quiet infrastructure</span>
+                      </div>
+                      <ConversationalWorkflowResult workflow={selectedWorkflow} feedback={workflowFeedback[selectedWorkflow.workflowSessionId]} />
+                      <WorkflowActionBanner
+                        workflow={selectedWorkflow}
+                        onApprove={() => approveThisStep(selectedWorkflow)}
+                        onDeny={() => denyApproval(selectedWorkflow)}
+                        onReviewScope={() => reviewApprovalScope(selectedWorkflow)}
+                        onExplainRisk={() => explainApprovalRisk(selectedWorkflow)}
+                        onResume={() => resumeWorkflow(selectedWorkflow)}
+                        onRunValidation={() => runValidation(selectedWorkflow)}
+                        onRecoveryAction={(actionId) => handleRecoveryAction(selectedWorkflow, actionId)}
+                        onViewSummary={() => setSummaryWorkflowId(selectedWorkflow.workflowSessionId)}
+                        onCopyReport={() => copyWorkflowReport(selectedWorkflow)}
+                        onAskFollowUp={() => setWorkflowPrompt(`What should I understand from ${selectedWorkflow.prompt}?`)}
+                      />
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <ActionButton label="View Details" onClick={() => { setSelectedWorkflowId(selectedWorkflow.workflowSessionId); setExpandedWorkflowDetails((current) => ({ ...current, [selectedWorkflow.workflowSessionId]: true })); setPendingFocusWorkflowId(selectedWorkflow.workflowSessionId); }} />
+                        <ActionButton label="Inspect Summary" onClick={() => setSummaryWorkflowId(selectedWorkflow.workflowSessionId)} />
+                        <ActionButton label="Ask Follow-Up" onClick={() => setWorkflowPrompt(`What should I understand from ${selectedWorkflow.prompt}?`)} />
+                      </div>
+                    </div>
+                  )}
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-cyan-800 dark:text-cyan-100">
-                    <p>This is bounded active conversation continuity. Workflow cards remain separate operational state below.</p>
+                    <p>This is the primary AI-E surface. Workflow infrastructure stays available below when you intentionally open it.</p>
                     {copyConversationStatus && <p className="font-semibold">{copyConversationStatus}</p>}
                   </div>
                 </div>
@@ -1546,7 +1576,10 @@ export function EliteAgentClient() {
             </div>
           </section>
         ) : (
-          <section className="grid gap-4 lg:grid-cols-2">
+          <details className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#0d1420]">
+            <summary className="cursor-pointer text-lg font-semibold">Operational Infrastructure</summary>
+            <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-zinc-300">Workflow state, lifecycle details, approval internals, history, and technical metadata live here when you intentionally need the machinery.</p>
+          <section className="mt-4 grid gap-4 lg:grid-cols-2">
             {workflows.map((workflow) => {
               const summary = summarizeEliteAgentWorkflow(workflow);
               const recoveryGuidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow);
@@ -1768,11 +1801,13 @@ export function EliteAgentClient() {
               );
             })}
           </section>
+          </details>
         )}
 
         {recentHistory.length > 0 && (
-          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#0d1420]">
-            <h2 className="text-lg font-semibold">Recent Workflow History</h2>
+          <details className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#0d1420]">
+            <summary className="cursor-pointer text-lg font-semibold">Recent Operational History</summary>
+            <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-zinc-300">Past workflow records stay available for audit and resume context without taking over the conversation.</p>
             <div className="mt-4 grid gap-3 lg:grid-cols-2">
               {recentHistory.map((entry) => {
                 const operationalSummary = summarizeAgentWorkflowHistory(entry);
@@ -1787,7 +1822,7 @@ export function EliteAgentClient() {
                 );
               })}
             </div>
-          </section>
+          </details>
         )}
 
         <details className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#0d1420]">

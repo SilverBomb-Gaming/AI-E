@@ -240,6 +240,20 @@ The engine is still there, but it no longer takes over the screen. AI-E can feel
 
 Read `Operational Result` first. Use the visible approval or next-action buttons when AI-E needs you. Open `View Technical Details` only when you want the workflow timeline, approval boundary internals, full execution-state panel, or technical metadata. Familiar chat layout is expected; AI-E's difference is the operational honesty behind the conversation.
 
+## Inline Operational Intelligence
+
+### Engineering Explanation
+
+The active conversation now owns the primary operational surface. When a supervised workflow exists, AI-E renders inline operational intelligence inside the conversation panel and demotes the workflow-card system behind `Operational Infrastructure`. The same workflow session, approval state, execution truth, and technical details still exist, but they support the conversation instead of becoming the default page architecture.
+
+### YouTuber Explanation
+
+AI-E now behaves more like a chat-native operator. The workflow engine is still doing the serious work, but the user sees the important state and buttons in the conversation instead of being pulled into a workflow dashboard.
+
+### User Explanation
+
+Stay in the conversation first. Use the inline approval and follow-up buttons when they appear. Open `Operational Infrastructure` only when you intentionally want the underlying workflow cards, lifecycle panels, approval internals, or technical metadata.
+
 ## Execution State Clarity
 
 ### Engineering Explanation

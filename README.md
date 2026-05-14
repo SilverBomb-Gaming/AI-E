@@ -2,6 +2,30 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_FINAL_UX_INVERSION_INLINE_OPERATIONAL_INTELLIGENCE
+
+Human testing after workflow compression showed that a compact workflow card still emotionally reads as workflow tooling compressed into chat. The healthier inversion is conversation first: operational states, approvals, progress, and completion should appear inline with the conversation while workflow machinery becomes optional infrastructure.
+
+Implementation update:
+
+- the active conversation now renders `Inline Operational Intelligence` when a supervised workflow exists
+- the inline surface carries the compact operational result, lightweight progress, approval CTA, follow-up actions, and execution truth line
+- the former workflow-card region is demoted behind an `Operational Infrastructure` disclosure
+- details remain available, but the primary experience is now conversation -> inline operation -> approval/result
+
+Trust boundary:
+
+- governed workflow state remains intact behind the conversational shell
+- approval, denial, summary, report copy, and follow-up actions still operate on the same workflow session
+- mutation, validation, playtest, and deploy truth remain visible in compact form
+- optional infrastructure does not imply hidden execution or reduced governance
+
+UX principle:
+
+- workflows quietly support the conversation
+- the conversation is the product surface
+- operational differentiation comes from truthful behavior, not persistent workflow administration UI
+
 ## AIE_CONVERSATION_FIRST_OPERATIONAL_UX_SIMPLIFICATION
 
 Human testing after execution-state clarity showed that the workflow engine is now believable enough to stop proving itself on every card. The next UX frontier is operational complexity compression: preserve truth, governance, approvals, and lifecycle realism while making the default experience feel conversational and immediate.
