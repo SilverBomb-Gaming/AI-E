@@ -189,8 +189,8 @@ const STAGE_DEFINITIONS: Record<EliteAgentWorkflowStageType, Omit<EliteAgentWork
   PREPARE_PATCH: {
     type: "PREPARE_PATCH",
     title: "Prepare scoped patch",
-    mutationPermission: "MUTATION_REQUIRES_APPROVAL",
-    validationRequired: true,
+    mutationPermission: "READ_ONLY",
+    validationRequired: false,
     rollbackSupported: true,
     externalDependencyRequired: false,
   },
@@ -267,6 +267,12 @@ function createWorkflowSessionId(agentId: string, now: string): string {
 
 function selectWorkflowStageTypes(prompt: string): { stageTypes: EliteAgentWorkflowStageType[]; reason: string } {
   const normalizedPrompt = normalizeText(prompt).toLowerCase();
+  if (/\b(dummy|demo|simulate|simulated|simulation|tutorial)\b.*\b(workflow|progress|completion|lifecycle)\b|\b(progress\s+bar|completion\s+state|ux\s+test)\b/.test(normalizedPrompt)) {
+    return {
+      stageTypes: ["READ_REPO_CONTEXT", "VERIFY_BUILD", "GENERATE_REPORT"],
+      reason: "Demo workflow prompt selected a simulation-safe progression chain for UX pacing and completion-state testing.",
+    };
+  }
   if (/apply|auto.?apply|automatically|write it|make the change/.test(normalizedPrompt)) {
     return {
       stageTypes: ["BLOCKED_EXTERNAL_DEPENDENCY"],
@@ -279,10 +285,10 @@ function selectWorkflowStageTypes(prompt: string): { stageTypes: EliteAgentWorkf
       reason: "Verification prompt selected build verification, patch validation, and report generation.",
     };
   }
-  if (/prepare|patch|movement|fix|change/.test(normalizedPrompt)) {
+  if (/prepare|patch|movement|fix|change|modify|update|implement|increase|spawn|zombies?|enemy\s+spawner|gameplay\s+loop|round\s+\d|rounds?/.test(normalizedPrompt)) {
     return {
-      stageTypes: ["READ_REPO_CONTEXT", "PREPARE_PATCH", "REQUEST_APPROVAL"],
-      reason: "Patch preparation prompt selected context reading, scoped patch preparation, and operator approval request.",
+      stageTypes: ["REQUEST_APPROVAL", "READ_REPO_CONTEXT", "PREPARE_PATCH", "GENERATE_REPORT"],
+      reason: "Concrete game-dev change prompt selected session-level approval before context reading, scoped patch preparation, and operator reporting.",
     };
   }
   if (/inspect|inventory|read|review|context/.test(normalizedPrompt)) {
@@ -343,6 +349,19 @@ function createStage(type: EliteAgentWorkflowStageType, order: number, allowedPa
 
 function currentStage(session: EliteAgentWorkflowSession): EliteAgentWorkflowStage | undefined {
   return session.stages.find((stage) => stage.stageId === session.currentStageId);
+}
+
+export function isEliteAgentWorkflowStageAutoAdvancable(stage: EliteAgentWorkflowStage | null | undefined): boolean {
+  if (!stage) {
+    return false;
+  }
+  if (stage.lifecycleState !== "PENDING" && stage.lifecycleState !== "RUNNING") {
+    return false;
+  }
+  return stage.mutationPermission !== "MUTATION_REQUIRES_APPROVAL"
+    && stage.approvalState === "NOT_REQUIRED"
+    && stage.validationRequired === false
+    && stage.externalDependencyRequired === false;
 }
 
 function cloneSession(session: EliteAgentWorkflowSession): EliteAgentWorkflowSession {
@@ -493,7 +512,7 @@ export function advanceEliteAgentWorkflow(session: EliteAgentWorkflowSession, in
     next.logs.push(createLog(now, stage, input.reason ?? "Blocked stage remained blocked.", "BLOCKED"));
     return recomputeSession(next);
   }
-  if (previousStage && previousStage.lifecycleState !== "COMPLETED" && input.action !== "APPROVE_STAGE" && input.action !== "DENY_STAGE_APPROVAL") {
+  if (previousStage && previousStage.lifecycleState !== "COMPLETED" && input.action !== "DENY_STAGE_APPROVAL") {
     throw new Error(`Unsafe workflow transition rejected: ${stage.stageId} cannot run before ${previousStage.stageId} completes.`);
   }
   if ((stage.lifecycleState === "PAUSED" || stage.lifecycleState === "INTERRUPTED") && input.action !== "MARK_RESUMABLE") {
@@ -511,6 +530,9 @@ export function advanceEliteAgentWorkflow(session: EliteAgentWorkflowSession, in
       throw new Error(`Approval was denied for stage ${stage.stageId}; create a new supervised workflow before retrying.`);
     }
     stage.approvalState = "APPROVED";
+    if (stage.type === "REQUEST_APPROVAL") {
+      stage.lifecycleState = "COMPLETED";
+    }
     next.logs.push(createLog(now, stage, input.reason ?? "Stage approved by operator checkpoint.", stage.lifecycleState));
     next.approvalEvents = [...(next.approvalEvents ?? []), createApprovalEvent(now, stage, "APPROVED_BY_OPERATOR", input.reason ?? "Approval granted by operator for this supervised stage only.", next.stages)];
   }
@@ -828,23 +850,29 @@ function approvalRiskLevel(stage: EliteAgentWorkflowStage): EliteAgentApprovalGa
 }
 
 export function buildEliteAgentApprovalGateGuidance(session: EliteAgentWorkflowSession): EliteAgentApprovalGateGuidance | null {
-  const stage = session.stages.find((candidate) => candidate.approvalState === "PENDING" && candidate.mutationPermission === "MUTATION_REQUIRES_APPROVAL")
+  const hasCompletedPriorStages = (candidate: EliteAgentWorkflowStage) => session.stages.slice(0, candidate.order).every((stage) => stage.lifecycleState === "COMPLETED");
+  const stage = session.stages.find((candidate) => candidate.approvalState === "PENDING" && candidate.mutationPermission === "MUTATION_REQUIRES_APPROVAL" && hasCompletedPriorStages(candidate))
     ?? session.stages.find((candidate) => (candidate.approvalState === "REJECTED" || candidate.approvalState === "APPROVED") && candidate.mutationPermission === "MUTATION_REQUIRES_APPROVAL")
-    ?? session.stages.find((candidate) => candidate.approvalState === "PENDING")
+    ?? session.stages.find((candidate) => candidate.approvalState === "PENDING" && hasCompletedPriorStages(candidate))
     ?? session.stages.find((candidate) => candidate.approvalState === "REJECTED" || candidate.approvalState === "APPROVED")
     ?? null;
   if (!stage || stage.approvalState === "NOT_REQUIRED") {
     return null;
   }
+  const isSessionBoundaryApproval = stage.type === "REQUEST_APPROVAL" && stage.order === 0;
   const approvalGateState = approvalGateStateForApprovalState(stage.approvalState);
   const actionBeingApproved = stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL"
     ? "Patch preparation only"
-    : stage.type === "REQUEST_APPROVAL"
-      ? "Operator approval checkpoint"
+    : isSessionBoundaryApproval
+      ? "Scoped dev session boundary"
+      : stage.type === "REQUEST_APPROVAL"
+      ? "Patch mutation authorization"
       : stage.title;
   const whatHappensAfterApproval = stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL"
     ? "AI-E may run the approved patch-preparation step when workflow order reaches it. It will not apply files automatically."
-    : "AI-E records the approval checkpoint and keeps the remaining workflow under supervised ordering.";
+    : isSessionBoundaryApproval
+      ? "AI-E may progress through in-scope, low-risk workflow stages automatically. It will pause if scope, risk, mutation authority, or validation authority changes."
+      : "AI-E records the approval checkpoint. This does not apply files automatically or claim gameplay validation.";
   return {
     title: "Approval Required",
     approvalGateState,
@@ -853,15 +881,15 @@ export function buildEliteAgentApprovalGateGuidance(session: EliteAgentWorkflowS
     stageId: stage.stageId,
     allowedPathScope: [...stage.allowedPathScope],
     mutationPermission: stage.mutationPermission,
-    validationRequirement: stage.validationRequired ? "Validation is required after this stage before it can be considered complete." : "No validation checkpoint is required for this approval stage.",
+    validationRequirement: stage.validationRequired ? "Validation is required after this stage before it can be considered complete." : isSessionBoundaryApproval ? "No validation checkpoint is required for the approval itself; later validation still requires real evidence." : "No validation checkpoint is required for this approval stage.",
     rollbackAvailability: stage.rollbackSupported ? "Rollback preparation metadata can be recorded for operator review." : "Rollback preparation is not available for this stage.",
     riskLevel: approvalRiskLevel(stage),
     whatHappensAfterApproval,
-    whyApprovalRequired: stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL" ? "This stage can prepare mutation-capable work, so a human operator must approve the exact stage before it can run." : "This workflow stage represents an operator approval checkpoint.",
-    whatCouldGoWrong: "Approving the wrong scope could let AI-E prepare work for files or paths the operator did not intend. Approval still does not apply files automatically.",
-    allowedToDo: "AI-E may update supervised workflow state and run only the approved stage inside the existing bounded model when workflow order allows it.",
+    whyApprovalRequired: stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL" ? "This stage can prepare mutation-capable work, so a human operator must approve the exact stage before it can run." : isSessionBoundaryApproval ? "This is the operator-approved room AI-E may work inside before it progresses through concrete game-development workflow steps." : "This workflow stage represents the human decision point before mutation-capable work can be authorized.",
+    whatCouldGoWrong: isSessionBoundaryApproval ? "Approving too broad a session could let AI-E prepare work outside the operator's intended gameplay-loop, zombie spawning, or health-tuning scope. Approval still does not apply files automatically." : "Approving the wrong scope could let AI-E prepare work for files or paths the operator did not intend. Approval still does not apply files automatically.",
+    allowedToDo: isSessionBoundaryApproval ? "AI-E may inspect scoped repo context, prepare scoped patch metadata or a patch proposal, update workflow state, and generate an operator report inside the approved session boundary." : "AI-E may update supervised workflow state and run only the approved stage inside the existing bounded model when workflow order allows it.",
     notAllowedToDo: "AI-E is not allowed to auto-apply patches, mutate files without a real approved route, run Unity, use unrestricted shell access, or continue unattended.",
-    validationAfterward: stage.validationRequired ? "After the approved stage runs, validation evidence must be recorded before completion." : "After approval, continue following the next supervised workflow step.",
+    validationAfterward: stage.validationRequired ? "After the approved stage runs, validation evidence must be recorded before completion." : isSessionBoundaryApproval ? "After session approval, AI-E can progress through low-risk in-scope stages and must still pause for real validation evidence before claiming gameplay success." : "After approval, continue following the next supervised workflow step.",
   };
 }
 

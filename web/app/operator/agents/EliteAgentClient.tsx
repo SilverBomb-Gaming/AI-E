@@ -23,6 +23,7 @@ import {
   buildEliteAgentBlockedWorkflowRecoveryGuidance,
   buildEliteAgentWorkflowSession,
   convertBlockedWorkflowToSafePatchPreparation,
+  isEliteAgentWorkflowStageAutoAdvancable,
   listEliteAgentWorkflowStageDefinitions,
   markEliteAgentWorkflowValidation,
   resumeEliteAgentWorkflow,
@@ -177,18 +178,35 @@ function firstPendingValidation(workflow: EliteAgentWorkflowSession): EliteAgent
   return workflow.stages.find((stage) => stage.validationRequired && stage.validationState === "PENDING" && stage.lifecycleState === "RUNNING") ?? null;
 }
 
+function isSimulationWorkflowPrompt(prompt: string): boolean {
+  const normalized = prompt.toLowerCase();
+  return /\b(dummy|demo|simulate|simulated|simulation|tutorial)\b.*\b(workflow|progress|completion|lifecycle)\b|\b(progress\s+bar|completion\s+state|ux\s+test)\b/.test(normalized);
+}
+
+function isSimulationWorkflow(workflow: EliteAgentWorkflowSession): boolean {
+  return isSimulationWorkflowPrompt(workflow.prompt);
+}
+
 function currentStage(workflow: EliteAgentWorkflowSession): EliteAgentWorkflowStage | null {
   return workflow.stages.find((stage) => stage.stageId === workflow.currentStageId) ?? workflow.stages.find((stage) => stage.lifecycleState !== "COMPLETED") ?? null;
 }
 
 function buildWorkflow(prompt: string): EliteAgentWorkflowSession {
   const sessionSeed = `${Date.now()}-${Math.round(Math.random() * 100000)}`;
-  return buildEliteAgentWorkflowSession({
+  const workflow = buildEliteAgentWorkflowSession({
     agentId: `${sampleAgent.agentId}-workflow-${sessionSeed}`,
     prompt,
     allowedPaths: sampleAgent.allowedPaths,
     forbiddenPaths: sampleAgent.blockedPaths,
   });
+  if (!isSimulationWorkflowPrompt(prompt)) {
+    return workflow;
+  }
+  return {
+    ...workflow,
+    deterministicSelectionReason: `${workflow.deterministicSelectionReason} This is a simulation-aware demo workflow for UX pacing and completion-state testing; it does not execute repo, shell, Unity, or mutation work.`,
+    truthfulCapabilityBoundary: `${workflow.truthfulCapabilityBoundary} Demo workflow progression is simulated UI behavior only and does not relax governance for real operational workflows.`,
+  };
 }
 
 function workflowAssistantSummary(workflow: EliteAgentWorkflowSession): string {
@@ -197,6 +215,12 @@ function workflowAssistantSummary(workflow: EliteAgentWorkflowSession): string {
   const stage = currentStage(workflow);
   const isReadOnly = workflow.stages.every((entry) => entry.mutationPermission !== "MUTATION_REQUIRES_APPROVAL");
   const approval = firstPendingApproval(workflow);
+  if (isSimulationWorkflow(workflow)) {
+    if (summary.status === "COMPLETED") {
+      return `This demo workflow reached 100% and arrived at the completion state. It simulated lifecycle pacing only; no repo, shell, Unity, or mutation work ran.`;
+    }
+    return `This is a simulation-aware demo workflow. It will advance through staged progress automatically so the operator can test pacing, percent movement, and completion arrival without real execution.`;
+  }
   if (summary.status === "BLOCKED") {
     return `${recoveryGuidance?.blockedExplanation ?? `This workflow is blocked before it can continue. ${summary.blockedStageReason ?? "A governance requirement or external dependency is missing."}`} Safe next step: ${recoveryGuidance?.safeAlternative ?? "Resolve the blocker before continuing."}`;
   }
@@ -207,6 +231,9 @@ function workflowAssistantSummary(workflow: EliteAgentWorkflowSession): string {
     return `This workflow is ready to resume from ${stageLabel(summary.resumeFromStage ?? summary.currentStage)} while keeping the same approval and validation rules.`;
   }
   if (approval) {
+    if (approval.type === "REQUEST_APPROVAL" && approval.order === 0) {
+      return `This workflow is waiting for scoped session approval before AI-E works inside ${workflowPurposeSentence(workflow)}.`;
+    }
     return `This workflow includes ${stageLabel(approval.type).toLowerCase()}. Approval is required before mutation-capable work can continue.`;
   }
   if (isReadOnly) {
@@ -217,6 +244,9 @@ function workflowAssistantSummary(workflow: EliteAgentWorkflowSession): string {
 
 function workflowCreationSummary(workflow: EliteAgentWorkflowSession): string {
   const summary = summarizeEliteAgentWorkflow(workflow);
+  if (isSimulationWorkflow(workflow)) {
+    return "AI-E Agent created a simulation-aware demo workflow for progress-bar and completion-state testing.";
+  }
   if (summary.status === "BLOCKED") {
     return "AI-E Agent created a supervised blocked workflow so the missing approval or external route is visible before execution continues.";
   }
@@ -235,6 +265,15 @@ function nextRecommendedAction(workflow: EliteAgentWorkflowSession): string {
   const stage = currentStage(workflow);
   if (summary.status === "COMPLETED") {
     return "Inspect results, start another workflow, or review technical details.";
+  }
+  if (isSimulationWorkflow(workflow)) {
+    return "Watch the simulated workflow progress; AI-E will advance this demo automatically.";
+  }
+  if (buildEliteAgentApprovalGateGuidance(workflow)?.approvalGateState === "WAITING_FOR_APPROVAL") {
+    return "Review the approval scope, then approve or deny the human-gated step.";
+  }
+  if (isEliteAgentWorkflowStageAutoAdvancable(stage)) {
+    return `AI-E is auto-progressing ${stageLabel(stage?.type ?? null).toLowerCase()}; it will pause when human judgment is required.`;
   }
   if (summary.resumeEligible) {
     return `Resume the workflow from ${stageLabel(summary.resumeFromStage ?? summary.currentStage).toLowerCase()}.`;
@@ -283,7 +322,7 @@ function activeStageStatus(workflow: EliteAgentWorkflowSession, stage: EliteAgen
   if (workflow.status === "BLOCKED") {
     return "Stopped for operator review";
   }
-  if (stage.approvalState === "PENDING" && stage.mutationPermission === "MUTATION_REQUIRES_APPROVAL") {
+  if (stage.approvalState === "PENDING") {
     return "Waiting for operator approval";
   }
   if (stage.approvalState === "APPROVED" && stage.lifecycleState === "PENDING") {
@@ -293,12 +332,63 @@ function activeStageStatus(workflow: EliteAgentWorkflowSession, stage: EliteAgen
     return "Current step is running";
   }
   if (stage.lifecycleState === "VALIDATING") {
+    if (isSimulationWorkflow(workflow)) {
+      return "Simulating validation pulse";
+    }
     return "Waiting for validation evidence";
   }
   if (stage.lifecycleState === "PENDING") {
     return workflow.completedStageCount > 0 ? "Ready for the next workflow step" : "Ready to start";
   }
   return statusLabel(stage.lifecycleState);
+}
+
+function workflowProgress(workflow: EliteAgentWorkflowSession): {
+  completed: number;
+  total: number;
+  percent: number;
+  currentStepNumber: number;
+  remaining: number;
+  label: string;
+  expectation: string;
+} {
+  const total = Math.max(workflow.stages.length, 1);
+  const completed = workflow.status === "COMPLETED" ? total : workflow.stages.filter((stage) => stage.lifecycleState === "COMPLETED").length;
+  const active = currentStage(workflow);
+  const currentStepNumber = workflow.status === "COMPLETED"
+    ? total
+    : active
+      ? Math.min(active.order + 1, total)
+      : Math.min(completed + 1, total);
+  const percent = Math.min(100, Math.max(0, Math.round((completed / total) * 100)));
+  const remaining = Math.max(total - completed, 0);
+  const label = workflow.status === "COMPLETED"
+    ? "Workflow complete"
+    : `Step ${currentStepNumber} of ${total}`;
+  const expectation = workflow.status === "COMPLETED"
+    ? "All planned workflow steps are finished."
+    : isSimulationWorkflow(workflow)
+      ? "Demo progression is auto-paced for UX testing; no real execution or validation evidence is required."
+    : remaining === 1
+      ? "One supervised step remains, plus any required approval or validation pause."
+      : `${remaining} supervised steps remain, plus any required approval or validation pauses.`;
+  return { completed, total, percent, currentStepNumber, remaining, label, expectation };
+}
+
+function workflowCompletionReport(workflow: EliteAgentWorkflowSession): string {
+  const progress = workflowProgress(workflow);
+  const summary = summarizeEliteAgentWorkflow(workflow);
+  return [
+    `Workflow: ${workflow.prompt}`,
+    `Status: ${statusLabel(summary.status)}`,
+    `Progress: ${progress.completed} of ${progress.total} steps (${progress.percent}%)`,
+    `Completed stages: ${workflow.stages.filter((stage) => stage.lifecycleState === "COMPLETED").map((stage) => stageLabel(stage.type)).join(", ") || "none"}`,
+    `Next action: ${nextRecommendedAction(workflow)}`,
+  ].join("\n");
+}
+
+function workflowPurposeSentence(workflow: EliteAgentWorkflowSession): string {
+  return workflow.prompt.replace(/[.!?]+$/g, "").trim();
 }
 
 function runStepButtonLabel(workflow: EliteAgentWorkflowSession): string {
@@ -315,6 +405,12 @@ function runStepButtonLabel(workflow: EliteAgentWorkflowSession): string {
   }
   if (!stage) {
     return "No Step Available";
+  }
+  if (stage.approvalState === "PENDING") {
+    return "Approval Required";
+  }
+  if (isEliteAgentWorkflowStageAutoAdvancable(stage)) {
+    return "Auto Progressing";
   }
   if (stage.lifecycleState === "RUNNING") {
     return "Current Step Running";
@@ -358,6 +454,9 @@ function primaryActionLabel(workflow: EliteAgentWorkflowSession): string {
   if (firstPendingValidation(workflow)) {
     return "Run Validation";
   }
+  if (isEliteAgentWorkflowStageAutoAdvancable(currentStage(workflow))) {
+    return "Auto Progressing";
+  }
   if (summary.status === "BLOCKED") {
     return recoveryGuidance?.actions[0]?.label ?? "Explain Blocker";
   }
@@ -392,6 +491,31 @@ function StageTimeline({ workflow }: { workflow: EliteAgentWorkflowSession }) {
         );
       })}
     </ol>
+  );
+}
+
+function WorkflowProgressPanel({ workflow }: { workflow: EliteAgentWorkflowSession }) {
+  const progress = workflowProgress(workflow);
+  const isComplete = workflow.status === "COMPLETED";
+  return (
+    <div className={`sticky top-2 z-10 mt-4 rounded-md border p-4 shadow-sm ${isComplete ? "border-emerald-200 bg-emerald-50 dark:border-emerald-300/30 dark:bg-emerald-400/10" : "border-sky-200 bg-sky-50 dark:border-sky-300/30 dark:bg-sky-400/10"}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className={`text-xs font-semibold uppercase tracking-[0.14em] ${isComplete ? "text-emerald-800 dark:text-emerald-100" : "text-sky-800 dark:text-sky-100"}`}>Workflow Progress</p>
+          <p className={`mt-1 text-lg font-semibold ${isComplete ? "text-emerald-950 dark:text-emerald-100" : "text-sky-950 dark:text-sky-100"}`}>{isComplete ? "Workflow Complete" : progress.label}</p>
+        </div>
+        <div className={`rounded-full border bg-white px-3 py-1 text-sm font-semibold ${isComplete ? "border-emerald-200 text-emerald-800 dark:border-emerald-300/30 dark:bg-[#070b12] dark:text-emerald-100" : "border-sky-200 text-sky-800 dark:border-sky-300/20 dark:bg-[#070b12] dark:text-sky-100"}`}>{progress.percent}%</div>
+      </div>
+      <div className="mt-3 h-3 overflow-hidden rounded-full bg-white dark:bg-[#070b12]" aria-label={`Workflow progress ${progress.percent}%`}>
+        <div className={`h-full rounded-full transition-all ${isComplete ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${progress.percent}%` }} />
+      </div>
+      <div className={`mt-3 grid gap-2 text-sm sm:grid-cols-3 ${isComplete ? "text-emerald-900 dark:text-emerald-100" : "text-sky-900 dark:text-sky-100"}`}>
+        <p><span className="font-semibold">Completed:</span> {progress.completed} of {progress.total}</p>
+        <p><span className="font-semibold">Remaining:</span> {progress.remaining}</p>
+        <p><span className="font-semibold">Current:</span> {isComplete ? "Final state" : stageLabel(currentStage(workflow)?.type ?? null)}</p>
+      </div>
+      <p className={`mt-2 text-xs leading-5 ${isComplete ? "text-emerald-800 dark:text-emerald-100" : "text-sky-800 dark:text-sky-100"}`}>{progress.expectation}</p>
+    </div>
   );
 }
 
@@ -461,7 +585,14 @@ function isConversationalMediation(decision: AgentWorkflowMediationDecision | nu
   return Boolean(decision && !decision.shouldCreateWorkflow && decision.workflowVisibility === "hidden");
 }
 
+function isReflectiveAuthenticityPath(actions: string[]): boolean {
+  return actions.includes("Challenge the premise") && actions.includes("Name what would make it feel more real");
+}
+
 function conversationalPathReply(decision: AgentWorkflowMediationDecision): string {
+  if (decision.suggestedActions.length === 0 || isReflectiveAuthenticityPath(decision.suggestedActions)) {
+    return decision.assistantMessage;
+  }
   return `${decision.assistantMessage} From here: ${decision.suggestedActions.join("; ")}. You can pick one, or ask in your own words.`;
 }
 
@@ -477,6 +608,13 @@ function conversationKindFromMediation(decision: AgentWorkflowMediationDecision)
 
 export function EliteAgentClient() {
   const workflowCardRefs = useRef<Record<string, HTMLElement | null>>({});
+  const conversationScrollRef = useRef<HTMLDivElement | null>(null);
+  const conversationEndRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollConversationRef = useRef(true);
+  const simulationWorkflowTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const autoWorkflowTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const advanceSimulationWorkflowRef = useRef<(workflow: EliteAgentWorkflowSession) => void>(() => undefined);
+  const advanceAutoWorkflowRef = useRef<(workflow: EliteAgentWorkflowSession) => void>(() => undefined);
   const [result, setResult] = useState<LiteEliteRunResult | null>(null);
   const [workflows, setWorkflows] = useState<EliteAgentWorkflowSession[]>([]);
   const [historyStore, setHistoryStore] = useState<AgentWorkflowHistoryStore>(() => createAgentWorkflowHistoryStore());
@@ -510,6 +648,94 @@ export function EliteAgentClient() {
     }
   }, [pendingFocusWorkflowId, workflows]);
 
+  useEffect(() => {
+    return () => {
+      Object.values(simulationWorkflowTimersRef.current).forEach((timer) => clearTimeout(timer));
+      simulationWorkflowTimersRef.current = {};
+      Object.values(autoWorkflowTimersRef.current).forEach((timer) => clearTimeout(timer));
+      autoWorkflowTimersRef.current = {};
+    };
+  }, []);
+
+  useEffect(() => {
+    const activeSimulationIds = new Set(
+      workflows
+        .filter((workflow) => isSimulationWorkflow(workflow) && workflow.status !== "COMPLETED" && workflow.status !== "BLOCKED")
+        .map((workflow) => workflow.workflowSessionId),
+    );
+    for (const [workflowId, timer] of Object.entries(simulationWorkflowTimersRef.current)) {
+      if (!activeSimulationIds.has(workflowId)) {
+        clearTimeout(timer);
+        delete simulationWorkflowTimersRef.current[workflowId];
+      }
+    }
+    for (const workflow of workflows) {
+      if (!activeSimulationIds.has(workflow.workflowSessionId) || simulationWorkflowTimersRef.current[workflow.workflowSessionId]) {
+        continue;
+      }
+      simulationWorkflowTimersRef.current[workflow.workflowSessionId] = setTimeout(() => {
+        delete simulationWorkflowTimersRef.current[workflow.workflowSessionId];
+        advanceSimulationWorkflowRef.current(workflow);
+      }, 1000);
+    }
+  }, [workflows]);
+
+  useEffect(() => {
+    const activeAutoIds = new Set(
+      workflows
+        .filter((workflow) => {
+          if (isSimulationWorkflow(workflow) || workflow.status === "COMPLETED" || workflow.status === "BLOCKED") {
+            return false;
+          }
+          return isEliteAgentWorkflowStageAutoAdvancable(currentStage(workflow));
+        })
+        .map((workflow) => workflow.workflowSessionId),
+    );
+    for (const [workflowId, timer] of Object.entries(autoWorkflowTimersRef.current)) {
+      if (!activeAutoIds.has(workflowId)) {
+        clearTimeout(timer);
+        delete autoWorkflowTimersRef.current[workflowId];
+      }
+    }
+    for (const workflow of workflows) {
+      if (!activeAutoIds.has(workflow.workflowSessionId) || autoWorkflowTimersRef.current[workflow.workflowSessionId]) {
+        continue;
+      }
+      autoWorkflowTimersRef.current[workflow.workflowSessionId] = setTimeout(() => {
+        delete autoWorkflowTimersRef.current[workflow.workflowSessionId];
+        advanceAutoWorkflowRef.current(workflow);
+      }, 850);
+    }
+  }, [workflows]);
+
+  useEffect(() => {
+    if (!shouldAutoScrollConversationRef.current) {
+      return;
+    }
+    const scrollToLatestTurn = () => {
+      const container = conversationScrollRef.current;
+      if (!container) {
+        return;
+      }
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    };
+    const animationFrame = requestAnimationFrame(() => {
+      scrollToLatestTurn();
+      window.setTimeout(scrollToLatestTurn, 80);
+    });
+    return () => cancelAnimationFrame(animationFrame);
+  }, [conversationTurns.length]);
+
+  function handleConversationScroll() {
+    const container = conversationScrollRef.current;
+    if (!container) {
+      shouldAutoScrollConversationRef.current = true;
+      return;
+    }
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldAutoScrollConversationRef.current = distanceFromBottom < 96;
+  }
+
   function upsertWorkflow(workflow: EliteAgentWorkflowSession, feedback?: string, visibility: AgentWorkflowVisibility = "full") {
     setWorkflows((current) => [workflow, ...current.filter((entry) => entry.workflowSessionId !== workflow.workflowSessionId)]);
     setHistoryStore((current) => recordAgentWorkflowHistory(current, workflow));
@@ -542,6 +768,15 @@ export function EliteAgentClient() {
       setCopyConversationStatus("Conversation copied.");
     } catch {
       setCopyConversationStatus("Copy was not available in this browser session.");
+    }
+  }
+
+  async function copyWorkflowReport(workflow: EliteAgentWorkflowSession) {
+    try {
+      await navigator.clipboard.writeText(workflowCompletionReport(workflow));
+      setAgentReply("Workflow report copied. You can paste it into a handoff, review, or follow-up conversation.");
+    } catch {
+      setAgentReply("Copy report was not available in this browser session.");
     }
   }
 
@@ -591,7 +826,7 @@ export function EliteAgentClient() {
       setSelectedWorkflowId(null);
       return;
     }
-    const mediation = mediateAgentWorkflowPrompt(prompt);
+    const mediation = mediateAgentWorkflowPrompt(prompt, { recentTurns: conversationTurns });
     setLastMediationDecision(mediation);
     if (!mediation.shouldCreateWorkflow) {
       const response = conversationalPathReply(mediation);
@@ -632,6 +867,79 @@ export function EliteAgentClient() {
     }
   }
 
+  function advanceSimulationWorkflow(workflow: EliteAgentWorkflowSession) {
+    const stage = currentStage(workflow);
+    if (!stage || workflow.status === "COMPLETED" || workflow.status === "BLOCKED") {
+      return;
+    }
+    try {
+      if (stage.lifecycleState === "PENDING") {
+        const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "START_STAGE", reason: "Simulation demo auto-started the next workflow stage for UX pacing." });
+        const feedback = `Demo progression started ${stageLabel(stage.type).toLowerCase()}. This is simulated lifecycle movement only.`;
+        upsertWorkflow(next, feedback, workflowVisibility[workflow.workflowSessionId] ?? "full");
+        setAgentReply(`${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
+        return;
+      }
+      if (stage.lifecycleState === "RUNNING" && stage.validationRequired) {
+        const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "BEGIN_VALIDATION", reason: "Simulation demo opened a validation pulse without requiring external evidence." });
+        const feedback = `Demo progression is simulating validation for ${stageLabel(stage.type).toLowerCase()}.`;
+        upsertWorkflow(next, feedback, workflowVisibility[workflow.workflowSessionId] ?? "full");
+        setAgentReply(`${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
+        return;
+      }
+      if (stage.lifecycleState === "RUNNING") {
+        const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "COMPLETE_STAGE", reason: "Simulation demo completed this step for UX pacing." });
+        const feedback = next.status === "COMPLETED"
+          ? `Demo workflow complete. AI-E reached the completion state for ${workflowPurposeSentence(workflow)}.`
+          : `Demo progression completed ${stageLabel(stage.type).toLowerCase()}. Overall progress is ${workflowProgress(next).percent}%.`;
+        upsertWorkflow(next, feedback, workflowVisibility[workflow.workflowSessionId] ?? "full");
+        setAgentReply(next.status === "COMPLETED" ? `${feedback} You can inspect the summary, copy the report, or ask what felt static.` : `${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
+        return;
+      }
+      if (stage.lifecycleState === "VALIDATING") {
+        const validated = markEliteAgentWorkflowValidation(workflow, { stageId: stage.stageId, validationState: "SUCCESS", reason: "Simulation demo recorded synthetic validation evidence for UX testing only." });
+        const next = advanceEliteAgentWorkflow(validated, { stageId: stage.stageId, action: "COMPLETE_STAGE", reason: "Simulation demo completed the validated stage for UX pacing." });
+        const feedback = next.status === "COMPLETED"
+          ? `Demo workflow complete. AI-E reached the completion state for ${workflowPurposeSentence(workflow)}.`
+          : `Simulated validation passed for ${stageLabel(stage.type).toLowerCase()}. Overall progress is ${workflowProgress(next).percent}%.`;
+        upsertWorkflow(next, feedback, workflowVisibility[workflow.workflowSessionId] ?? "full");
+        setAgentReply(next.status === "COMPLETED" ? `${feedback} You can inspect the summary, copy the report, or ask what felt static.` : `${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
+      }
+    } catch (caught) {
+      setAgentReply(caught instanceof Error ? caught.message : "The simulated workflow could not advance safely.");
+    }
+  }
+
+  advanceSimulationWorkflowRef.current = advanceSimulationWorkflow;
+
+  function advanceAutoWorkflow(workflow: EliteAgentWorkflowSession) {
+    const stage = currentStage(workflow);
+    if (!isEliteAgentWorkflowStageAutoAdvancable(stage) || !stage) {
+      return;
+    }
+    try {
+      if (stage.lifecycleState === "PENDING") {
+        const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "START_STAGE", reason: "AI-E auto-started this low-risk internal workflow stage; no operator judgment was required." });
+        const feedback = `AI-E started ${stageLabel(stage.type).toLowerCase()} automatically because it is non-mutating and does not require external validation.`;
+        upsertWorkflow(next, feedback, workflowVisibility[workflow.workflowSessionId] ?? "full");
+        setAgentReply(`${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
+        return;
+      }
+      if (stage.lifecycleState === "RUNNING") {
+        const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "COMPLETE_STAGE", reason: "AI-E auto-completed this low-risk internal workflow stage; no operator judgment was required." });
+        const feedback = next.status === "COMPLETED"
+          ? `Workflow complete. AI-E finished ${workflowPurposeSentence(workflow)} without requiring extra confirmation for internal steps.`
+          : `AI-E completed ${stageLabel(stage.type).toLowerCase()} automatically. Overall progress is ${workflowProgress(next).percent}%.`;
+        upsertWorkflow(next, feedback, workflowVisibility[workflow.workflowSessionId] ?? "full");
+        setAgentReply(next.status === "COMPLETED" ? `${feedback} You can inspect the summary, copy the report, or ask a follow-up.` : `${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
+      }
+    } catch (caught) {
+      setAgentReply(caught instanceof Error ? caught.message : "The workflow could not auto-advance safely.");
+    }
+  }
+
+  advanceAutoWorkflowRef.current = advanceAutoWorkflow;
+
   function runWorkflow(workflow: EliteAgentWorkflowSession) {
     const stage = currentStage(workflow);
     if (!stage) {
@@ -667,9 +975,13 @@ export function EliteAgentClient() {
     }
     try {
       const next = advanceEliteAgentWorkflow(workflow, { stageId: guidance.stageId, action: "APPROVE_STAGE", reason: "Operator approved this supervised stage only from the Approval Required panel." });
-      const feedback = "Approval recorded. The next action is to run the approved step.";
+      const feedback = guidance.actionBeingApproved === "Scoped dev session boundary"
+        ? "Scoped dev session approved. AI-E can now progress through in-scope low-risk workflow stages."
+        : next.status === "COMPLETED"
+        ? "Approval recorded. The approval checkpoint is complete."
+        : "Approval recorded. The next action is to run the approved step.";
       upsertWorkflow(next, feedback);
-      setAgentReply(`${feedback} AI-E will not apply files automatically. Next recommended action: ${nextRecommendedAction(next)}`);
+      setAgentReply(next.status === "COMPLETED" ? `${feedback} AI-E did not apply files automatically or claim gameplay validation.` : `${feedback} AI-E will not apply files automatically. Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "Approval could not be recorded for this step.");
     }
@@ -749,11 +1061,12 @@ export function EliteAgentClient() {
     }
     try {
       const next = advanceEliteAgentWorkflow(workflow, { stageId: stage.stageId, action: "COMPLETE_STAGE", reason: "Operator completed the current guided workflow step." });
+      const nextSummary = summarizeEliteAgentWorkflow(next);
       const feedback = next.status === "COMPLETED"
-        ? "Workflow completed. You can inspect results or start another workflow."
-        : `${stageLabel(stage.type)} completed. Next step: ${stageLabel(summarizeEliteAgentWorkflow(next).currentStage).toLowerCase()}.`;
+        ? `Workflow complete. AI-E finished ${workflowPurposeSentence(workflow)}.`
+        : `${stageLabel(stage.type)} completed. Next step: ${stageLabel(nextSummary.currentStage).toLowerCase()}. Overall progress is ${workflowProgress(next).percent}%.`;
       upsertWorkflow(next, feedback);
-      setAgentReply(`${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
+      setAgentReply(next.status === "COMPLETED" ? `${feedback} You can inspect the summary, copy the report, ask a follow-up, inspect another system, or prepare a safe patch from findings.` : `${feedback} Next recommended action: ${nextRecommendedAction(next)}`);
     } catch (caught) {
       setAgentReply(caught instanceof Error ? caught.message : "The current step could not be completed safely.");
     }
@@ -843,7 +1156,7 @@ export function EliteAgentClient() {
                       <button type="button" onClick={copyConversation} className="rounded-md border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-50 dark:border-cyan-300/30 dark:bg-[#070b12] dark:text-cyan-100 dark:hover:bg-cyan-400/10">Copy Conversation</button>
                     </div>
                   </div>
-                  <div className="max-h-[48vh] space-y-3 overflow-y-auto pr-1">
+                  <div ref={conversationScrollRef} onScroll={handleConversationScroll} className="max-h-[48vh] space-y-3 overflow-y-auto pr-1">
                     {conversationTurns.map((turn, index) => (
                       <article key={turn.turnId} className="rounded-md border border-cyan-200 bg-white p-4 dark:border-cyan-300/20 dark:bg-[#070b12]">
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -854,6 +1167,7 @@ export function EliteAgentClient() {
                         <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-700 dark:text-zinc-200">AI-E: {turn.response}</p>
                       </article>
                     ))}
+                    <div ref={conversationEndRef} aria-hidden="true" />
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-cyan-800 dark:text-cyan-100">
                     <p>This is bounded active conversation continuity. Workflow cards remain separate operational state below.</p>
@@ -960,9 +1274,11 @@ export function EliteAgentClient() {
               const resumeReason = resumeUnavailableReason(workflow);
               const primary = primaryActionLabel(workflow);
               const runLabel = runStepButtonLabel(workflow);
-              const runDisabled = !activeStage || summary.status === "COMPLETED" || summary.status === "BLOCKED" || activeStage.lifecycleState === "RUNNING" || activeStage.lifecycleState === "VALIDATING" || summary.resumeEligible;
+              const isAutoAdvancingStage = isEliteAgentWorkflowStageAutoAdvancable(activeStage);
+              const runDisabled = !activeStage || isAutoAdvancingStage || summary.status === "COMPLETED" || summary.status === "BLOCKED" || activeStage.lifecycleState === "RUNNING" || activeStage.lifecycleState === "VALIDATING" || summary.resumeEligible;
               const visibility = workflowVisibility[workflow.workflowSessionId] ?? "full";
               const showWorkflowRuntime = visibility === "full" || Boolean(expandedWorkflowDetails[workflow.workflowSessionId]);
+              const progress = workflowProgress(workflow);
               return (
                 <article
                   key={workflow.workflowSessionId}
@@ -978,6 +1294,22 @@ export function EliteAgentClient() {
                     </div>
                     <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${statusClass(summary.status.toLowerCase())}`}>{statusLabel(summary.status)}</span>
                   </div>
+
+                  <WorkflowProgressPanel workflow={workflow} />
+
+                  {isSimulationWorkflow(workflow) && (
+                    <div className="mt-4 rounded-md border border-cyan-200 bg-cyan-50 p-4 dark:border-cyan-300/20 dark:bg-cyan-400/10">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Simulated Workflow</p>
+                      <p className="mt-2 text-sm leading-6 text-cyan-950 dark:text-cyan-100">This demo is auto-paced so you can evaluate workflow movement, progress percentage, and completion arrival. It does not run repo, shell, Unity, mutation, or real validation work.</p>
+                    </div>
+                  )}
+
+                  {!isSimulationWorkflow(workflow) && isAutoAdvancingStage && (
+                    <div className="mt-4 rounded-md border border-cyan-200 bg-cyan-50 p-4 dark:border-cyan-300/20 dark:bg-cyan-400/10">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Auto-Advancing Internal Step</p>
+                      <p className="mt-2 text-sm leading-6 text-cyan-950 dark:text-cyan-100">AI-E is progressing this low-risk stage automatically. It will pause for approvals, repo writes, destructive actions, external validation, or other decisions that need human judgment.</p>
+                    </div>
+                  )}
 
                   <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/5">
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-zinc-400">AI-E Agent Summary</p>
@@ -1000,6 +1332,10 @@ export function EliteAgentClient() {
                   </div>
 
                   {showWorkflowRuntime && <p className="mt-3 rounded-md border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-600 dark:border-white/10 dark:bg-[#070b12] dark:text-zinc-300">{statusExplanation(summary.status)}</p>}
+
+                  {summary.status !== "COMPLETED" && (
+                    <p className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">Current step progress is not the same as workflow completion. This workflow is {progress.percent}% complete overall, with {progress.remaining} supervised step{progress.remaining === 1 ? "" : "s"} remaining.</p>
+                  )}
 
                   {showWorkflowRuntime && <StageTimeline workflow={workflow} />}
 
@@ -1037,7 +1373,7 @@ export function EliteAgentClient() {
                   {approvalGuidance && !recoveryGuidance && (
                     <div className="mt-3 rounded-md border border-violet-200 bg-violet-50 p-4 dark:border-violet-300/30 dark:bg-violet-400/10">
                       <div className="flex flex-wrap items-start justify-between gap-2">
-                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-800 dark:text-violet-100">{approvalGuidance.title}</p>
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-800 dark:text-violet-100">{approvalGuidance.actionBeingApproved === "Scoped dev session boundary" ? "Session Scope Approval" : approvalGuidance.title}</p>
                         <span className="rounded-full border border-violet-300 px-2 py-1 text-xs font-semibold text-violet-900 dark:border-violet-200/40 dark:text-violet-100">{approvalGateLabel(approvalGuidance)}</span>
                       </div>
                       <div className="mt-3 grid gap-2 text-sm leading-6 text-violet-950 dark:text-violet-100 sm:grid-cols-2">
@@ -1050,10 +1386,20 @@ export function EliteAgentClient() {
                         <p><span className="font-semibold">Risk level:</span> {approvalGuidance.riskLevel}</p>
                         <p><span className="font-semibold">After approval:</span> {approvalGuidance.whatHappensAfterApproval}</p>
                       </div>
+                      <div className="mt-3 grid gap-2 text-sm leading-6 text-violet-950 dark:text-violet-100 md:grid-cols-2">
+                        <p className="rounded-md border border-violet-200 bg-white p-3 dark:border-violet-200/20 dark:bg-[#070b12]"><span className="font-semibold">Allowed inside boundary:</span> {approvalGuidance.allowedToDo}</p>
+                        <p className="rounded-md border border-violet-200 bg-white p-3 dark:border-violet-200/20 dark:bg-[#070b12]"><span className="font-semibold">Not allowed:</span> {approvalGuidance.notAllowedToDo}</p>
+                      </div>
                       <p className="mt-3 rounded-md border border-violet-200 bg-white p-3 text-sm leading-6 text-violet-950 dark:border-violet-200/20 dark:bg-[#070b12] dark:text-violet-100">You are approving this step only. AI-E will not apply files automatically.</p>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <ActionButton label="Approve This Step" onClick={() => approveThisStep(workflow)} primary={primary === "Approve This Step"} disabled={approvalGuidance.approvalGateState !== "WAITING_FOR_APPROVAL"} />
-                        <ActionButton label="Deny Approval" onClick={() => denyApproval(workflow)} disabled={approvalGuidance.approvalGateState !== "WAITING_FOR_APPROVAL"} />
+                        {approvalGuidance.approvalGateState === "WAITING_FOR_APPROVAL" ? (
+                          <>
+                            <ActionButton label={approvalGuidance.actionBeingApproved === "Scoped dev session boundary" ? "Approve Scoped Session" : "Approve This Step"} onClick={() => approveThisStep(workflow)} primary={primary === "Approve This Step"} />
+                            <ActionButton label="Deny Approval" onClick={() => denyApproval(workflow)} />
+                          </>
+                        ) : (
+                          <span className="rounded-md border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900 dark:border-violet-200/20 dark:bg-[#070b12] dark:text-violet-100">Approval decision recorded as read-only workflow history.</span>
+                        )}
                         <ActionButton label="Review Scope" onClick={() => reviewApprovalScope(workflow)} />
                         <ActionButton label="Explain Risk" onClick={() => explainApprovalRisk(workflow)} />
                       </div>
@@ -1061,7 +1407,7 @@ export function EliteAgentClient() {
                   )}
 
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {summary.status !== "COMPLETED" && !canResume && <ActionButton label={runLabel} onClick={() => runWorkflow(workflow)} primary={!runDisabled && primary === runLabel} disabled={runDisabled} />}
+                    {summary.status !== "COMPLETED" && !canResume && !needsApproval && <ActionButton label={runLabel} onClick={() => runWorkflow(workflow)} primary={!runDisabled && primary === runLabel} disabled={runDisabled} />}
                     <ActionButton label="Resume Workflow" onClick={() => resumeWorkflow(workflow)} disabled={!canResume} primary={primary === "Resume Workflow"} />
                     {pendingValidation && <ActionButton label="Run Validation" onClick={() => runValidation(workflow)} primary={primary === "Run Validation"} />}
                     {validatingStage && <ActionButton label="Record Validation Pass" onClick={() => recordValidationPass(workflow)} primary />}
@@ -1082,15 +1428,22 @@ export function EliteAgentClient() {
 
                   {summary.status === "COMPLETED" && (
                     <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-300/30 dark:bg-emerald-400/10">
-                      <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-100">Workflow Completed</p>
-                      <p className="mt-2 text-sm leading-6 text-emerald-800 dark:text-emerald-100">Next options: inspect results, start another workflow, or review technical details.</p>
+                      <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-100">Workflow Complete</p>
+                      <p className="mt-2 text-sm leading-6 text-emerald-800 dark:text-emerald-100">AI-E finished {workflowPurposeSentence(workflow)}. This is the final workflow state, not just the current step ending.</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <ActionButton label="View Summary" onClick={() => setSummaryWorkflowId(workflow.workflowSessionId)} primary />
+                        <ActionButton label="Copy Report" onClick={() => copyWorkflowReport(workflow)} />
+                        <ActionButton label="Ask a Follow-Up" onClick={() => setWorkflowPrompt(`What should I understand from ${workflow.prompt}?`)} />
+                        <ActionButton label="Inspect Another System" onClick={() => setWorkflowPrompt("inspect another system safely")} />
+                        <ActionButton label="Prepare Safe Patch From Findings" onClick={() => setWorkflowPrompt(`prepare a safe patch from findings in ${workflow.prompt}`)} />
+                      </div>
                     </div>
                   )}
 
                   {showSummary && (
                     <div className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700 dark:border-white/10 dark:bg-[#070b12] dark:text-zinc-300">
                       <p>{workflow.deterministicSelectionReason}</p>
-                      <p className="mt-2">Completed {summary.completedStageCount} of {workflow.stages.length} steps. Remaining work stays inside supervised approval and validation rules.</p>
+                      <p className="mt-2">Completed {progress.completed} of {progress.total} steps ({progress.percent}%). Remaining work stays inside supervised approval and validation rules.</p>
                     </div>
                   )}
 

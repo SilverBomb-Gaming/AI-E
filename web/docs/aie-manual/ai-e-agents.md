@@ -216,29 +216,29 @@ Improvement requests are proposals. They help humans review what should change, 
 
 ### Engineering Explanation
 
-The `/operator/agents` workflow card now separates workflow creation, current-stage execution, stage completion, validation, approval, and final completion. Button labels are derived from workflow state so the same control does not imply start, repeat, advance, and finish at the same time.
+The `/operator/agents` workflow card now separates workflow creation, current-stage execution, stage completion, validation, approval, overall progress, and final completion. Button labels and progress labels are derived from workflow state so the same control does not imply start, repeat, advance, and finish at the same time.
 
 ### YouTuber Explanation
 
-AI-E should feel like a guided wizard: here is what happened, here is the active step, here is what is already done, and here is the exact button that moves the job forward.
+AI-E should feel like a guided wizard: here is what happened, here is the active step, here is how far the whole workflow has progressed, and here is the exact button that moves the job forward.
 
 ### User Explanation
 
-Read `Current Workflow Step`. It shows where you are, what just happened, and what to do next. If a step is running, `Mark Current Step Complete` only marks that one step finished.
+Read `Workflow Progress` first for the overall state, then read `Current Workflow Step` for the active stage. If a step is running, `Mark Current Step Complete` only marks that one step finished. The workflow is not finished until AI-E shows `Workflow Complete`.
 
 ## Button Meaning Guide
 
 ### Engineering Explanation
 
-`Start Workflow` creates the supervised workflow from the prompt. `Run Current Step` starts the active pending stage. `Run Approved Step` starts the approved mutation-sensitive stage without claiming file application. `Mark Current Step Complete` records that the current supervised stage finished, while validation-required stages still require validation evidence before completion.
+`Start Workflow` creates the supervised workflow from the prompt. Concrete dev tasks first show a session-scope approval card so the operator approves the work boundary before internal stages begin. Low-risk internal stages may show `Auto Progressing` instead of asking for a click when the stage is non-mutating, approval-free, validation-free, and has no external dependency. `Run Current Step` starts an active pending stage that is not auto-advancable. `Run Approved Step` starts an approved sensitive stage without claiming file application. `Mark Current Step Complete` records that the current supervised stage finished, while validation-required stages still require validation evidence before completion.
 
 ### YouTuber Explanation
 
-The buttons now say what they do. Start means start, run means run the active step, and mark complete means record that this one step is done.
+The buttons now say what they do. Approve the scoped session once, then low-risk internal work can move on its own. Start means start, run means run the active step, and mark complete means record that this one step is done.
 
 ### User Explanation
 
-Use the button that matches the `Next` line in the current-step panel. When the workflow is complete, AI-E says `Workflow Completed` instead of asking you to run it again.
+Use the button that matches the `Next` line in the current-step panel. If AI-E asks for scoped session approval, review the allowed and disallowed boundary before approving. If AI-E shows `Auto Progressing`, wait for it to move through the internal step. When the workflow is complete, AI-E says `Workflow Completed` instead of asking you to run it again.
 
 ## Stage Hierarchy
 
@@ -314,25 +314,25 @@ Use `Explain Blocker` when you need the plain-language reason and the next safe 
 
 ### Engineering Explanation
 
-Approval-gated agent workflows now expose a supervised action gate. The `Approval Required` panel is derived from workflow stage metadata and shows the action being approved, stage, path scope, mutation permission, validation requirement, rollback availability, risk level, and post-approval behavior. Approval changes workflow approval state only; it does not apply patches or grant unrestricted execution.
+Approval-gated agent workflows now expose a supervised action gate. Concrete dev workflows use this as a session-scope approval boundary before internal work begins. The approval panel is derived from workflow stage metadata and shows the action being approved, stage, path scope, mutation permission, validation requirement, rollback availability, risk level, allowed behavior, disallowed behavior, and post-approval behavior. Approval changes workflow approval state only; it does not apply patches or grant unrestricted execution.
 
 ### YouTuber Explanation
 
-The operator is no longer asked to approve a vague black box. AI-E shows exactly what the approval covers, what could go wrong, and what happens next.
+The operator is no longer asked to approve a vague black box or every tiny step. AI-E shows the room it wants to work inside, what could go wrong, and when it will stop.
 
 ### User Explanation
 
-Before approving, read `Approval Required`. It tells you what the approval means and confirms that AI-E will not apply files automatically.
+Before approving, read `Session Scope Approval` or `Approval Required`. It tells you what the approval means, what AI-E may do inside the boundary, and confirms that AI-E will not apply files automatically.
 
 ## Approval-Gated Actions
 
 ### Engineering Explanation
 
-`Approve This Step` records `APPROVED_BY_OPERATOR` for the displayed stage. `Deny Approval` records `APPROVAL_DENIED` and blocks the workflow safely. `Review Scope` surfaces path and permission metadata. `Explain Risk` renders the approval rationale, risk, allowed behavior, disallowed behavior, and validation expectation.
+`Approve Scoped Session` or `Approve This Step` records `APPROVED_BY_OPERATOR` for the displayed approval boundary. `Deny Approval` records `APPROVAL_DENIED` and blocks the workflow safely. `Review Scope` surfaces path and permission metadata. `Explain Risk` renders the approval rationale, risk, allowed behavior, disallowed behavior, and validation expectation. Completed approval decisions become read-only history instead of showing active approve/deny controls.
 
 ### YouTuber Explanation
 
-The approval button now has guardrails around it: approve, deny, inspect scope, or ask why the approval is risky.
+The approval button now has guardrails around it: approve the scoped room, deny it, inspect scope, or ask why the approval is risky.
 
 ### User Explanation
 
@@ -468,7 +468,7 @@ You can see the planned steps and where the agent currently is.
 
 ### Engineering Explanation
 
-Mutation-capable stages use approval checkpoints. A `PREPARE_PATCH` stage can be blocked if approval is missing.
+Concrete development workflows use approval checkpoints as session boundaries. `REQUEST_APPROVAL` can approve the scoped work envelope before low-risk internal stages begin. `PREPARE_PATCH` prepares scoped patch metadata and does not apply files by itself.
 
 ### YouTuber Explanation
 

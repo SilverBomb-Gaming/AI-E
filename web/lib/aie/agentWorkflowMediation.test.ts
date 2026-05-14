@@ -84,6 +84,76 @@ test("memory-aware progress prompts offer optional conversational paths", () => 
   }
 });
 
+test("authenticity prompts discuss the idea instead of reciting operational doctrine", () => {
+  const expectations = [
+    ["What worries you most about AI agents?", /responsibility|accountable|momentum/i],
+    ["Do developers trust AI too quickly?", /plausibility|verification|tired/i],
+    ["What makes operational trust difficult?", /pressure|evidence conflicts|awkward moments/i],
+    ["Why do most AI agents feel fake?", /artificial|certain|perform/i],
+    ["What's the hardest design problem AI-E faces?", /present|personality|theatrical/i],
+    ["What AI trend is overhyped?", /autonomy|taste|restraint/i],
+    ["Why do people anthropomorphize AI?", /social instincts|human expectations|language/i],
+    ["What might AI-E intentionally never automate?", /operator|irreversible|mean it/i],
+    ["Do you think AGI branding damaged trust?", /grand capability claims|reliably do today|grounded/i],
+    ["Do approvals slow innovation?", /friction|reversible learning|dangerous edges/i],
+  ] as const;
+
+  const responses = expectations.map(([prompt, expected]) => {
+    const decision = mediateAgentWorkflowPrompt(prompt);
+
+    assert.equal(decision.interactionLevel, "CONVERSATIONAL_ONLY", prompt);
+    assert.equal(decision.workflowVisibility, "hidden", prompt);
+    assert.equal(decision.shouldCreateWorkflow, false, prompt);
+    assert.match(decision.assistantMessage, expected, prompt);
+    assert.equal(decision.suggestedActions.length, 4, prompt);
+    assert.doesNotMatch(decision.suggestedActions.join(" "), /Prepare a governed workflow|Run Current Step|Next Recommended Action/i, prompt);
+    assert.doesNotMatch(decision.assistantMessage, /conversationally guided operational system|latest milestone|workflow cards|conversation can be a valid destination|guided exploration and supervised workflows/i, prompt);
+    return decision.assistantMessage;
+  });
+
+  assert.equal(new Set(responses).size, responses.length);
+});
+
+test("unhandled conceptual prompts use semantic grounding instead of operational doctrine fallback", () => {
+  const decision = mediateAgentWorkflowPrompt("What would semantic grounding change for conversation?");
+
+  assert.equal(decision.interactionLevel, "CONVERSATIONAL_ONLY");
+  assert.equal(decision.workflowVisibility, "hidden");
+  assert.equal(decision.shouldCreateWorkflow, false);
+  assert.match(decision.assistantMessage, /semantic grounding|fallback repetition|WordNet-style relationships|ontology|contextual retrieval/i);
+  assert.match(decision.assistantMessage, /not a standalone LLM|AGI system|replacement for frontier-model reasoning/i);
+  assert.doesNotMatch(decision.assistantMessage, /approval gates|validation evidence|workflow cards stay separate|current milestone/i);
+});
+
+test("implicit follow-ups synthesize active conversation instead of repeating semantic doctrine", () => {
+  const firstDecision = mediateAgentWorkflowPrompt("What would semantic grounding change for conversation?");
+  const followUpDecision = mediateAgentWorkflowPrompt("Where should the balance actually be?", {
+    recentTurns: [
+      {
+        prompt: "What would semantic grounding change for conversation?",
+        response: firstDecision.assistantMessage,
+        kind: "CONVERSATIONAL",
+      },
+    ],
+  });
+
+  assert.equal(followUpDecision.interactionLevel, "CONVERSATIONAL_ONLY");
+  assert.equal(followUpDecision.workflowVisibility, "hidden");
+  assert.equal(followUpDecision.shouldCreateWorkflow, false);
+  assert.match(followUpDecision.assistantMessage, /balance should be|infrastructural|synthesize|moving forward/i);
+  assert.doesNotMatch(followUpDecision.assistantMessage, /Useful branches here include|not a standalone LLM|replacement for frontier-model reasoning/i);
+  assert.match(followUpDecision.escalationReason, /implicit continuation|synthesize the prior thread/i);
+});
+
+test("implicit follow-ups without active context keep ordinary conversational fallback", () => {
+  const decision = mediateAgentWorkflowPrompt("Where should the balance actually be?");
+
+  assert.equal(decision.interactionLevel, "CONVERSATIONAL_ONLY");
+  assert.equal(decision.workflowVisibility, "hidden");
+  assert.equal(decision.shouldCreateWorkflow, false);
+  assert.doesNotMatch(decision.escalationReason, /implicit continuation/i);
+});
+
 test("exploration recommendation prompts offer options without creating workflow state", () => {
   const decision = mediateAgentWorkflowPrompt("what should I explore first?");
 
@@ -148,4 +218,56 @@ test("implementation prompts create full supervised workflow visibility", () => 
     assert.equal(decision.workflowVisibility, "full", prompt);
     assert.equal(decision.shouldCreateWorkflow, true, prompt);
   }
+});
+
+test("concrete game-dev task prompts escalate to supervised operational workflows", () => {
+  const prompts = [
+    "I need you to take a look at my current BABYLON game and have the gameplay loop reach round 5, spawn 5 zombies and increase their health.",
+    "Modify my enemy spawner so it creates 5 zombies.",
+    "Increase zombie health and validate the gameplay loop.",
+    "Update the round system so the game reaches round 5.",
+    "Fix my current game so zombies spawn correctly.",
+  ];
+
+  for (const prompt of prompts) {
+    const decision = mediateAgentWorkflowPrompt(prompt);
+
+    assert.equal(decision.interactionLevel, "FULL_SUPERVISED_OPERATIONAL", prompt);
+    assert.equal(decision.workflowVisibility, "full", prompt);
+    assert.equal(decision.shouldCreateWorkflow, true, prompt);
+    assert.match(decision.assistantMessage, /supervised game-dev workflow|supervised operational workflow/i, prompt);
+    assert.doesNotMatch(decision.assistantMessage, /latest milestone|conversational continuity|workflow cards stay separate|Optional Next Paths/i, prompt);
+  }
+});
+
+test("read-only game-dev understanding prompts remain guided exploration", () => {
+  const prompts = [
+    "Show me where the gameplay loop is organized.",
+    "Help me understand the zombie spawning system.",
+  ];
+
+  for (const prompt of prompts) {
+    const decision = mediateAgentWorkflowPrompt(prompt);
+
+    assert.equal(decision.interactionLevel, "LIGHTWEIGHT_GUIDED_WORKFLOW", prompt);
+    assert.equal(decision.workflowVisibility, "minimal", prompt);
+    assert.equal(decision.shouldCreateWorkflow, true, prompt);
+    assert.match(decision.assistantMessage, /safe read-only exploration/i, prompt);
+  }
+});
+
+test("dummy workflow prompts create simulated workflow state without real-execution framing", () => {
+  const decision = mediateAgentWorkflowPrompt("Run a 10-second dummy workflow so I can test the progress bar and completion state.");
+
+  assert.equal(decision.interactionLevel, "FULL_SUPERVISED_OPERATIONAL");
+  assert.equal(decision.workflowVisibility, "full");
+  assert.equal(decision.shouldCreateWorkflow, true);
+  assert.match(decision.assistantMessage, /simulated demo workflow|progress bar|completion state/i);
+  assert.match(decision.escalationReason, /harmless workflow demo|simulated progression/i);
+  assert.deepEqual(decision.suggestedActions, [
+    "Watch simulated progress",
+    "Confirm completion state",
+    "Ask what felt static",
+  ]);
+  assert.doesNotMatch(decision.assistantMessage, /real repo execution|approval|recovery/i);
 });

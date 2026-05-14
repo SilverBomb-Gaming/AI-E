@@ -150,6 +150,7 @@ Workflow cards may show these actions:
 - `Show Required Runtime`: explains which runtime or approved route is missing.
 - `Convert to Safe Planning Workflow`: creates a planning-only recovery workflow while the original blocked workflow remains visible.
 - `Review Scope`: shows allowed paths, blocked paths, and mutation boundaries before approval.
+- `Approve Scoped Session`: records operator approval for the displayed session boundary so low-risk in-scope stages can progress.
 - `Approve This Step`: records operator approval for the displayed supervised stage only.
 - `Deny Approval`: records denial and keeps the workflow safely stopped.
 - `Explain Risk`: explains why approval is required, what can go wrong, what AI-E may do, what AI-E may not do, and what validation should follow.
@@ -179,6 +180,21 @@ Next: Run the approved step.
 
 This panel prevents the operator from confusing approval, execution, completion, and validation.
 
+### Workflow Progress
+
+The `Workflow Progress` panel shows the whole workflow, not just the active step. It should answer:
+
+- step position, such as `Step 2 of 5`
+- completion percentage
+- completed step count
+- remaining step count
+- current stage
+- whether required approval or validation pauses may still remain
+
+This panel is the operator's fastest answer to `how close is this to done?`.
+
+Current-step completion and workflow completion are different. `Mark Current Step Complete` records one supervised stage. The workflow is only complete when every planned stage is complete and the card shows `Workflow Complete`.
+
 ### Stage Hierarchy
 
 Workflow timelines visually separate:
@@ -202,7 +218,17 @@ Examples:
 
 ### Workflow Completion
 
-When every stage is complete, the card shows `Workflow Completed` with next options to inspect results, start another workflow, or review technical details. It should not re-emphasize a run action after completion.
+When every stage is complete, the card shows `Workflow Complete` with a distinct completion panel. It should not re-emphasize a run action after completion.
+
+Completion actions may include:
+
+- `View Summary`
+- `Copy Report`
+- `Ask a Follow-Up`
+- `Inspect Another System`
+- `Prepare Safe Patch From Findings`
+
+These actions continue the operator journey after closure. They do not imply hidden execution or automatic mutation.
 
 ### Next-Step Guidance
 
@@ -243,6 +269,8 @@ Input field
 
 This makes `/operator/agents` feel like a conversation that can reveal tools, not a form that occasionally displays chat output.
 
+The conversation history should auto-scroll to the newest response during normal use. If the operator scrolls upward to review earlier turns, the page should respect that reading position and stop auto-following until the operator returns near the bottom.
+
 Look for:
 
 - `Active Conversation`
@@ -250,6 +278,7 @@ Look for:
 - visible `User:` and `AI-E:` turns in order
 - kind labels such as conversational, guided exploration, supervised workflow, or system improvement request
 - `Copy Conversation`
+- newest replies appearing without manual scroll when the operator is already near the bottom
 
 The timeline is bounded active history. It is not infinite permanent chat memory.
 
@@ -372,7 +401,7 @@ Fields shown:
 
 ### Engineering Explanation
 
-The approval panel is a supervised action gate over the workflow engine. `Approve This Step` records approval for one stage. `Deny Approval` records a rejected approval state and blocks the workflow. Neither action applies patches, runs Unity, expands shell access, or bypasses validation.
+The approval panel is a supervised action gate over the workflow engine. `Approve Scoped Session` records approval for a concrete dev-session boundary. `Approve This Step` records approval for one displayed stage. `Deny Approval` records a rejected approval state and blocks the workflow. Neither action applies patches, runs Unity, expands shell access, or bypasses validation.
 
 ### YouTuber Explanation
 
@@ -484,4 +513,4 @@ When reviewing an AI-E operational workflow:
 9. If a workflow is resumable, confirm that approval and validation rules still make sense before continuing.
 10. If a workflow is blocked, use `Explain Blocker` and resolve the missing approval, validation, dependency, or scope issue before continuing.
 11. If `Safe Recovery Path` is visible, choose the safe recovery action before inspecting lifecycle details.
-12. If `Approval Required` is visible, review scope and risk before choosing `Approve This Step` or `Deny Approval`.
+12. If `Session Scope Approval` or `Approval Required` is visible, review scope and risk before choosing `Approve Scoped Session`, `Approve This Step`, or `Deny Approval`.

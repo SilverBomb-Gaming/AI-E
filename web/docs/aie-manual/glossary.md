@@ -47,12 +47,14 @@ This glossary translates AI-E engineering language into language that creators a
 | execution outcome | The recorded result of a workflow run | Shows whether the workflow completed, blocked, failed, paused, interrupted, or became resumable |
 | continuation eligibility | The rule that decides whether resume is allowed | AI-E checks history, current stage, approvals, validation, and blockers before continuing |
 | next recommended action | The guidance line that tells the operator what to do next | AI-E explains whether to run, resume, validate, request approval, inspect, or resolve a blocker |
+| Workflow Progress panel | The whole-workflow progress display on a workflow card | Shows step position, percent complete, completed count, remaining count, and current stage |
 | Current Workflow Step panel | The active-stage focus panel for a workflow card | Shows the current step, status, what just happened, and the next action |
 | What just happened | The post-click feedback line for the affected workflow | Explains the result of approval, run, validation, completion, resume, denial, or recovery conversion |
 | Mark Current Step Complete | The stage-level completion action | Records that the current supervised step finished; it does not mean the whole workflow is complete |
 | Run Current Step | The action to start the active pending stage | Moves the current stage from waiting into running when allowed |
 | Run Approved Step | The action to start an approved mutation-sensitive stage | Approval exists for the stage, but AI-E still has not applied files or validated results automatically |
 | Workflow Complete | A completed workflow state with no runnable stages | The operator can inspect results, start another workflow, or review technical details |
+| post-completion actions | Follow-up choices shown after a workflow finishes | Examples include view summary, copy report, ask a follow-up, inspect another system, or prepare a safe patch from findings |
 | stage hierarchy | The visual separation of Complete, Active, and Locked steps | Operators can see what is done, what needs attention, and what is not ready yet |
 | Active stage | The current workflow step that needs operator attention | Follow this step before looking at locked future work |
 | Locked stage | A planned step that is not ready yet | The workflow must complete earlier stages first |
@@ -75,11 +77,40 @@ This glossary translates AI-E engineering language into language that creators a
 | natural conversational embodiment | AI-E participating naturally instead of repeatedly narrating its routing philosophy | The assistant answers the user first and lets workflow capability appear only when useful |
 | operational gravity | Subtle pressure that nudges a user toward workflows or execution | AI-E should keep operational options available without making them feel mandatory |
 | Copy Conversation | One-click export of the bounded active conversation timeline | Operators can use the visible session for handoffs, testing review, docs, devlogs, or external review |
+| conversation auto-scroll | The active history follows new responses during ordinary live conversation | Auto-follow pauses when the operator scrolls upward to inspect older turns |
+| visual continuity | The conversation remains visibly stacked, scrollable, and easy to resume | This makes AI-E look conversational but does not guarantee the next answer progresses intellectually |
+| intellectual continuity | Later responses synthesize earlier turns and move the discussion forward | This is the next frontier after stacked history and auto-scroll |
+| conversational progression | The conversation evolves through synthesis, judgment, and new branches | Avoid repeating the same doctrine or semantic frame after a follow-up prompt |
+| conversational authenticity | The response feels grounded in the user's idea instead of recycled doctrine | AI-E discusses the actual question with variation, curiosity, and honest limits |
+| operational philosophy loop | Conceptual questions repeatedly redirect to governance, workflow restraint, or AI-E identity | This is healthier than workflow overreach, but it still makes conversation feel artificial |
+| semantic grounding | Stable lexical and ontology support for conversation | Helps AI-E branch concepts and vary language without pretending to be a standalone model |
+| WordNet-style grounding | Synonym, hypernym, hyponym, contrast, and related-term structure | Gives conversation semantic relationships rather than only dictionary definitions |
+| lexical cognition support | Structured vocabulary relationships that help conversation move between related concepts | Supports conceptual branching without claiming independent model intelligence |
+| operational ontology | AI-E's structured internal concept language | Stabilizes terms like scaffold leakage, operational gravity, guided exploration, and continuity memory cards |
+| semantic retrieval | Concept-aware lookup over grounded terms and ontology records | Retrieves meaning-supporting context instead of dumping large unfiltered corpora into prompts |
+| semantic nervous system | The emerging support layer of grounded concepts, lexical relations, ontology anchors, and retrieval targets | A useful metaphor for infrastructure, not a claim of consciousness or AGI |
+| knowledge-hoarding architecture | Assuming giant corpora or vaults automatically create intelligence | Avoid noisy storage-first systems; prioritize grounded, retrievable concepts |
 | system improvement request | A formal non-executing proposal for improving AI-E | AI-E can draft evidence-based proposals; humans approve and implement |
 | improvement request risk level | The safety category for a proposed AI-E change | Low, medium, high, or critical depending on docs, UX, runtime, memory, permissions, or governance impact |
 | conversational guidance mode | Orientation without workflow card creation | AI-E explains itself, suggests safe first actions, and avoids showing runtime mechanics too early |
 | lightweight guided workflow mode | A minimized workflow for safe exploration | AI-E can prepare a safe read-only exploration while hiding deeper runtime details until requested |
 | full supervised operational mode | The full workflow view for governed work | Approval, validation, rollback, blocked recovery, and execution-boundary tasks show the full runtime card |
+| concrete game-dev task routing | Detecting real game-development work and escalating it out of conversation | Prompts that ask to modify gameplay loops, spawns, health, rounds, or project behavior should become governed workflows |
+| conversational overprotection | Keeping a concrete task conversational because the system is trying too hard to avoid workflow gravity | Avoid by looking for game nouns, change verbs, numeric targets, and project-specific language |
+| game-dev operationalization milestone | The point where AI-E correctly turns concrete game-development intent into governed workflow state | BABYLON/zombie/round/health prompts route to supervised operational workflow while conceptual prompts remain conversational |
+| real operational usefulness | The next proving-ground after routing and UX are believable | Evaluate repo understanding, patch quality, validation reasoning, gameplay inspection depth, mutation traceability, and claim accuracy |
+| operational truthfulness | AI-E only claims what the available evidence supports | Inspect carefully, explain assumptions, preserve validation boundaries, and avoid fake mutation or completion claims |
+| session-level approval | A single approval for the scoped work envelope of a concrete dev session | The operator approves what AI-E may inspect and prepare before low-risk internal stages auto-progress |
+| session scope boundary | The approved room AI-E may work inside | If AI-E needs broader files, mutation authority, destructive commands, external validation, commits, pushes, or deployment, it must pause |
+| smart workflow autonomy boundary | The line between internal auto-progression and real human-gated judgment | AI-E can self-progress low-risk stages but must pause for approvals, writes, destructive work, external validation, and deployment decisions |
+| human-gate friction | Unnecessary operator clicking for internal workflow state transitions | Reduce it by auto-advancing non-mutating, approval-free, validation-free, dependency-free stages |
+| auto-advancable step | A low-risk workflow stage AI-E can progress without operator babysitting | Reading context, inspecting files, preparing safe patch metadata, generating analysis, and generating reports can move automatically |
+| simulation-aware workflow | A harmless demo or UX-test workflow that auto-advances visible lifecycle states | Lets operators test progress and completion behavior without real execution or relaxed governance |
+| demo workflow | A workflow used to showcase pacing, progress, and completion UI | Should feel alive but must clearly state that no repo, shell, Unity, or mutation work ran |
+| workflow progression realism | The workflow feels like it is moving through a believable lifecycle | Progress bars need pacing, momentum, completion arrival, and post-completion actions, not only static percentages |
+| completion arrival | The moment a workflow clearly reaches its final state | Helps operators understand that the entire workflow completed, not only the current step |
+| lifecycle satisfaction | The workflow has movement, closure, and useful follow-up choices | Prevents completed operational work from feeling suspended or unresolved |
+| conversational evolution | Multi-turn discussion deepens instead of resetting to doctrine | The assistant synthesizes prior turns, adapts its judgment, and opens new angles |
 | progressive workflow disclosure | Showing workflow complexity only when useful | AI-E starts simple and reveals details as the task becomes more operational |
 | Show Workflow Details | Action that expands a minimized workflow card | Use it when you want lifecycle, approval, validation, and technical trace details |
 | multi-destination AI-E | A routing model where prompts resolve to the best interaction destination | Conversation, tutorials, translation, testing review, drafting, exploration, and workflows can each be valid outcomes |

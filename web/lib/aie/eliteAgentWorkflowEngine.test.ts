@@ -7,6 +7,7 @@ import {
   buildEliteAgentBlockedWorkflowRecoveryGuidance,
   buildEliteAgentWorkflowSession,
   convertBlockedWorkflowToSafePatchPreparation,
+  isEliteAgentWorkflowStageAutoAdvancable,
   listEliteAgentWorkflowStageDefinitions,
   markEliteAgentWorkflowValidation,
   resumeEliteAgentWorkflow,
@@ -29,7 +30,22 @@ test("deterministic workflow generation maps inspection prompts to read and repo
 });
 
 test("deterministic workflow generation maps safe patch prompts to approval-aware chains", () => {
-  assert.deepEqual(stageTypesFor("prepare a safe movement patch"), ["READ_REPO_CONTEXT", "PREPARE_PATCH", "REQUEST_APPROVAL"]);
+  assert.deepEqual(stageTypesFor("prepare a safe movement patch"), ["REQUEST_APPROVAL", "READ_REPO_CONTEXT", "PREPARE_PATCH", "GENERATE_REPORT"]);
+});
+
+test("deterministic workflow generation maps concrete game-dev changes to approval-aware chains", () => {
+  const prompts = [
+    "I need you to take a look at my current BABYLON game and have the gameplay loop reach round 5, spawn 5 zombies and increase their health.",
+    "Modify my enemy spawner so it creates 5 zombies.",
+    "Update the round system so the game reaches round 5.",
+  ];
+
+  for (const prompt of prompts) {
+    const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt });
+
+    assert.deepEqual(session.stages.map((stage) => stage.type), ["REQUEST_APPROVAL", "READ_REPO_CONTEXT", "PREPARE_PATCH", "GENERATE_REPORT"], prompt);
+    assert.match(session.deterministicSelectionReason, /session-level approval/i, prompt);
+  }
 });
 
 test("deterministic workflow generation blocks automatic patch application until approval route exists", () => {
@@ -61,7 +77,7 @@ test("blocked automatic patch workflows convert to safe patch preparation withou
   const safe = convertBlockedWorkflowToSafePatchPreparation(blocked, { now: "2026-05-12T12:14:00.000Z" });
 
   assert.equal(blocked.status, "BLOCKED");
-  assert.deepEqual(safe.stages.map((stage) => stage.type), ["READ_REPO_CONTEXT", "PREPARE_PATCH", "REQUEST_APPROVAL"]);
+  assert.deepEqual(safe.stages.map((stage) => stage.type), ["REQUEST_APPROVAL", "READ_REPO_CONTEXT", "PREPARE_PATCH", "GENERATE_REPORT"]);
   assert.equal(safe.status, "PENDING");
   assert.match(safe.deterministicSelectionReason, /original blocked workflow remains visible and no patch was applied/i);
   assert.doesNotMatch(safe.deterministicSelectionReason, /applied successfully|executed/i);
@@ -69,6 +85,14 @@ test("blocked automatic patch workflows convert to safe patch preparation withou
 
 test("deterministic workflow generation maps verification prompts to verify validate report", () => {
   assert.deepEqual(stageTypesFor("verify the latest gameplay patch"), ["VERIFY_BUILD", "VALIDATE_PATCH", "GENERATE_REPORT"]);
+});
+
+test("deterministic workflow generation maps dummy workflow prompts to simulation-safe progression chains", () => {
+  const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "Run a 10-second dummy workflow so I can test the progress bar and completion state." });
+
+  assert.deepEqual(session.stages.map((stage) => stage.type), ["READ_REPO_CONTEXT", "VERIFY_BUILD", "GENERATE_REPORT"]);
+  assert.equal(session.status, "PENDING");
+  assert.match(session.deterministicSelectionReason, /Demo workflow prompt selected/i);
 });
 
 test("workflow lifecycle transitions maintain ordered supervised progression", () => {
@@ -94,47 +118,60 @@ test("workflow lifecycle transitions maintain ordered supervised progression", (
 
 test("workflow engine prevents unsafe out-of-order transitions", () => {
   const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
-  const patchStage = session.stages[1]!;
+  const readStage = session.stages[1]!;
 
   assert.throws(() => advanceEliteAgentWorkflow(session, {
-    stageId: patchStage.stageId,
+    stageId: readStage.stageId,
     action: "START_STAGE",
     now: "2026-05-12T12:00:01.000Z",
   }), /cannot run before/i);
 });
 
-test("mutation-capable stages remain blocked without explicit approval", () => {
+test("session approval is the first human gate for concrete dev workflows", () => {
   const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
-  const readStage = session.stages[0]!;
-  const patchStage = session.stages[1]!;
-  const afterRead = advanceEliteAgentWorkflow(
-    advanceEliteAgentWorkflow(session, { stageId: readStage.stageId, action: "START_STAGE" }),
-    { stageId: readStage.stageId, action: "COMPLETE_STAGE" },
-  );
+  const approvalStage = session.stages[0]!;
+  const approvalPending = buildEliteAgentApprovalGateGuidance(session);
 
-  const blocked = advanceEliteAgentWorkflow(afterRead, { stageId: patchStage.stageId, action: "START_STAGE" });
-
-  assert.equal(blocked.stages[1]?.lifecycleState, "BLOCKED");
-  assert.equal(blocked.stages[1]?.approvalState, "BLOCKED");
-  assert.match(blocked.blockedStageReason ?? "", /approval/i);
+  assert.equal(session.currentStageId, approvalStage.stageId);
+  assert.equal(approvalPending?.workflowStage, "REQUEST_APPROVAL");
+  assert.equal(approvalPending?.approvalGateState, "WAITING_FOR_APPROVAL");
+  assert.equal(approvalPending?.actionBeingApproved, "Scoped dev session boundary");
 });
 
-test("approval checkpoints allow mutation-capable stages to start but still require validation", () => {
+test("auto-advancement rules start after session approval and stay inside low-risk stages", () => {
   const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
-  const readStage = session.stages[0]!;
-  const patchStage = session.stages[1]!;
+  const approvalStage = session.stages[0]!;
+  const readStage = session.stages[1]!;
+  const patchStage = session.stages[2]!;
+  const reportStage = session.stages[3]!;
+
+  assert.equal(isEliteAgentWorkflowStageAutoAdvancable(approvalStage), false);
+  assert.equal(isEliteAgentWorkflowStageAutoAdvancable(readStage), true);
+  assert.equal(isEliteAgentWorkflowStageAutoAdvancable(patchStage), true);
+  assert.equal(isEliteAgentWorkflowStageAutoAdvancable(reportStage), true);
+
+  const approved = advanceEliteAgentWorkflow(session, { stageId: approvalStage.stageId, action: "APPROVE_STAGE" });
+  assert.equal(approved.currentStageId, readStage.stageId);
+  assert.equal(isEliteAgentWorkflowStageAutoAdvancable(approved.stages[1]), true);
+
   const afterRead = advanceEliteAgentWorkflow(
-    advanceEliteAgentWorkflow(session, { stageId: readStage.stageId, action: "START_STAGE" }),
+    advanceEliteAgentWorkflow(approved, { stageId: readStage.stageId, action: "START_STAGE" }),
     { stageId: readStage.stageId, action: "COMPLETE_STAGE" },
   );
-  const approved = advanceEliteAgentWorkflow(afterRead, { stageId: patchStage.stageId, action: "APPROVE_STAGE" });
-  const running = advanceEliteAgentWorkflow(approved, { stageId: patchStage.stageId, action: "START_STAGE" });
-  const blockedCompletion = advanceEliteAgentWorkflow(running, { stageId: patchStage.stageId, action: "COMPLETE_STAGE" });
+  assert.equal(afterRead.currentStageId, patchStage.stageId);
+  assert.equal(isEliteAgentWorkflowStageAutoAdvancable(afterRead.stages[2]), true);
+});
 
-  assert.equal(approved.stages[1]?.approvalState, "APPROVED");
-  assert.equal(running.stages[1]?.lifecycleState, "RUNNING");
-  assert.equal(blockedCompletion.stages[1]?.lifecycleState, "BLOCKED");
-  assert.match(blockedCompletion.blockedStageReason ?? "", /Validation-required/);
+test("session approval completes the human gate without claiming execution", () => {
+  const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
+  const approvalStage = session.stages[0]!;
+  const readStage = session.stages[1]!;
+  const approved = advanceEliteAgentWorkflow(session, { stageId: approvalStage.stageId, action: "APPROVE_STAGE" });
+
+  assert.equal(approved.stages[0]?.approvalState, "APPROVED");
+  assert.equal(approved.stages[0]?.lifecycleState, "COMPLETED");
+  assert.equal(approved.currentStageId, readStage.stageId);
+  assert.equal(approved.status, "PARTIALLY_COMPLETED");
 });
 
 test("approval gate guidance explains the supervised action before approval", () => {
@@ -143,47 +180,50 @@ test("approval gate guidance explains the supervised action before approval", ()
 
   assert.equal(guidance?.title, "Approval Required");
   assert.equal(guidance?.approvalGateState, "WAITING_FOR_APPROVAL");
-  assert.equal(guidance?.workflowStage, "PREPARE_PATCH");
-  assert.equal(guidance?.actionBeingApproved, "Patch preparation only");
+  assert.equal(guidance?.workflowStage, "REQUEST_APPROVAL");
+  assert.equal(guidance?.actionBeingApproved, "Scoped dev session boundary");
   assert.deepEqual(guidance?.allowedPathScope, ["runner_artifacts/lite_elite_agent"]);
-  assert.equal(guidance?.mutationPermission, "MUTATION_REQUIRES_APPROVAL");
-  assert.match(guidance?.whatHappensAfterApproval ?? "", /will not apply files automatically/i);
+  assert.equal(guidance?.mutationPermission, "NO_MUTATION");
+  assert.match(guidance?.whatHappensAfterApproval ?? "", /in-scope, low-risk workflow stages automatically/i);
+  assert.match(guidance?.allowedToDo ?? "", /inspect scoped repo context/i);
   assert.match(guidance?.notAllowedToDo ?? "", /auto-apply patches|unrestricted shell/i);
 });
 
 test("approval grant records approved-by-operator event without fake execution", () => {
   const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
-  const patchStage = session.stages[1]!;
+  const approvalStage = session.stages[0]!;
   const approved = advanceEliteAgentWorkflow(session, {
-    stageId: patchStage.stageId,
+    stageId: approvalStage.stageId,
     action: "APPROVE_STAGE",
     reason: "Operator approved this supervised stage only.",
     now: "2026-05-12T12:15:00.000Z",
   });
 
-  assert.equal(approved.stages[1]?.approvalState, "APPROVED");
+  assert.equal(approved.stages[0]?.approvalState, "APPROVED");
+  assert.equal(approved.stages[0]?.lifecycleState, "COMPLETED");
+  assert.equal(approved.status, "PARTIALLY_COMPLETED");
   assert.equal(approved.approvalEvents.at(-1)?.approvalGateState, "APPROVED_BY_OPERATOR");
-  assert.equal(approved.approvalEvents.at(-1)?.stageType, "PREPARE_PATCH");
+  assert.equal(approved.approvalEvents.at(-1)?.stageType, "REQUEST_APPROVAL");
   assert.doesNotMatch(approved.approvalEvents.at(-1)?.message ?? "", /applied|executed automatically/i);
 });
 
 test("approval denial safely blocks the workflow and records denial history", () => {
   const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
-  const patchStage = session.stages[1]!;
+  const approvalStage = session.stages[0]!;
   const denied = advanceEliteAgentWorkflow(session, {
-    stageId: patchStage.stageId,
+    stageId: approvalStage.stageId,
     action: "DENY_STAGE_APPROVAL",
     reason: "Approval denied by operator.",
     now: "2026-05-12T12:16:00.000Z",
   });
 
   assert.equal(denied.status, "BLOCKED");
-  assert.equal(denied.stages[1]?.approvalState, "REJECTED");
+  assert.equal(denied.stages[0]?.approvalState, "REJECTED");
   assert.equal(denied.approvalEvents.at(-1)?.approvalGateState, "APPROVAL_DENIED");
   assert.match(denied.blockedStageReason ?? "", /denied/i);
-  const stillBlocked = advanceEliteAgentWorkflow(denied, { stageId: patchStage.stageId, action: "START_STAGE" });
+  const stillBlocked = advanceEliteAgentWorkflow(denied, { stageId: approvalStage.stageId, action: "START_STAGE" });
   assert.equal(stillBlocked.status, "BLOCKED");
-  assert.equal(stillBlocked.stages[1]?.approvalState, "REJECTED");
+  assert.equal(stillBlocked.stages[0]?.approvalState, "REJECTED");
 });
 
 test("validation-required stages support validation pending and success before completion", () => {
@@ -201,14 +241,15 @@ test("validation-required stages support validation pending and success before c
 
 test("rollback metadata is prepared without executing autonomous rollback", () => {
   const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
-  const readStage = session.stages[0]!;
-  const patchStage = session.stages[1]!;
+  const approvalStage = session.stages[0]!;
+  const readStage = session.stages[1]!;
+  const patchStage = session.stages[2]!;
+  const approved = advanceEliteAgentWorkflow(session, { stageId: approvalStage.stageId, action: "APPROVE_STAGE" });
   const afterRead = advanceEliteAgentWorkflow(
-    advanceEliteAgentWorkflow(session, { stageId: readStage.stageId, action: "START_STAGE" }),
+    advanceEliteAgentWorkflow(approved, { stageId: readStage.stageId, action: "START_STAGE" }),
     { stageId: readStage.stageId, action: "COMPLETE_STAGE" },
   );
-  const approved = advanceEliteAgentWorkflow(afterRead, { stageId: patchStage.stageId, action: "APPROVE_STAGE" });
-  const running = advanceEliteAgentWorkflow(approved, { stageId: patchStage.stageId, action: "START_STAGE" });
+  const running = advanceEliteAgentWorkflow(afterRead, { stageId: patchStage.stageId, action: "START_STAGE" });
   const rollback = advanceEliteAgentWorkflow(running, {
     stageId: patchStage.stageId,
     action: "PREPARE_ROLLBACK",
@@ -225,9 +266,9 @@ test("workflow summaries expose approval validation rollback and stage history",
   const summary = summarizeEliteAgentWorkflow(session);
 
   assert.equal(summary.workflowSessionId, "elite-workflow-lite-elite-repo-maintainer-01-20260512120000");
-  assert.deepEqual(summary.stageTypes, ["READ_REPO_CONTEXT", "PREPARE_PATCH", "REQUEST_APPROVAL"]);
-  assert.equal(summary.approvalCheckpoints.length, 2);
-  assert.equal(summary.validationCheckpoints.length, 1);
+  assert.deepEqual(summary.stageTypes, ["REQUEST_APPROVAL", "READ_REPO_CONTEXT", "PREPARE_PATCH", "GENERATE_REPORT"]);
+  assert.equal(summary.approvalCheckpoints.length, 1);
+  assert.equal(summary.validationCheckpoints.length, 0);
   assert.equal(summary.rollbackAvailable, false);
   assert.match(summary.truthfulCapabilityBoundary, /supervised multi-step workflow/i);
 });
@@ -257,7 +298,8 @@ test("stage definitions include requested workflow categories and governance met
     "REQUEST_APPROVAL",
     "BLOCKED_EXTERNAL_DEPENDENCY",
   ]);
-  assert.equal(definitions.find((definition) => definition.type === "PREPARE_PATCH")?.mutationPermission, "MUTATION_REQUIRES_APPROVAL");
+  assert.equal(definitions.find((definition) => definition.type === "PREPARE_PATCH")?.mutationPermission, "READ_ONLY");
+  assert.equal(definitions.find((definition) => definition.type === "PREPARE_PATCH")?.validationRequired, false);
   assert.equal(definitions.find((definition) => definition.type === "VERIFY_BUILD")?.validationRequired, true);
   assert.equal(definitions.find((definition) => definition.type === "REQUEST_APPROVAL")?.externalDependencyRequired, true);
 });
@@ -299,19 +341,21 @@ test("interrupted workflows require resumable marking before continuation", () =
   assert.equal(resumable.resumeEligible, true);
 });
 
-test("approval-aware resume keeps mutation stages blocked without approval", () => {
+test("approval-aware resume allows safe preparation but keeps approval checkpoint pending", () => {
   const session = buildEliteAgentWorkflowSession({ ...baseInput, prompt: "prepare a safe movement patch" });
-  const readStage = session.stages[0]!;
-  const patchStage = session.stages[1]!;
+  const approvalStage = session.stages[0]!;
+  const readStage = session.stages[1]!;
+  const patchStage = session.stages[2]!;
+  const approved = advanceEliteAgentWorkflow(session, { stageId: approvalStage.stageId, action: "APPROVE_STAGE" });
   const afterRead = advanceEliteAgentWorkflow(
-    advanceEliteAgentWorkflow(session, { stageId: readStage.stageId, action: "START_STAGE" }),
+    advanceEliteAgentWorkflow(approved, { stageId: readStage.stageId, action: "START_STAGE" }),
     { stageId: readStage.stageId, action: "COMPLETE_STAGE" },
   );
   const pausedPatch = advanceEliteAgentWorkflow(afterRead, { stageId: patchStage.stageId, action: "PAUSE_WORKFLOW" });
   const resumablePatch = advanceEliteAgentWorkflow(pausedPatch, { stageId: patchStage.stageId, action: "MARK_RESUMABLE" });
   const resumed = resumeEliteAgentWorkflow(resumablePatch);
 
-  assert.equal(resumed.status, "BLOCKED");
-  assert.match(resumed.blockedStageReason ?? "", /approval/i);
-  assert.equal(resumed.stages[1]?.approvalState, "BLOCKED");
+  assert.equal(resumed.status, "RUNNING");
+  assert.equal(resumed.stages[0]?.approvalState, "APPROVED");
+  assert.equal(resumed.stages[2]?.lifecycleState, "RUNNING");
 });

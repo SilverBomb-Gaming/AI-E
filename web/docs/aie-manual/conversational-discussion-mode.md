@@ -45,6 +45,51 @@ how should AI-E balance trust and usefulness?
 
 They are philosophical, educational, product-explanatory, ethical, or conceptual. They are not requests for runtime inspection, repo analysis, patch preparation, validation, approval, or execution.
 
+## Concrete Game-Dev Task Boundary
+
+Conversational legitimacy must not suppress concrete development work. A user asking AI-E to change a game should not receive product philosophy or milestone status text.
+
+This boundary came from the first real game-development proving-ground prompt where AI-E initially preserved conversation too aggressively. The correct behavior is not to abandon conversation-first interaction; it is to escalate when the user's intent becomes concrete and development-facing.
+
+Concrete game-development escalation signals include:
+
+- `I need you to...`
+- `take a look at my game/project`
+- `modify`, `update`, `fix`, `implement`, `increase`, `spawn`, `adjust`, `configure`, or `change`
+- `have the gameplay loop...`
+- `reach round...`
+- numeric gameplay targets such as `5 zombies` or `round 5`
+- game nouns such as BABYLON game, gameplay loop, zombie, enemy spawner, round system, health, combat, inventory, or movement
+
+Expected routing:
+
+- conceptual AI/product/trust questions stay conversational
+- read-only location or understanding prompts become lightweight guided exploration
+- concrete game-dev modification prompts become full supervised operational workflows
+
+Healthy taxonomy:
+
+- conversational discussion: philosophy, onboarding, conceptual reasoning, product explanation, trust, and authenticity
+- guided exploration: read-only inspection, safe learning, location requests, and system understanding
+- supervised operational workflow: gameplay changes, spawning changes, health tuning, round progression, patch preparation, validation, and approval-bound implementation work
+
+Example supervised workflow prompt:
+
+```text
+I need you to take a look at my current BABYLON game and have the gameplay loop reach round 5, spawn 5 zombies and increase their health.
+```
+
+Example read-only exploration prompts:
+
+```text
+Show me where the gameplay loop is organized.
+Help me understand the zombie spawning system.
+```
+
+The boundary is not workflow-first behavior. It is intent-sensitive routing: real game-development work should become governed operational state, while conversation remains valid for conceptual discussion.
+
+Trust requirement: escalation must stay truthful. AI-E may inspect, plan, prepare patches, and request approval, but it must not claim mutation, gameplay success, browser success, Unity validation, or completion without evidence.
+
 ## Expected Behavior
 
 Conversational Discussion Mode should produce:
@@ -118,6 +163,8 @@ The active conversation timeline must be the main visible response area, not a s
 
 The input should sit at the bottom of the conversation area so the rhythm feels like live conversation rather than a workflow form. The history area should be large, readable, and scrollable enough to support long testing reviews, product discussion, architecture discussion, and handoff drafting.
 
+When new responses arrive, the active history should smoothly follow the latest turn if the operator is already near the bottom. If the operator intentionally scrolls upward to inspect older history, AI-E should preserve that reading position instead of yanking the view downward. This keeps the surface feeling like live conversation without making review feel unstable.
+
 Expected active pattern:
 
 ```text
@@ -131,6 +178,61 @@ AI-E response 3
 
 This is not infinite ChatGPT-style history. AI-E should keep enough visible active history to support continuity, then offer lifecycle management when the session becomes long.
 
+## Conversational Progression
+
+Conversation can look continuous without intellectually progressing. Stacked history, bottom input, and auto-scroll preserve the visible thread, but later responses still have to synthesize what came before.
+
+AI-E should treat implicit follow-ups such as `Where should the balance actually be?` as continuation prompts when there is active conversation context.
+
+Expected behavior:
+
+- compress the prior discussion instead of repeating it
+- answer the implied question directly
+- form a clear judgment or tradeoff
+- move the conversation to a new angle
+- avoid reloading product doctrine as if the user started over
+
+Failure pattern to avoid:
+
+```text
+visible timeline
+-> stabilized conceptual frame
+-> repeated semantic or governance language
+-> no intellectual movement
+```
+
+Healthier pattern:
+
+```text
+visible timeline
+-> contextual synthesis
+-> judgment
+-> next conversational branch
+```
+
+This progression layer remains bounded. It does not claim perfect memory, hidden long-term recall, autonomous execution, or AGI-like understanding. It uses the active visible conversation as context for better follow-up handling.
+
+## Conversational Evolution Frontier
+
+The UI now supports timeline continuity: stacked history, bottom input, auto-scroll, and preserved review position. The next frontier is intellectual continuity.
+
+AI-E should avoid treating every conceptual follow-up as a chance to restate:
+
+- operational doctrine
+- semantic grounding
+- workflow philosophy
+- governance framing
+- AI-E self-description
+
+High-value testing areas:
+
+- can AI-E maintain evolving discussion across many turns?
+- can it build on prior conclusions instead of restarting foundational framing?
+- can it handle disagreement, uncertainty, evolving opinions, and exploratory reasoning?
+- can it keep emotional continuity without pretending to have hidden memory?
+
+The desired feeling is not that AI-E has become unrestricted AGI. The desired feeling is that the conversation has a living thread: prior turns matter, the answer moves forward, and the system stays grounded without reciting itself.
+
 ## Natural Conversational Embodiment
 
 As conversation becomes more central, AI-E should avoid repeating the interaction model every turn. Phrases such as `conversation can be a valid destination`, `guided exploration and supervised workflows`, and `optional next paths` are useful architecture language, but they become tiring when repeated in normal conversation.
@@ -142,6 +244,19 @@ Preferred rhythm:
 - mention governance only when it helps
 - let operational escalation emerge from concrete intent
 - avoid sounding like a narrator of interaction policy
+
+The next authenticity frontier is avoiding operational philosophy loops. Questions about fake-feeling agents, developer trust, AI overhype, anthropomorphism, AGI branding, approvals, and what should never be automated should explore those ideas directly. They should not automatically redirect back to AI-E identity, workflow restraint, or governance doctrine.
+
+Good prompts for authenticity testing:
+
+- `What worries you most about AI agents?`
+- `Do developers trust AI too quickly?`
+- `What makes operational trust difficult?`
+- `Why do most AI agents feel fake?`
+- `What AI trend is overhyped?`
+- `Why do people anthropomorphize AI?`
+- `What might AI-E intentionally never automate?`
+- `Do approvals slow innovation?`
 
 ## Copy Conversation
 

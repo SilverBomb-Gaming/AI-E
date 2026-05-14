@@ -2,6 +2,413 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_SESSION_LEVEL_APPROVAL_BOUNDARY_MODEL
+
+Human testing after workflow auto-advancement exposed the next approval-model frontier: reducing button friction is not enough if approval is still modeled as a per-step interruption. A game-development assistant should ask the operator to approve the room AI-E may work inside, then continue inside that room until scope, risk, mutation authority, validation authority, or external effects change.
+
+Core principle:
+
+- approval happens at the permission boundary, not every workflow step
+- a concrete dev task creates a scoped session approval before internal work begins
+- after session approval, low-risk in-scope stages auto-progress
+- AI-E pauses only when the approved boundary changes or a real human judgment is required
+
+Session boundary example:
+
+- scope: gameplay loop files, zombie spawning logic, enemy health values
+- allowed: inspect repo, prepare scoped patch metadata, update workflow state, generate report
+- not allowed: delete files, modify unrelated systems, push commits, deploy, run destructive commands, claim Unity/browser gameplay validation without evidence, or mutate files without a real approved route
+
+Implementation update:
+
+- concrete game-dev change workflows now start with `REQUEST_APPROVAL -> READ_REPO_CONTEXT -> PREPARE_PATCH -> GENERATE_REPORT`
+- the first `REQUEST_APPROVAL` stage represents scoped dev session approval
+- once the operator approves the session boundary, read/prep/report stages can auto-progress without repeated approval clicks
+- the approval card shows allowed and disallowed behavior inside the boundary
+- completed approval states become read-only workflow history instead of showing active approve/deny controls
+- the progress panel is sticky so workflow awareness stays visible while lower sections expand
+
+Trust boundary:
+
+- session approval does not grant unrestricted mutation
+- session approval does not apply files automatically
+- session approval does not claim Unity, browser, gameplay, commit, push, deployment, or validation success
+- AI-E must still pause for scope expansion, unrelated mutations, destructive operations, risky shell commands, project settings changes, commit/push/deploy, or external validation claims
+
+Product direction:
+
+- approve the boundary
+- let AI-E work inside the boundary
+- pause when the boundary changes
+- preserve governance without turning the workflow into checklist babysitting
+
+## AIE_HUMAN_GATE_FRICTION_AND_WORKFLOW_AUTO_ADVANCEMENT_MILESTONE
+
+Human testing after the concrete BABYLON operationalization milestone confirmed that real game-dev prompts now route correctly, progress visibly, and can reach 100% completion. The remaining issue was not workflow completion; it was the amount of manual babysitting required to get there.
+
+Observed friction:
+
+- the operator had to click through too many lifecycle and confirmation buttons
+- internal processing and non-destructive transitions felt like they required human approval
+- the workflow risked feeling like a checklist engine instead of a useful operational assistant
+
+Product realization:
+
+- workflow lifecycle UX is now alive enough that human-gating friction is visible
+- operator interruption should happen only when human judgment matters
+- low-risk internal progression should move automatically while approval, mutation, destructive, external, and validation decisions still pause intentionally
+
+Implementation update:
+
+- `PREPARE_PATCH` now represents safe patch preparation, not mutation authorization
+- low-risk stages can auto-progress when they are non-mutating, approval-free, validation-free, and have no external dependency
+- real approval is concentrated at the session-level `REQUEST_APPROVAL` boundary
+- `/operator/agents` now shows an auto-advancing internal-step panel instead of asking the operator to manually run every low-risk transition
+- auto-advancement is separate from simulation workflows and does not imply fake repo, Unity, shell, mutation, validation, or completion claims
+
+Workflow principle:
+
+- auto-advance: read project context, inspect files, prepare safe patch metadata, generate reports, and update internal workflow state
+- pause: approve mutation, authorize repo writes, confirm destructive operations, validate gameplay behavior, confirm deployment, and resolve external dependencies
+
+Desired operator feeling:
+
+- AI-E handles operational progression automatically
+- AI-E pauses when the operator's judgment, approval, or evidence is actually needed
+
+Trust boundary:
+
+- governance is preserved
+- approvals are not skipped
+- mutation is not faked
+- validation is not invented
+- low-risk self-progression reduces interaction friction without creating AGI theater
+
+Current next frontier:
+
+- smart workflow autonomy boundaries
+- fewer meaningless clicks
+- stronger operator trust through better pause selection
+- workflows that feel naturally self-progressing instead of mechanically user-driven
+
+## AIE_CONCRETE_GAME_DEV_OPERATIONALIZATION_MILESTONE
+
+Human testing entered the first true real game-development task proving-ground phase. The test was not about whether AI-E could describe workflows; it was about whether AI-E could recognize concrete game-development intent and become operational without losing conversational legitimacy for conceptual prompts.
+
+Initial failure:
+
+- AI-E classified a concrete game-development request as `CONVERSATIONAL`
+- the response drifted into operational philosophy, milestone narration, workflow explanation, and optional next paths
+- no workflow was created
+
+Product realization:
+
+- earlier phases over-operationalized too many prompts
+- conversational-authenticity work corrected that, but briefly swung too far toward conversation preservation
+- AI-E must preserve conversational legitimacy without failing to escalate concrete development intent
+
+Regression prompt:
+
+- `I need you to take a look at my current BABYLON game and have the gameplay loop reach round 5, spawn 5 zombies and increase their health.`
+
+Why this must escalate:
+
+- concrete project target: BABYLON game
+- inspection request: take a look
+- gameplay-loop behavior target: reach round 5
+- spawn-count target: spawn 5 zombies
+- tuning/change target: increase zombie health
+
+Routing principle:
+
+- philosophical, onboarding, product, trust, authenticity, and conceptual prompts stay conversational
+- read-only game-dev location or understanding prompts become lightweight guided exploration
+- concrete game-dev modification prompts become supervised operational workflows
+- ambiguous prompts can ask for clarification or offer safe inspection
+- mutation and validation claims remain governed and evidence-based
+
+Implementation update:
+
+- mediation now detects concrete game-dev task language such as `I need you to`, `take a look`, `modify`, `update`, `fix`, `increase`, `spawn`, `reach round`, `gameplay loop`, `zombie`, `spawner`, and numeric gameplay targets
+- BABYLON/zombie/round/health prompts now route to `SUPERVISED_OPERATIONAL_WORKFLOW` instead of conversational milestone text
+- read-only prompts such as `Show me where the gameplay loop is organized` and `Help me understand the zombie spawning system` route to minimized guided exploration
+- workflow generation maps concrete game-dev changes to the session-approval `REQUEST_APPROVAL -> READ_REPO_CONTEXT -> PREPARE_PATCH -> GENERATE_REPORT` chain
+
+Validation results:
+
+- adjacent AI-E suite: 133/133
+- default `npm test`: 44/44
+- `npm run build`: passed
+- `git diff --check`: clean
+- browser smoke confirmed the BABYLON prompt creates a supervised workflow with approval gating
+- browser smoke confirmed `Why do most AI agents feel fake?` remains conversational with zero workflows
+
+Major behavioral milestone:
+
+- conversational discussion covers philosophy, onboarding, conceptual reasoning, trust, and product explanation
+- guided exploration covers read-only inspection, safe learning, and location/understanding requests
+- concrete operational development work covers gameplay changes, spawning changes, health tuning, round progression, and patch preparation
+
+Product lesson:
+
+- conversation should be natural by default
+- concrete game-development intent must become operational
+- the healthy balance is neither workflow maximalism nor conversational overprotection
+- AI-E should feel like conversationally guided operational intelligence for game development, not unrestricted AGI, fake autonomous coding, orchestration-heavy workflow tooling, or a generic chatbot loop
+
+Current healthiest product direction:
+
+- a conversational operational game-development assistant
+- governed workflows available when intent becomes concrete
+- believable escalation rather than AGI theater
+- operational truthfulness through explicit assumptions, validation boundaries, approval gates, and evidence-aware claims
+
+Next testing frontier:
+
+- real operational usefulness
+- repo understanding quality
+- patch preparation quality
+- validation reasoning
+- gameplay-system inspection depth
+- mutation traceability
+- whether actual game-state changes align with AI-E workflow claims
+
+Remaining conversational frontier:
+
+- deep contextual conversational evolution
+- follow-up continuity
+- contextual synthesis
+- evolving reasoning
+- avoidance of repeated doctrine anchors
+- intellectual progression across turns
+
+## AIE_WORKFLOW_PROGRESSION_UX_AND_CONVERSATIONAL_EVOLUTION_PHASE
+
+Human testing after conversational continuity, operational-gravity reduction, conversational authenticity refinement, auto-scroll support, workflow progress UI, and simulation-aware demo workflows exposed a healthier maturity frontier: workflow lifecycle UX now feels alive, while conversational evolution quality remains the main unresolved experience challenge.
+
+Major UX breakthrough:
+
+- workflows now show visible percentage, step counts, remaining-step visibility, progress movement, completion arrival, and post-completion actions
+- demo workflows can auto-advance with simulated pacing and reach 100% without pretending to run repo, shell, Unity, mutation, or real validation work
+- completion-state UI now separates current-step completion from entire-workflow completion
+- auto-scroll makes active conversation feel live instead of log-like
+
+Workflow lifecycle now feels:
+
+- kinetically alive
+- operationally progressive
+- visually understandable
+- emotionally complete
+
+Important successful framing:
+
+- `This demo is auto-paced so you can evaluate workflow movement, progress percentage, and completion arrival. It does not run repo, shell, Unity, mutation, or real validation work.`
+- `This is the final workflow state, not just the current step ending.`
+
+Current primary frontier:
+
+- conversational progression and contextual synthesis
+
+Remaining conversational risk:
+
+- stacked history and auto-scroll create timeline continuity, but responses can still collapse into repeated philosophy, operational doctrine, semantic-grounding recursion, or AI-E self-description
+- follow-up questions can still be treated as opportunities to restate foundational framing instead of evolving the discussion
+
+Recommended next testing areas:
+
+- long-form follow-up continuity across many turns
+- contextual synthesis that builds on prior conclusions
+- nuanced conversational branching through disagreement, uncertainty, evolving opinions, exploratory reasoning, and contextual adaptation
+- workflow realism checks that preserve believable pacing without becoming fake operational theater
+
+Current product direction:
+
+- AI-E increasingly feels like conversationally guided operational intelligence with believable workflow lifecycle UX
+- the next frontier is making conversations evolve naturally and intelligently over time
+
+## AIE_WORKFLOW_PROGRESSION_REALISM_AND_SIMULATION_AWARE_WORKFLOWS
+
+Human testing after workflow progress UI showed that the progress bar itself was correct, but workflow progression did not yet feel alive. Progress percentage, step counts, remaining-step indicators, and workflow-vs-step distinction improved operational clarity, but dummy UX tests could still deadlock on real validation mechanics.
+
+Observed failure:
+
+- prompt: `Run a 10-second dummy workflow so I can test the progress bar and completion state.`
+- workflow state appeared correctly
+- progress UI appeared correctly
+- the workflow entered a running/validation path
+- the experience stalled at validation evidence with no visible movement toward completion
+
+Product realization:
+
+- demo, tutorial, simulated, and UX-test workflows should not behave exactly like real governed operational workflows
+- real workflows still need approval, validation, recovery, and evidence gates
+- harmless demo workflows need simulation-aware pacing so operators can test progression and completion-state UX
+
+First bounded implementation:
+
+- dummy/demo/simulation/tutorial workflow prompts map to a simulation-safe progression chain
+- `/operator/agents` auto-advances simulation workflows through staged lifecycle ticks
+- simulated validation pulses can complete without external evidence
+- workflow cards explicitly label the lane as `Simulated Workflow`
+- completion still lands in the same final workflow state and post-completion actions
+- no repo, shell, Unity, mutation, real validation, or approval authority is added
+
+Mode distinction emerging:
+
+- demo workflow: showcases progress and completion UX
+- guided tutorial workflow: teaches lifecycle pacing
+- simulated workflow: safely tests operational UI without literal governance blocking
+- real operational workflow: preserves validation, approval, recovery, evidence, and execution boundaries
+
+Next refinement target:
+
+- richer pacing curves
+- more satisfying completion arrival
+- clearer demo-vs-real visual treatment
+- separate tutorial copy for workflow learning
+- broader tests for simulated lifecycle momentum
+
+## AIE_CONVERSATIONAL_PROGRESSION_VS_VISUAL_CONTINUITY
+
+Human testing after conversational continuity, auto-scroll, workflow separation, authenticity refinement, and semantic grounding exposed the next frontier: AI-E now has strong visual conversational continuity, but not yet strong conversational progression.
+
+What now works:
+
+- stacked visible conversation history
+- bottom-anchored conversational input
+- auto-scroll when the operator remains near the bottom
+- manual upward scroll preservation
+- workflow separation from ordinary conceptual discussion
+- reduced operational doctrine repetition
+- topic-specific reflective responses
+
+Current failure pattern:
+
+```text
+visual conversation continuity
+-> retrieve stabilized thematic response
+-> append to timeline
+-> repeat doctrine framing
+```
+
+Target pattern:
+
+```text
+conversation history
+-> contextual synthesis
+-> progressive reasoning
+-> adaptive follow-up continuation
+```
+
+Important distinction:
+
+- visual continuity means the conversation remains visible and scrollable
+- intellectual continuity means the response synthesizes prior turns, forms a position, and moves the discussion forward
+
+High-value test case:
+
+- prior topic: semantic grounding, fallback repetition, operational ontology, contextual retrieval, lexical variation, and semantic stability
+- follow-up prompt: `Where should the balance actually be?`
+- expected behavior: synthesize the prior discussion and answer with judgment
+- failure mode: repeat the semantic-grounding explanation almost verbatim
+
+First bounded implementation:
+
+- conversational mediation now accepts recent visible conversation turns as bounded context
+- implicit continuation prompts can synthesize the active thread instead of restarting generic conceptual fallback
+- no-context follow-ups do not fake continuity
+- this does not create hidden execution state, workflow authority, long-term memory claims, AGI behavior, or a new orchestration engine
+
+Next refinement target:
+
+- contextual synthesis
+- follow-up interpretation
+- reasoning progression
+- reduced conceptual fallback loops
+- conversational authenticity across multiple turns
+
+The central UX question is now: can AI-E sustain authentic evolving dialogue across multiple turns?
+
+## AIE_SEMANTIC_GROUNDING_AND_SECOND_BRAIN_DIRECTION
+
+Human testing after conversational authenticity work exposed the next architecture need: the repetitive fallback problem is increasingly semantic, not workflow-related. Unhandled conceptual prompts can still collapse into operational doctrine, governance explanation, or AI-E identity repetition.
+
+Correct framing:
+
+- build semantic grounding infrastructure
+- build lexical cognition support
+- build AI-E operational ontology
+- build contextual semantic retrieval
+
+Avoid this framing:
+
+- building an alpha LLM
+- replacing frontier models
+- simulating AGI through giant vaults
+- assuming raw corpus size creates understanding
+
+Phase direction:
+
+1. WordNet-style grounding: synonym networks, hypernyms, hyponyms, related terms, contrasts, and concept groups.
+2. Wiktionary normalization later: conversational usage, idioms, alternate meanings, and modern phrasing after filtering noisy source text.
+3. AI-E operational ontology: stable internal concepts such as scaffold leakage, operational gravity, conversational legitimacy, guided exploration, continuity memory cards, and workflow progress clarity.
+4. Semantic retrieval: concept-aware lookup and reranking over trusted semantic records.
+5. Memory integration: continuity support that externalizes stable concepts without claiming perfect memory or removing model/resource limits.
+
+Implemented first slice:
+
+- `semanticGrounding` defines bounded WordNet-style concept records and AI-E ontology anchors
+- conversational mediation can use semantic frames for fallback variation instead of defaulting to operational doctrine
+- tests verify semantic grounding returns lexical branches, ontology anchors, follow-up directions, and explicit non-LLM boundaries
+
+Phase 1 status assessment:
+
+- current semantic grounding initiative maturity is approximately 25-35% complete
+- this percentage reflects seed-stage semantic cognition depth, not weak progress
+- foundational architecture, contracts, ontology direction, mediation integration, and lexical grounding scaffolding are in place
+- the semantic nervous system foundation exists; mature semantic cognition depth does not yet exist
+
+Completion by category:
+
+- semantic architecture direction: approximately 90%
+- WordNet-style framework: approximately 70%
+- conversational integration: approximately 35%
+- conceptual branching quality: approximately 25%
+- fallback-loop reduction: approximately 30%
+- operational ontology maturity: approximately 20%
+- retrieval and reranking: approximately 5%
+- continuity-aware semantics: approximately 10%
+- adaptive semantic reasoning: approximately 5%
+- long-session semantic stability: approximately 0-5%
+
+Current limitations:
+
+- concept coverage is still narrow
+- semantic retrieval and reranking are not mature
+- continuity-aware semantic reasoning is early
+- unseeded areas can still collapse into repeated doctrine or generic explanation
+- current improvements are strongest at architecture correctness, routing safety, and boundary clarity
+
+Recommended Phase 1.5 focus:
+
+- expand seed concepts around doctrine loops, trust calibration, scaffold leakage, governance language, autonomy claims, conversation continuity, approval nuance, workflow restraint, conversational uncertainty, and operational ambiguity
+- improve conversational branching quality before introducing heavy retrieval systems, large corpus ingestion, or advanced reranking layers
+
+Maturity target:
+
+- AI-E can sustain long conversations naturally
+- avoid repetitive doctrine templates
+- branch semantically across topics
+- vary vocabulary without random drift
+- preserve operational terminology stability
+- retrieve grounded meanings contextually
+- remain conversationally adaptive without fake AGI claims
+
+Governance preserved:
+
+- semantic grounding does not add autonomous coding authority, hidden execution, repo mutation authority, shell execution, Unity execution, self-upgrade, permission expansion, or `autonomous_real` behavior
+- it is a support layer for grounded conversation and operational ontology continuity
+
 ## AIE_MULTI_DESTINATION_AI_E_DIRECTION
 
 AI-E now has a real conversational-only mode, which changes the product philosophy. Conversation is no longer a temporary pre-workflow state. It is a legitimate completed interaction. The next direction is to evolve AI-E from `Prompt -> Workflow or Not` toward `Prompt -> Best Interaction Destination`.
@@ -207,6 +614,76 @@ Governance preserved:
 - reducing operational gravity does not remove guided exploration, governed workflows, approvals, validation, recovery, resumability, or workflow history
 - copy conversation exports the bounded active timeline only; it does not create persistent memory or claim complete recall
 - no unrestricted autonomy, self-upgrade, repo mutation authority, shell execution, Unity execution, AGI behavior, or `autonomous_real` behavior was added
+
+## AIE_CONVERSATIONAL_AUTHENTICITY_AND_AUTO_SCROLL_DISCOVERY
+
+Human testing after the conversational continuity milestone exposed the next product frontier: AI-E now feels structurally conversational enough that weak conversational rhythm becomes obvious.
+
+New UX discovery:
+
+- the active conversation area must auto-scroll to the latest response during ordinary live conversation
+- auto-scroll should pause when the operator intentionally scrolls upward to inspect older history
+- without this, the larger scrollable timeline can feel log-like, manually managed, and disconnected from the bottom input
+
+New conversation-quality discovery:
+
+- the remaining failure is no longer that every prompt becomes a workflow
+- the remaining failure is that too many conceptual prompts can become operational philosophy
+- questions about AI agents, trust, fake-feeling agents, overhype, anthropomorphism, AGI branding, approvals, and automation should discuss the idea itself instead of repeatedly returning to AI-E doctrine
+
+Implemented refinement:
+
+- `/operator/agents` follows new conversation turns when the operator is near the bottom of the active history
+- scrolling upward preserves the operator's reading position
+- conceptual authenticity prompts now receive topic-specific reflective answers
+- authenticity prompts use non-operational conversational directions such as challenging the premise, comparing developer experience, exploring trust, or naming what would feel more real
+
+Examples that should remain conversational and varied:
+
+- `What worries you most about AI agents?`
+- `Do developers trust AI too quickly?`
+- `What makes operational trust difficult?`
+- `Why do most AI agents feel fake?`
+- `What's the hardest design problem AI-E faces?`
+- `What AI trend is overhyped?`
+- `Why do people anthropomorphize AI?`
+- `What might AI-E intentionally never automate?`
+- `Do you think AGI branding damaged trust?`
+- `Do approvals slow innovation?`
+
+Governance preserved:
+
+- better conversational authenticity does not grant autonomous coding authority, repo mutation authority, hidden execution, shell execution, Unity execution, self-upgrade behavior, governance bypass, AGI behavior, or `autonomous_real` behavior
+- these changes improve discussion quality and live conversation feel; they do not expand runtime permissions
+
+## AIE_WORKFLOW_PROGRESS_CLARITY_AND_COMPLETION_UX
+
+Human testing after conversation-first escalation confirmed that guided exploration can now appear contextually below active conversation without taking over the page. The next operational gap was progress readability: workflow cards showed active state, current step, history, and next action, but did not make the whole workflow feel measurable or clearly finishable.
+
+Implemented direction:
+
+- workflow cards now show a `Workflow Progress` panel
+- progress is calculated from completed stages over total planned stages
+- cards show `Step N of M`, completion percentage, completed count, remaining count, and current stage
+- current step progress is visually separated from whole-workflow completion
+- running workflows explicitly explain that completing the current step is not the same as completing the workflow
+- completed workflows show `Workflow Complete` as a distinct final state
+- completion offers follow-ups: `View Summary`, `Copy Report`, `Ask a Follow-Up`, `Inspect Another System`, and `Prepare Safe Patch From Findings`
+
+Operator questions this phase should answer immediately:
+
+- how far along is this workflow?
+- how many steps remain?
+- is this the current step ending or the whole workflow ending?
+- did the workflow actually finish?
+- what can I do after completion?
+
+Governance preserved:
+
+- progress visualization does not change workflow execution authority
+- completion actions do not apply patches, run Unity, run shell commands, bypass approval, or expand autonomy
+- `Copy Report` exports a textual workflow summary only
+- approval, validation, blocked-state, path-scope, resumability, and rollback boundaries remain unchanged
 
 ## AIE_AGENT_CONVERSATIONAL_ONLY_MODE_PHASE1
 
