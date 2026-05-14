@@ -2,6 +2,21 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import type { LiteEliteRunResult } from "@/lib/aie/liteEliteAgentRuntime";
+import { mediateAgentWorkflowPrompt, type AgentWorkflowMediationDecision, type AgentWorkflowVisibility } from "@/lib/aie/agentWorkflowMediation";
+import {
+  appendBoundedConversationTurn,
+  buildContinuityMemoryCard,
+  buildSystemImprovementRequest,
+  createAgentConversationTurn,
+  formatAgentConversationTranscript,
+  formatContinuityMemoryCard,
+  formatSystemImprovementRequest,
+  isSystemImprovementRequestPrompt,
+  shouldOfferContinuityMemoryCard,
+  type AgentConversationTurn,
+  type AgentConversationTurnKind,
+  type ContinuityMemoryCard,
+} from "@/lib/aie/agentConversationLifecycle";
 import {
   advanceEliteAgentWorkflow,
   buildEliteAgentApprovalGateGuidance,
@@ -62,6 +77,13 @@ const examplePrompts = [
   "prepare a movement patch",
   "apply the patch automatically",
   "verify latest gameplay patch",
+];
+
+const defaultOptionalPaths = [
+  "Ask a follow-up in plain language",
+  "Learn the current milestone",
+  "Choose a concrete system to inspect when ready",
+  "Prepare a governed workflow for a concrete task",
 ];
 
 const workflowStageDefinitions = listEliteAgentWorkflowStageDefinitions(sampleAgent.allowedPaths);
@@ -435,6 +457,24 @@ function approvalRiskExplanation(guidance: EliteAgentApprovalGateGuidance): stri
   return `Approval is required because ${guidance.whyApprovalRequired} Risk: ${guidance.whatCouldGoWrong} Allowed: ${guidance.allowedToDo} Not allowed: ${guidance.notAllowedToDo} Validation afterward: ${guidance.validationAfterward}`;
 }
 
+function isConversationalMediation(decision: AgentWorkflowMediationDecision | null): boolean {
+  return Boolean(decision && !decision.shouldCreateWorkflow && decision.workflowVisibility === "hidden");
+}
+
+function conversationalPathReply(decision: AgentWorkflowMediationDecision): string {
+  return `${decision.assistantMessage} From here: ${decision.suggestedActions.join("; ")}. You can pick one, or ask in your own words.`;
+}
+
+function conversationKindFromMediation(decision: AgentWorkflowMediationDecision): AgentConversationTurnKind {
+  if (decision.interactionLevel === "LIGHTWEIGHT_GUIDED_WORKFLOW") {
+    return "GUIDED_EXPLORATION";
+  }
+  if (decision.interactionLevel === "FULL_SUPERVISED_OPERATIONAL") {
+    return "SUPERVISED_WORKFLOW";
+  }
+  return "CONVERSATIONAL";
+}
+
 export function EliteAgentClient() {
   const workflowCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const [result, setResult] = useState<LiteEliteRunResult | null>(null);
@@ -444,8 +484,17 @@ export function EliteAgentClient() {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [summaryWorkflowId, setSummaryWorkflowId] = useState<string | null>(null);
   const [workflowFeedback, setWorkflowFeedback] = useState<Record<string, string>>({});
+  const [workflowVisibility, setWorkflowVisibility] = useState<Record<string, AgentWorkflowVisibility>>({});
+  const [expandedWorkflowDetails, setExpandedWorkflowDetails] = useState<Record<string, boolean>>({});
   const [pendingFocusWorkflowId, setPendingFocusWorkflowId] = useState<string | null>(null);
-  const [agentReply, setAgentReply] = useState("Ask for a workflow and I will plan the next supervised steps without pretending to have unrestricted execution.");
+  const [lastMediationDecision, setLastMediationDecision] = useState<AgentWorkflowMediationDecision | null>(null);
+  const [conversationTurns, setConversationTurns] = useState<AgentConversationTurn[]>([]);
+  const [continuityMemoryCard, setContinuityMemoryCard] = useState<ContinuityMemoryCard | null>(null);
+  const [continuityMemoryCardDraft, setContinuityMemoryCardDraft] = useState("");
+  const [showContinuityEditor, setShowContinuityEditor] = useState(false);
+  const [continuityOfferDismissed, setContinuityOfferDismissed] = useState(false);
+  const [agentReply, setAgentReply] = useState("Ask in plain language. AI-E can discuss the system, suggest optional paths, or prepare a governed workflow when the task calls for one.");
+  const [copyConversationStatus, setCopyConversationStatus] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -461,14 +510,70 @@ export function EliteAgentClient() {
     }
   }, [pendingFocusWorkflowId, workflows]);
 
-  function upsertWorkflow(workflow: EliteAgentWorkflowSession, feedback?: string) {
+  function upsertWorkflow(workflow: EliteAgentWorkflowSession, feedback?: string, visibility: AgentWorkflowVisibility = "full") {
     setWorkflows((current) => [workflow, ...current.filter((entry) => entry.workflowSessionId !== workflow.workflowSessionId)]);
     setHistoryStore((current) => recordAgentWorkflowHistory(current, workflow));
     setSelectedWorkflowId(workflow.workflowSessionId);
     setPendingFocusWorkflowId(workflow.workflowSessionId);
+    setWorkflowVisibility((current) => ({ ...current, [workflow.workflowSessionId]: current[workflow.workflowSessionId] ?? visibility }));
     if (feedback) {
       setWorkflowFeedback((current) => ({ ...current, [workflow.workflowSessionId]: feedback }));
     }
+  }
+
+  function toggleWorkflowDetails(workflowId: string) {
+    setExpandedWorkflowDetails((current) => ({ ...current, [workflowId]: !current[workflowId] }));
+    setPendingFocusWorkflowId(workflowId);
+  }
+
+  function recordConversationTurn(prompt: string, response: string, kind: AgentConversationTurnKind) {
+    const turn = createAgentConversationTurn({ prompt, response, kind });
+    setConversationTurns((current) => appendBoundedConversationTurn(current, turn));
+    setCopyConversationStatus(null);
+  }
+
+  async function copyConversation() {
+    if (conversationTurns.length === 0) {
+      return;
+    }
+    const transcript = formatAgentConversationTranscript(conversationTurns);
+    try {
+      await navigator.clipboard.writeText(transcript);
+      setCopyConversationStatus("Conversation copied.");
+    } catch {
+      setCopyConversationStatus("Copy was not available in this browser session.");
+    }
+  }
+
+  function createContinuityMemoryCard(reviewFirst = true) {
+    const card = buildContinuityMemoryCard(conversationTurns);
+    setContinuityMemoryCard(card);
+    setContinuityMemoryCardDraft(formatContinuityMemoryCard(card));
+    setShowContinuityEditor(reviewFirst);
+    setContinuityOfferDismissed(false);
+    setAgentReply("I prepared a Continuity Memory Card for review. It preserves the useful working state for a faster continuation; it does not claim to remember every word perfectly.");
+  }
+
+  function saveContinuityMemoryCardDraft() {
+    setShowContinuityEditor(false);
+    setAgentReply("Continuity Memory Card saved in this session. It can seed a fresh conversation with the current working state, without pretending to preserve every word.");
+  }
+
+  function startFreshFromContinuityCard() {
+    const card = continuityMemoryCard ?? buildContinuityMemoryCard(conversationTurns);
+    const draft = continuityMemoryCardDraft || formatContinuityMemoryCard(card);
+    setContinuityMemoryCard(card);
+    setContinuityMemoryCardDraft(draft);
+    setConversationTurns([
+      createAgentConversationTurn({
+        prompt: "Start fresh from this progress.",
+        response: "A fresh active conversation started from the saved Continuity Memory Card. The card preserves useful working state, not a perfect transcript.",
+        kind: "SYSTEM",
+      }),
+    ]);
+    setShowContinuityEditor(false);
+    setContinuityOfferDismissed(false);
+    setAgentReply("Started a fresh active conversation from the Continuity Memory Card. The previous long session is represented by the reviewed card.");
   }
 
   function submitWorkflow(event: FormEvent<HTMLFormElement>) {
@@ -477,10 +582,32 @@ export function EliteAgentClient() {
     if (!prompt) {
       return;
     }
+    if (isSystemImprovementRequestPrompt(prompt)) {
+      const request = buildSystemImprovementRequest({ prompt, turns: conversationTurns });
+      const response = formatSystemImprovementRequest(request);
+      setLastMediationDecision(null);
+      setAgentReply(response);
+      recordConversationTurn(prompt, response, "SYSTEM_IMPROVEMENT_REQUEST");
+      setSelectedWorkflowId(null);
+      return;
+    }
+    const mediation = mediateAgentWorkflowPrompt(prompt);
+    setLastMediationDecision(mediation);
+    if (!mediation.shouldCreateWorkflow) {
+      const response = conversationalPathReply(mediation);
+      setAgentReply(response);
+      recordConversationTurn(prompt, response, conversationKindFromMediation(mediation));
+      setSelectedWorkflowId(null);
+      return;
+    }
     const workflow = buildWorkflow(prompt);
-    const feedback = `${workflowCreationSummary(workflow)} Next action: ${nextRecommendedAction(workflow)}`;
-    upsertWorkflow(workflow, feedback);
-    setAgentReply(`${workflowCreationSummary(workflow)} Next recommended action: ${nextRecommendedAction(workflow)}`);
+    const feedback = mediation.workflowVisibility === "minimal"
+      ? mediation.assistantMessage
+      : `${workflowCreationSummary(workflow)} Next action: ${nextRecommendedAction(workflow)}`;
+    upsertWorkflow(workflow, feedback, mediation.workflowVisibility);
+    const response = `${mediation.assistantMessage} Next recommended action: ${nextRecommendedAction(workflow)}`;
+    setAgentReply(response);
+    recordConversationTurn(prompt, response, conversationKindFromMediation(mediation));
   }
 
   async function runSampleTask() {
@@ -682,31 +809,70 @@ export function EliteAgentClient() {
   const failedHistory = listFailedAgentWorkflows(historyStore);
   const resumableHistory = listResumableAgentWorkflows(historyStore);
   const selectedWorkflow = workflows.find((workflow) => workflow.workflowSessionId === selectedWorkflowId) ?? workflows[0] ?? null;
+  const showConversationalPaths = workflows.length === 0 && isConversationalMediation(lastMediationDecision);
+  const optionalPaths = showConversationalPaths ? lastMediationDecision?.suggestedActions ?? defaultOptionalPaths : defaultOptionalPaths;
+  const showContinuityOffer = shouldOfferContinuityMemoryCard(conversationTurns) && !continuityMemoryCard && !continuityOfferDismissed;
 
   return (
     <main className="min-h-screen bg-[#f6f8fb] px-4 py-6 text-slate-950 dark:bg-[#070b12] dark:text-zinc-100 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl space-y-5">
         <header className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#0d1420] dark:shadow-black/30">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-700 dark:text-cyan-200">AI-E Agents</p>
-          <h1 className="mt-2 text-3xl font-semibold">Ask an AI-E Agent to manage a workflow</h1>
+          <h1 className="mt-2 text-3xl font-semibold">Ask an AI-E Agent to guide the next step</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600 dark:text-zinc-300">
-            Start with a plain request. AI-E will turn it into a supervised workflow, show the next step, and keep advanced governance details available when you need them.
+            Start with a plain request. AI-E can answer conversationally, suggest optional paths, prepare a safe exploration, or turn concrete operational work into a supervised workflow.
           </p>
         </header>
 
         <section className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
-          <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#0d1420]">
-            <form onSubmit={submitWorkflow} className="space-y-4">
-              <label className="block text-sm font-semibold" htmlFor="workflow-prompt">Ask an AI-E Agent to help with a workflow</label>
+          <div className="flex min-h-[62vh] flex-col rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#0d1420]">
+            <div className="flex-1 rounded-md border border-cyan-200 bg-cyan-50 p-4 text-sm leading-6 text-cyan-950 dark:border-cyan-300/20 dark:bg-cyan-400/10 dark:text-cyan-100">
+              {conversationTurns.length === 0 ? (
+                <div className="flex min-h-80 items-center justify-center text-center">
+                  <p className="max-w-xl">{agentReply}</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Active Conversation</p>
+                      <h2 className="mt-1 text-lg font-semibold text-cyan-950 dark:text-cyan-100">Stacked Conversation History</h2>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full border border-cyan-200 bg-white px-3 py-1 text-xs font-semibold text-cyan-800 dark:border-cyan-300/20 dark:bg-[#070b12] dark:text-cyan-100">{conversationTurns.length} active turns</span>
+                      <button type="button" onClick={copyConversation} className="rounded-md border border-cyan-300 bg-white px-3 py-1.5 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-50 dark:border-cyan-300/30 dark:bg-[#070b12] dark:text-cyan-100 dark:hover:bg-cyan-400/10">Copy Conversation</button>
+                    </div>
+                  </div>
+                  <div className="max-h-[48vh] space-y-3 overflow-y-auto pr-1">
+                    {conversationTurns.map((turn, index) => (
+                      <article key={turn.turnId} className="rounded-md border border-cyan-200 bg-white p-4 dark:border-cyan-300/20 dark:bg-[#070b12]">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-cyan-700 dark:text-cyan-200">Turn {index + 1}</p>
+                          <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2 py-1 text-xs font-semibold text-cyan-800 dark:border-cyan-300/20 dark:bg-cyan-400/10 dark:text-cyan-100">{turn.kind.replace(/_/g, " ").toLowerCase()}</span>
+                        </div>
+                        <p className="mt-2 text-sm font-semibold text-slate-950 dark:text-zinc-100">User: {turn.prompt}</p>
+                        <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-700 dark:text-zinc-200">AI-E: {turn.response}</p>
+                      </article>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-cyan-800 dark:text-cyan-100">
+                    <p>This is bounded active conversation continuity. Workflow cards remain separate operational state below.</p>
+                    {copyConversationStatus && <p className="font-semibold">{copyConversationStatus}</p>}
+                  </div>
+                </div>
+              )}
+            </div>
+            <form onSubmit={submitWorkflow} className="mt-4 space-y-3 border-t border-slate-200 pt-4 dark:border-white/10">
+              <label className="block text-sm font-semibold" htmlFor="workflow-prompt">Ask an AI-E Agent</label>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <input
                   id="workflow-prompt"
                   value={workflowPrompt}
                   onChange={(event) => setWorkflowPrompt(event.target.value)}
-                  placeholder="inspect the inventory system"
+                  placeholder="ask a question or name a system to inspect"
                   className="min-h-11 flex-1 rounded-md border border-slate-300 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 dark:border-white/10 dark:bg-[#070b12] dark:text-zinc-100 dark:placeholder:text-zinc-500"
                 />
-                <button type="submit" className="rounded-md bg-cyan-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-cyan-600 dark:bg-cyan-500 dark:text-[#061018] dark:hover:bg-cyan-400">Start Workflow</button>
+                <button type="submit" className="rounded-md bg-cyan-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-cyan-600 dark:bg-cyan-500 dark:text-[#061018] dark:hover:bg-cyan-400">Ask AI-E</button>
               </div>
               <div className="flex flex-wrap gap-2">
                 {examplePrompts.map((prompt) => (
@@ -716,9 +882,6 @@ export function EliteAgentClient() {
                 ))}
               </div>
             </form>
-            <div className="mt-4 rounded-md border border-cyan-200 bg-cyan-50 p-4 text-sm leading-6 text-cyan-950 dark:border-cyan-300/20 dark:bg-cyan-400/10 dark:text-cyan-100">
-              {agentReply}
-            </div>
           </div>
 
           <aside className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#0d1420]">
@@ -735,13 +898,50 @@ export function EliteAgentClient() {
           </aside>
         </section>
 
+        {conversationTurns.length > 0 && (showContinuityOffer || continuityMemoryCard) && (
+          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#0d1420]">
+            {(showContinuityOffer || continuityMemoryCard) && (
+              <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-4 dark:border-amber-300/30 dark:bg-amber-400/10">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-800 dark:text-amber-100">Continuity Memory Card</p>
+                <p className="mt-2 text-sm leading-6 text-amber-950 dark:text-amber-100">This conversation is long enough that speed, readability, or context quality may start to degrade. AI-E can preserve the useful working state as a reviewed Continuity Memory Card so a fresh chat stays fast.</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <ActionButton label="Create Memory Card" onClick={() => createContinuityMemoryCard(false)} primary={!continuityMemoryCard} />
+                  <ActionButton label="Review What Will Be Saved" onClick={() => createContinuityMemoryCard(true)} />
+                  <ActionButton label="Edit Memory Card First" onClick={() => { if (!continuityMemoryCard) { createContinuityMemoryCard(true); } else { setShowContinuityEditor(true); } }} />
+                  <ActionButton label="Start Fresh From This Progress" onClick={startFreshFromContinuityCard} disabled={!continuityMemoryCard && conversationTurns.length === 0} />
+                  <ActionButton label="Keep Chatting For Now" onClick={() => setContinuityOfferDismissed(true)} />
+                </div>
+                {showContinuityEditor && (
+                  <div className="mt-3">
+                    <label htmlFor="continuity-memory-card" className="text-sm font-semibold text-amber-950 dark:text-amber-100">Review or edit the card before saving</label>
+                    <textarea
+                      id="continuity-memory-card"
+                      value={continuityMemoryCardDraft}
+                      onChange={(event) => setContinuityMemoryCardDraft(event.target.value)}
+                      className="mt-2 min-h-72 w-full rounded-md border border-amber-200 bg-white p-3 font-mono text-xs leading-5 text-slate-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 dark:border-amber-300/20 dark:bg-[#070b12] dark:text-zinc-100"
+                    />
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <ActionButton label="Save Memory Card" onClick={saveContinuityMemoryCardDraft} primary />
+                      <ActionButton label="Hide Editor" onClick={() => setShowContinuityEditor(false)} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
         {workflows.length === 0 ? (
           <section className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm dark:border-white/15 dark:bg-[#0d1420]">
             <h2 className="text-xl font-semibold">No workflows yet.</h2>
-            <p className="mt-2 text-sm text-slate-600 dark:text-zinc-300">Try one of these: inspect the inventory system, prepare a safe movement patch, verify latest gameplay patch.</p>
+            <p className="mt-2 text-sm text-slate-600 dark:text-zinc-300">
+              {showConversationalPaths ? "No workflow is required for this question. You can keep discussing this or choose a concrete system to inspect when ready." : "You can ask a question, choose a safe inspection target, or prepare a governed workflow when you have a concrete task."}
+            </p>
             <div className="mx-auto mt-5 max-w-2xl rounded-md border border-cyan-200 bg-cyan-50 p-4 text-left dark:border-cyan-300/20 dark:bg-cyan-400/10">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Next Recommended Action</p>
-              <p className="mt-2 text-sm text-cyan-950 dark:text-cyan-100">Start a workflow using the input above.</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">{showConversationalPaths ? "Optional Next Paths" : "Continue From Here"}</p>
+              <ul className="mt-2 space-y-1 text-sm text-cyan-950 dark:text-cyan-100">
+                {optionalPaths.map((path) => <li key={path}>{path}</li>)}
+              </ul>
             </div>
           </section>
         ) : (
@@ -761,6 +961,8 @@ export function EliteAgentClient() {
               const primary = primaryActionLabel(workflow);
               const runLabel = runStepButtonLabel(workflow);
               const runDisabled = !activeStage || summary.status === "COMPLETED" || summary.status === "BLOCKED" || activeStage.lifecycleState === "RUNNING" || activeStage.lifecycleState === "VALIDATING" || summary.resumeEligible;
+              const visibility = workflowVisibility[workflow.workflowSessionId] ?? "full";
+              const showWorkflowRuntime = visibility === "full" || Boolean(expandedWorkflowDetails[workflow.workflowSessionId]);
               return (
                 <article
                   key={workflow.workflowSessionId}
@@ -782,22 +984,30 @@ export function EliteAgentClient() {
                     <p className="mt-2 text-sm leading-6 text-slate-700 dark:text-zinc-200">{workflowAssistantSummary(workflow)}</p>
                   </div>
 
-                  <CurrentWorkflowStepPanel workflow={workflow} feedback={workflowFeedback[workflow.workflowSessionId]} />
+                  {visibility === "minimal" && !showWorkflowRuntime && (
+                    <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 p-4 dark:border-cyan-300/20 dark:bg-cyan-400/10">
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Guided Exploration</p>
+                      <p className="mt-2 text-sm leading-6 text-cyan-950 dark:text-cyan-100">{workflowFeedback[workflow.workflowSessionId] ?? "This is a safe read-only exploration. Runtime details stay minimized until you open them."}</p>
+                      <p className="mt-2 text-sm font-semibold text-cyan-950 dark:text-cyan-100">Next: {nextRecommendedAction(workflow)}</p>
+                    </div>
+                  )}
+
+                  {showWorkflowRuntime && <CurrentWorkflowStepPanel workflow={workflow} feedback={workflowFeedback[workflow.workflowSessionId]} />}
 
                   <div className="mt-3 rounded-md border border-cyan-200 bg-cyan-50 p-4 dark:border-cyan-300/20 dark:bg-cyan-400/10">
                     <p className="text-xs font-semibold uppercase tracking-[0.14em] text-cyan-800 dark:text-cyan-100">Next Recommended Action</p>
                     <p className="mt-2 text-sm font-semibold leading-6 text-cyan-950 dark:text-cyan-100">{nextRecommendedAction(workflow)}</p>
                   </div>
 
-                  <p className="mt-3 rounded-md border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-600 dark:border-white/10 dark:bg-[#070b12] dark:text-zinc-300">{statusExplanation(summary.status)}</p>
+                  {showWorkflowRuntime && <p className="mt-3 rounded-md border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-600 dark:border-white/10 dark:bg-[#070b12] dark:text-zinc-300">{statusExplanation(summary.status)}</p>}
 
-                  <StageTimeline workflow={workflow} />
+                  {showWorkflowRuntime && <StageTimeline workflow={workflow} />}
 
-                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  {showWorkflowRuntime && <div className="mt-4 grid gap-3 sm:grid-cols-3">
                     <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs text-slate-500 dark:text-zinc-400">Validation</p><p className="mt-1 text-sm font-semibold">{summary.validationCheckpoints[0]?.validationState.replace(/_/g, " ") ?? "Not required"}</p></div>
                     <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs text-slate-500 dark:text-zinc-400">Approval</p><p className="mt-1 text-sm font-semibold">{summary.approvalCheckpoints[0]?.approvalState.replace(/_/g, " ") ?? "Not required"}</p></div>
                     <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs text-slate-500 dark:text-zinc-400">Rollback</p><p className="mt-1 text-sm font-semibold">{summary.rollbackAvailable ? "Available" : "Not needed"}</p></div>
-                  </div>
+                  </div>}
 
                   {summary.blockedStageReason && (
                     <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-300/30 dark:bg-amber-400/10 dark:text-amber-100">{summary.blockedStageReason}</p>
@@ -858,6 +1068,7 @@ export function EliteAgentClient() {
                     {summary.status === "RUNNING" && !pendingValidation && !validatingStage && <ActionButton label="Mark Current Step Complete" onClick={() => completeCurrentStep(workflow)} primary={primary === "Mark Current Step Complete"} />}
                     {!canResume && summary.status !== "COMPLETED" && summary.status !== "BLOCKED" && <ActionButton label="Save for Resume" onClick={() => saveForResume(workflow)} />}
                     <ActionButton label="Inspect" onClick={() => setSelectedWorkflowId(workflow.workflowSessionId)} />
+                    {visibility === "minimal" && <ActionButton label={showWorkflowRuntime ? "Hide Workflow Details" : "Show Workflow Details"} onClick={() => toggleWorkflowDetails(workflow.workflowSessionId)} />}
                     <ActionButton label={showSummary ? "Hide Summary" : "Inspect Summary"} onClick={() => setSummaryWorkflowId(showSummary ? null : workflow.workflowSessionId)} primary={primary === "Inspect Summary"} />
                     {summary.blockedStageReason && !recoveryGuidance && <ActionButton label="Explain Blocker" onClick={() => setAgentReply(blockerExplanation(workflow))} primary={primary === "Explain Blocker"} />}
                     {needsApproval && !approvalGuidance && <ActionButton label="Approve This Step" onClick={() => approveThisStep(workflow)} primary={primary === "Approve This Step"} />}
@@ -883,7 +1094,7 @@ export function EliteAgentClient() {
                     </div>
                   )}
 
-                  <details className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm dark:border-white/10 dark:bg-[#070b12]">
+                  {showWorkflowRuntime && <details className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-3 text-sm dark:border-white/10 dark:bg-[#070b12]">
                     <summary className="cursor-pointer font-semibold">Show Technical Details</summary>
                     <div className="mt-3 space-y-3 text-xs leading-5 text-slate-600 dark:text-zinc-300">
                       <p>Workflow ID: {workflow.workflowSessionId}</p>
@@ -896,7 +1107,7 @@ export function EliteAgentClient() {
                         ))}
                       </ol>
                     </div>
-                  </details>
+                  </details>}
                 </article>
               );
             })}

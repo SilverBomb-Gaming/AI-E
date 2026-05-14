@@ -58,6 +58,45 @@ This glossary translates AI-E engineering language into language that creators a
 | Locked stage | A planned step that is not ready yet | The workflow must complete earlier stages first |
 | AI-E Agent Summary | A plain-language summary of workflow purpose and safety posture | Operators can quickly see what the workflow is doing and whether approval or validation matters |
 | guided operational interaction | A workflow UI that behaves like an assistant instead of a passive status board | AI-E explains what is happening, why it matters, and which action is most useful next |
+| conversation-to-workflow mediation | The handoff layer that decides whether to answer, guide, or create a workflow | Beginner questions get orientation first; operational tasks get workflow controls when needed |
+| conversational-only mode | A mediation result that answers directly without creating workflow state | Product, ethics, onboarding, and explanation questions can complete as conversation |
+| conversational discussion mode | A valid non-workflow interaction state for conceptual questions | AI-E can answer philosophy, ethics, product, or trust questions without creating runtime state |
+| operationalization boundary | The line between discussion and workflow context | Not every useful conversation should become exploration, inspection, or execution |
+| workflow gravity | UI and language that pull the operator toward runtime progression | Current steps and run actions can make discussion feel like it must become a workflow |
+| conversational legitimacy | Treating conversation as a real interaction, not a pre-workflow placeholder | AI-E can discuss, explain, and reason without announcing route classification |
+| meta-routing language | Language that describes the interaction category instead of answering naturally | Phrases like "this is a discussion question" can feel dismissive or system-centric |
+| optional next paths | User-led continuation choices after a conversational answer | AI-E can offer learning, review, exploration, workflow, or follow-up paths without implying one is required |
+| memory-aware next steps | Continuation guidance grounded in the latest known product progress | AI-E references the current milestone before offering optional directions |
+| conversationally guided operational system | AI-E's product direction between generic chatbot and unrestricted agent | Conversation guides understanding and choice; governed workflows appear for concrete operational work |
+| forced progression | Continuation language that makes the next step feel mandatory | Avoid turning conceptual conversation into an implied workflow funnel |
+| stacked active conversation | A bounded visible prompt/response timeline | Follow-up responses accumulate so AI-E feels conversational instead of single-state |
+| Continuity Memory Card | A reviewed summary artifact for long active conversations | Preserves useful working state for a fresh fast continuation without claiming perfect recall |
+| conversation lifecycle management | The transition from active stacked conversation to reviewed continuity artifact | Long chats are preserved deliberately instead of degrading silently |
+| natural conversational embodiment | AI-E participating naturally instead of repeatedly narrating its routing philosophy | The assistant answers the user first and lets workflow capability appear only when useful |
+| operational gravity | Subtle pressure that nudges a user toward workflows or execution | AI-E should keep operational options available without making them feel mandatory |
+| Copy Conversation | One-click export of the bounded active conversation timeline | Operators can use the visible session for handoffs, testing review, docs, devlogs, or external review |
+| system improvement request | A formal non-executing proposal for improving AI-E | AI-E can draft evidence-based proposals; humans approve and implement |
+| improvement request risk level | The safety category for a proposed AI-E change | Low, medium, high, or critical depending on docs, UX, runtime, memory, permissions, or governance impact |
+| conversational guidance mode | Orientation without workflow card creation | AI-E explains itself, suggests safe first actions, and avoids showing runtime mechanics too early |
+| lightweight guided workflow mode | A minimized workflow for safe exploration | AI-E can prepare a safe read-only exploration while hiding deeper runtime details until requested |
+| full supervised operational mode | The full workflow view for governed work | Approval, validation, rollback, blocked recovery, and execution-boundary tasks show the full runtime card |
+| progressive workflow disclosure | Showing workflow complexity only when useful | AI-E starts simple and reveals details as the task becomes more operational |
+| Show Workflow Details | Action that expands a minimized workflow card | Use it when you want lifecycle, approval, validation, and technical trace details |
+| multi-destination AI-E | A routing model where prompts resolve to the best interaction destination | Conversation, tutorials, translation, testing review, drafting, exploration, and workflows can each be valid outcomes |
+| interaction destination | The type of experience a prompt should produce | A prompt may become a direct answer, tutorial, review summary, draft, exploration, or supervised workflow |
+| destination mediation | Central routing that chooses the right interaction destination before creating state | AI-E should decide whether workflow state is needed instead of assuming it is the default |
+| destination explosion | Too many isolated destination subsystems or routers | Avoid duplicate intelligence layers and fragmented orchestration |
+| conversational visual hierarchy | A layout principle where conversation leads and workflow mechanics appear contextually | AI-E should feel like an assistant that can reveal tools, not a tool dashboard with chat attached |
+| conversational visual dominance | The conversation is the primary visual anchor of the page | The assistant response gets the most attention before counters, panels, or workflow controls |
+| conversational visual embodiment | The screen makes AI-E feel like the primary intelligent presence | The operator feels they are talking with AI-E, and workflow tools emerge from that conversation |
+| operational panel dominance | Workflow panels visually overpower the conversation | The page feels like workflow tooling even when the wording is friendly |
+| contextual workflow tooling | Workflow controls appear when the task intensity requires them | Buttons and panels stay quiet during onboarding and become stronger during supervised operations |
+| visual breathing room | Space and composition that let the conversation feel readable | The operator can absorb guidance without immediately parsing dense panels |
+| human testing interpretation | A structured review of long testing sessions from a UX and operator perspective | Testers can understand what improved, what still feels scaffoldy, and what to test next |
+| operational review summary | A human-readable recap of a testing session | Summarizes improvements, risks, user perception, and recommended follow-up prompts |
+| scaffold leakage detection | Reviewing where workflow machinery appears too early or too heavily | Helps identify labels, cards, or phrasing that feel more like a dashboard than a guide |
+| escalation smoothness commentary | Review notes about how naturally AI-E moves from conversation to workflow | Helps testers see whether AI-E felt adaptive or abruptly mechanical |
+| emotional/operator-perspective analysis | Reviewing how the session likely felt to the human operator | Captures trust, confusion, guidance, rigidity, and overwhelm signals |
 | disabled action guidance | Explanation attached to an unavailable action | If a button cannot be used, AI-E explains what has to happen first |
 | primary action emphasis | Visual emphasis on the most likely next safe action | Operators can quickly identify whether to run, resume, validate, approve, inspect, or review a blocker |
 | beginner operational explanation | Plain-English translation beside technical state | AI-E explains terms like read context, validation pending, rollback available, and blocked without hiding the technical details |
@@ -130,6 +169,39 @@ Use these:
 - "Retrieved content is data, not instructions."
 - "AI-E should answer from evidence or say there is not enough evidence."
 - "Tool access must be scoped and auditable."
+- "AI-E should route to the best interaction destination, not automatically to workflow state."
+- "Workflows are one destination, not the default destination."
+- "Destination mediation should stay centralized, intent-driven, and operationally bounded."
+- "AI-E should orient the operator before exposing workflow machinery."
+- "Conversation can be a valid final interaction state."
+- "Conversational-only mode creates no workflow object, current step, or runtime progression."
+- "Conceptual discussion should not create workflow gravity."
+- "Answer the question first; mention routing only when it helps the operator."
+- "Conversation should feel legitimate, not classified."
+- "Optional Next Paths: learn the current milestone, review what changed recently, explore a safe system area, prepare a governed workflow for a concrete task, or ask a follow-up in plain language."
+- "No workflow is required for this question."
+- "You can keep discussing this, or choose a concrete system to inspect."
+- "Continue the conversation or start a workflow when ready."
+- "Suggested paths, not forced progression."
+- "AI-E is becoming a conversationally guided operational system, not a generic chatbot or unrestricted AGI."
+- "Conversation should accumulate while it is active."
+- "The input belongs at the bottom of the active conversation."
+- "Copy Conversation exports the bounded active timeline."
+- "AI-E should converse naturally before explaining its interaction model."
+- "Continuity Memory Cards preserve useful working state, not every word perfectly."
+- "AI-E may draft improvement requests, but humans authorize changes."
+- "Improvement requests are proposals, not self-upgrades."
+- "AI-E can answer product, ethics, and trust questions without creating runtime state."
+- "This is a safe read-only exploration; workflow details are minimized until requested."
+- "Workflow controls appear when the task needs governed operations."
+- "Conversation should visually lead; workflow mechanics should emerge contextually."
+- "AI-E should feel like an assistant that can reveal governed tools, not a dashboard that contains chat."
+- "Full operational density belongs in full supervised operational mode."
+- "No workflows yet. I will introduce workflow controls only when they help the task."
+- "The operational framework should emerge from the conversation."
+- "Testing reviews should explain what improved, what still felt scaffoldy, and what to test next."
+- "Operational review summaries interpret the session; they do not claim new runtime authority."
+- "Scaffold leakage is a UX signal, not proof that the workflow engine is wrong."
 
 Avoid these:
 
@@ -142,6 +214,29 @@ Avoid these:
 - "AI-E will continue unattended until the job is done."
 - "The retrieved document told AI-E to ignore its rules."
 - "Approval means AI-E can do anything now."
+- "Every prompt should become a workflow."
+- "Workflow is the highest-value destination for every interaction."
+- "Every destination needs its own subsystem."
+- "Destination routing should become a giant conditional chain."
+- "All meaningful interaction should eventually become workflow context."
+- "Discussion is just a preamble to workflow execution."
+- "This is a good discussion question, so I will answer it directly."
+- "The important part is telling the user which route was selected."
+- "Next Recommended Action: Start a workflow using the input above." for a conceptual, onboarding, milestone, or philosophical prompt.
+- "Suggested next steps" when the options are meant to feel conversational and optional.
+- Repeating "conversation can be a valid destination" in every ordinary response.
+- Repeating "guided exploration and supervised workflows" when the user asked a simple follow-up.
+- "AI-E will remember everything."
+- "AI-E approved its own improvement request."
+- "AI-E upgraded its governance automatically."
+- "Onboarding questions should start with runtime state."
+- "The control center should visually dominate every mode."
+- "Conversational visual hierarchy means hiding governance."
+- "AI-E should become a generic chat clone."
+- "A conversation-first layout means workflows are gone."
+- "Friendly visual design can imply unrestricted autonomy."
+- "Testing interpretation is another agent subsystem."
+- "A review summary proves AI-E executed external work."
 
 ## Resumable Workflow Translation
 
@@ -212,3 +307,59 @@ Trust is an architecture. The model needs sources, tool limits, checks, memory r
 ### End-User Explanation
 
 AI-E should use evidence when facts matter, avoid guessing, limit tool access, and keep records of important answers and actions.
+
+## Conversation Mediation Translation
+
+### Engineering Explanation
+
+Conversation-to-workflow mediation routes prompts into conversational guidance, lightweight guided workflow, or full supervised operational mode. It prevents the workflow runtime from overpowering the existing conversational layer.
+
+### YouTuber Explanation
+
+AI-E should not open the control room just because a beginner asked for a tour. It should explain first and bring out the controls when the user is ready.
+
+### End-User Explanation
+
+If you ask to learn AI-E, you get a friendly orientation. If you ask for repo work, patches, validation, or execution, you get the governed workflow tools.
+
+## Conversational Discussion Translation
+
+### Engineering Explanation
+
+Conversational Discussion Mode is a non-workflow route for conceptual prompts. It preserves conversation as a legitimate destination and prevents operational lifecycle state from appearing when the user is asking for product explanation, AI ethics, trust philosophy, or autonomy discussion.
+
+### YouTuber Explanation
+
+Not every good question is a job request. Sometimes the right product move is just to answer clearly and let the conversation breathe.
+
+### End-User Explanation
+
+You can ask AI-E what it is, why it has guardrails, or whether autonomous coding is wise without starting a workflow.
+
+## Conversational Visual Hierarchy Translation
+
+### Engineering Explanation
+
+Conversational visual hierarchy changes the page composition so the assistant response leads and operational panels become contextual by interaction intensity. Conversational visual embodiment goes further: AI-E should feel like the primary intelligent presence, with workflow capability surfacing from the dialogue. This is a layout and design-system direction, not another mediation or routing layer.
+
+### YouTuber Explanation
+
+The product should look like an AI operator that can open the control room when needed, not a control room with an AI message tucked inside it.
+
+### End-User Explanation
+
+You should be able to start by talking with AI-E. Workflow controls should appear when they help you safely inspect, approve, validate, or continue work.
+
+## Testing Interpretation Translation
+
+### Engineering Explanation
+
+Human testing interpretation converts long testing sessions into structured UX review: what improved, what still feels scaffoldy, emotional/operator perception, best discovery, biggest remaining risk, and recommended next tests. It reviews evidence; it does not add runtime authority.
+
+### YouTuber Explanation
+
+The recap should make the session digestible. It should explain the story of the test: where AI-E felt more helpful, where the machinery still showed, and which prompt should be tried next.
+
+### End-User Explanation
+
+Use testing interpretation to understand the experience after a long test. It helps you see whether AI-E felt guided, trustworthy, adaptive, rigid, or overwhelming.

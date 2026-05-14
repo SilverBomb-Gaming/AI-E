@@ -12,6 +12,10 @@ This is not marketing copy, lore, or a placeholder README expansion. It is the f
 - [UI Navigation](./ui-navigation.md): explains where operators go in the product and what they are looking at.
 - [Runtime Workflows](./runtime-workflows.md): explains workflow sessions, stage progression, validation, approvals, and rollback preparation.
 - [AI-E Agents](./ai-e-agents.md): explains what AI-E agents are and how they differ from chatbots.
+- [Multi-Destination AI-E](./multi-destination-ai-e.md): explains the next interaction model where workflows are one destination among several valid outcomes.
+- [Conversational Discussion Mode](./conversational-discussion-mode.md): explains when conversation should remain a valid final state without workflow creation.
+- [Human Testing Interpretation](./testing-interpretation.md): explains how to review long human testing sessions for UX interpretation, scaffold leakage, escalation quality, and operator trust signals.
+- [Conversational Visual Hierarchy](./visual-hierarchy.md): explains how AI-E should visually prioritize conversation while revealing governed workflow capability contextually.
 - [REAL vs NOT REAL](./real-vs-not-real.md): defines official truthfulness doctrine for the product.
 
 ## Who This Manual Serves
@@ -35,6 +39,12 @@ This Phase 1 manual covers:
 - AI-E operator chat and agents surfaces
 - reasoning visibility
 - supervised workflow sessions
+- multi-destination interaction direction
+- conversational discussion mode
+- optional conversational paths and memory-aware next steps
+- stacked active conversation, Continuity Memory Cards, and supervised system improvement requests
+- human testing interpretation reviews
+- conversational visual hierarchy direction
 - validation and approval indicators
 - blocked workflow states
 - rollback preparation markers

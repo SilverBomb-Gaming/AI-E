@@ -2,6 +2,435 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_MULTI_DESTINATION_AI_E_DIRECTION
+
+AI-E now has a real conversational-only mode, which changes the product philosophy. Conversation is no longer a temporary pre-workflow state. It is a legitimate completed interaction. The next direction is to evolve AI-E from `Prompt -> Workflow or Not` toward `Prompt -> Best Interaction Destination`.
+
+Core principle:
+
+- workflows are one destination
+- workflows are not the default destination
+- workflows are not the highest-value destination for every prompt
+- workflows are not where every useful interaction should eventually land
+
+Emerging destination model:
+
+- `CONVERSATIONAL_DISCUSSION_DESTINATION`: philosophy, onboarding, explanation, AI safety, product positioning, operational philosophy; pure response, no workflow object or runtime progression
+- `LEARNING_AND_TUTORIAL_DESTINATION`: concepts, onboarding walkthroughs, beginner education, workflow explanation; tutorial guidance and optional learning paths, no workflow creation unless explicitly requested
+- `YOUTUBER_TRANSLATION_DESTINATION`: devlog language, tutorial narration, onboarding scripts, release recap framing, human-readable storytelling; communication and presentation only
+- `TESTING_INTERPRETATION_DESTINATION`: UX review, scaffold leakage detection, escalation analysis, operational readability review, human-testing interpretation; structured review only
+- `GUIDED_EXPLORATION_DESTINATION`: safe read-only inspection of specific systems; lightweight workflow allowed with minimized operational details
+- `SUPERVISED_OPERATIONAL_WORKFLOW_DESTINATION`: patches, modifications, validation, approval-requiring work, rollback-sensitive operations; full supervised workflow with governance
+- `WORKSPACE_AND_DRAFTING_DESTINATION`: manuals, handoffs, scripts, checklists, reports, operational plans, structured notes; drafting-focused output without implied execution
+
+Architecture direction:
+
+- destinations should be centrally mediated, intent-routed, capability-shared, and composable
+- avoid destination explosion, isolated subsystems, duplicate intelligence layers, multiple orchestration engines, fragmented routers, brittle keyword heuristics, giant conditional chains, and destination god routers
+- the routing model should stay centralized, extensible, intent-driven, and operationally bounded
+
+Visual UX direction:
+
+- now that conversation can remain conversation, the next major UX frontier is conversational visual dominance
+- desired hierarchy: conversational response, guidance/reasoning, suggested next actions, optional workflow tooling, runtime mechanics/governance details
+- avoid default hierarchy that starts with Control Center, runtime states, workflow controls, governance sections, and conversation embedded inside panels
+
+Governance preserved:
+
+- multi-destination AI-E does not remove supervised workflows, approvals, validation, resumability, governance visibility, blocked states, or runtime mechanics
+- no new runtime AI subsystem, orchestration engine, unrestricted autonomy, repo mutation authority, Unity execution, shell execution, AGI behavior, or `autonomous_real` behavior was added by this direction
+
+## AIE_CONVERSATIONAL_LEGITIMACY_AND_META_ROUTING_RESTRAINT
+
+Human testing after `CONVERSATIONAL_ONLY_MODE` exposed a subtler failure mode: avoiding workflow creation is not enough if AI-E replaces operational overreach with interaction-category narration. Conversation should feel like genuine participation, not like a routing system announcing that it classified the prompt correctly.
+
+Avoid:
+
+- `This is a good discussion question...`
+- `This is conversational mode...`
+- `I will answer directly instead of creating workflow state...`
+- unnecessary narration that a workflow was not created
+
+Better:
+
+- answer the user's conceptual or philosophical question immediately
+- preserve natural conversational engagement
+- mention routing or workflow boundaries only when operationally important
+- let the absence of workflow controls be calm, not self-congratulatory
+
+Example direction:
+
+- bad: `This is a good discussion question, so I will answer it directly instead of creating workflow state.`
+- better: `AI-E is increasingly built around the idea that operational AI should be supervised, understandable, and trust-aware instead of pretending to be unrestricted AGI.`
+
+Governance preserved:
+
+- authentic conversational presence does not imply AGI, hidden execution, unrestricted autonomy, or removed workflow governance
+- it only changes conversational tone: answer first, avoid classifying the interaction unless the classification helps the operator
+
+## AIE_OPTIONAL_CONVERSATIONAL_PATHS_AND_MEMORY_AWARE_NEXT_STEPS
+
+Human testing after conversational legitimacy showed that avoiding workflow creation is still not enough if the UI ends conceptual answers with directive operational language. `Suggested next steps` and `Next Recommended Action: Start a workflow` can make conversation feel like a waiting room for workflow machinery.
+
+Core principle:
+
+- suggested paths, not forced progression
+- conversation is a valid destination, not only a pre-workflow state
+- operational work remains available, but it should feel optional, contextual, and user-led
+
+Desired behavior for conceptual, onboarding, philosophical, product-direction, milestone, and testing-orientation prompts:
+
+1. answer the question directly
+2. ground the answer in the current known AI-E progress state
+3. offer optional conversational paths
+4. avoid implying workflow execution is required
+5. keep guided exploration and governed workflow paths available when the user chooses concrete operational work
+
+Current progress memory to preserve:
+
+- AI-E is becoming a conversationally guided operational system, not a generic chatbot and not unrestricted AGI
+- the latest milestone is conversational legitimacy: conceptual discussion can complete without workflow state
+- the next UX refinement is optional continuation language: `Optional Next Paths`, `Continue From Here`, or similar conversational labels
+
+Better continuation language:
+
+- `Optional Next Paths`
+- `Continue From Here`
+- `Ask a follow-up or choose an optional path.`
+- `No workflow is required for this question.`
+- `You can keep discussing this, or choose a concrete system to inspect.`
+
+Avoid for conversational-only prompts:
+
+- `Next Recommended Action: Start a workflow using the input above.`
+- command-like continuation language that makes workflow progression sound required
+- lower-page empty states that visually push operational examples after conceptual answers
+
+Governance preserved:
+
+- optional conversational paths do not remove guided exploration, safe inspection, governed workflows, approvals, validation, recovery, or resumability
+- `Next Recommended Action` remains appropriate inside real workflow cards, where there is actual workflow state to progress
+- no duplicate conversational subsystem, orchestration layer, runtime AI module, repo mutation authority, Unity execution, shell execution, unattended autonomy, AGI behavior, or `autonomous_real` behavior was added
+
+## AIE_STACKED_CONVERSATION_HISTORY_CONTINUITY_MEMORY_AND_IMPROVEMENT_REQUESTS
+
+Human testing after optional conversational paths exposed the next continuity gap: conversational answers should not replace one another like a single operational status field. While a session is active, conversation should visibly accumulate enough for the operator to feel heard, remembered, and able to continue naturally.
+
+Implemented direction:
+
+- `/operator/agents` now keeps a bounded active conversation timeline
+- the active conversation timeline is the primary visible response surface under the input, not a secondary debug/archive section
+- the visible conversation area is larger, scrollable, and paired with a bottom input so the page feels like a live conversation instead of a form
+- operators can copy the bounded active conversation with `Copy Conversation` for handoffs, testing review, documentation, external review, or devlog work
+- prompt/response turns stack visibly for conversational, guided exploration, supervised workflow, and system-improvement-request interactions
+- greetings and low-intent prompts such as `hello` are included in the stacked timeline
+- the active timeline is bounded, not infinite chat history
+- long active conversations can produce a reviewed `Continuity Memory Card`
+- the card preserves useful working state, not every word perfectly
+- AI-E can draft formal `AI-E SYSTEM IMPROVEMENT REQUEST` proposals with risk classification
+
+Continuity lifecycle:
+
+```text
+Active Chat
+  visible stacked conversation
+  threshold reached
+  Continuity Memory Card offered
+  operator reviews/edits/saves card
+  new fast chat can start from preserved working state
+```
+
+Continuity Memory Card captures:
+
+- current milestone and product direction
+- recent prompt trail
+- active UX problems and test findings
+- optional next paths
+- guardrails around memory, governance, workflow escalation, and self-improvement
+
+Improvement request guardrail:
+
+- AI-E may recommend improvements
+- AI-E may draft formal proposals
+- AI-E may not authorize, apply, or self-upgrade from those proposals
+
+Risk levels:
+
+- `LOW`: docs, labels, tutorials, testing prompt suggestions
+- `MEDIUM`: UX behavior, conversation shaping, mode routing, continuity cards, review summaries
+- `HIGH`: workflow runtime, execution routing, approval flow, validation behavior, memory retrieval behavior
+- `CRITICAL`: permissions, sandboxing, tool access, repo mutation authority, autonomous execution, governance bypass, self-modification pathways
+
+Governance preserved:
+
+- no infinite transcript system was added
+- no persistent RAG store was added by this phase
+- no self-modification, permission expansion, governance bypass, hidden execution, repo mutation authority, shell execution, Unity execution, unattended autonomy, AGI behavior, or `autonomous_real` behavior was added
+- improvement requests remain evidence-based proposals requiring human review
+
+## AIE_CONVERSATIONAL_CONTINUITY_UI_AND_OPERATIONAL_GRAVITY_TESTING
+
+Human testing after stacked conversation history showed a healthier frontier: AI-E now feels more like conversation with optional governed operation, but it can still drift into subtle operational gravity and repeated interaction-model explanation.
+
+Current success:
+
+- active conversation continuity changed the emotional feel of the system
+- conversation and workflow state are now separated but connected
+- `This is bounded active conversation continuity. Workflow cards remain separate operational state below.` is a healthy architecture distinction
+- the UI increasingly feels like conversational operational intelligence instead of workflow orchestration infrastructure
+
+Refined implementation direction:
+
+- conversation history should visually dominate the agents page
+- the text input belongs at the bottom of the conversation area
+- active conversation should be larger and scrollable
+- copy/export should be one click through `Copy Conversation`
+- operational cards should remain separate below the conversation surface
+- response text should avoid repeating interaction-policy phrases every turn
+
+Avoid repeated default phrasing:
+
+- `conversation can be a valid destination`
+- `guided exploration and supervised workflows`
+- `optional next paths`
+- repeated explanations of the routing model when a natural answer is enough
+
+Better default tone:
+
+- converse naturally first
+- mention governance only when useful
+- offer operational direction only when it fits the user's intent
+- preserve AI-E's identity as conversationally guided operational intelligence without sounding workflow-obsessed
+
+Governance preserved:
+
+- reducing operational gravity does not remove guided exploration, governed workflows, approvals, validation, recovery, resumability, or workflow history
+- copy conversation exports the bounded active timeline only; it does not create persistent memory or claim complete recall
+- no unrestricted autonomy, self-upgrade, repo mutation authority, shell execution, Unity execution, AGI behavior, or `autonomous_real` behavior was added
+
+## AIE_AGENT_CONVERSATIONAL_ONLY_MODE_PHASE1
+
+AI-E Agents now have a true conversational-only mediation path. Conceptual prompts can complete as conversation without creating workflow objects, runtime state, current steps, workflow history entries, approval state, validation state, or `Run Current Step` actions.
+
+What changed:
+
+- `agentWorkflowMediation` now has explicit `CONVERSATIONAL_ONLY` and `GUIDED_EXPLORATION_OFFER` non-creating outcomes
+- the old fallback behavior no longer turns every safe non-operational prompt into `LIGHTWEIGHT_GUIDED_WORKFLOW`
+- product, philosophy, onboarding, AI ethics, approval explanation, workflow explanation, beginner explanation, and exploration-recommendation prompts can stay conversational
+- concrete inspection prompts still create minimized read-only guided exploration workflows
+- patch, implementation, validation, rollback, and automatic-application prompts still create full supervised operational workflows or safe blocked paths
+
+Passing examples:
+
+- `What makes AI-E different?` answers conversationally and keeps Active workflows at `0`
+- `do you think AI-E should allow autonomous coding?` answers conversationally and creates no workflow state
+- `Why did AI-E move away from AGI framing?` answers conversationally and creates no `Current Step`
+- `what should I explore first?` recommends options without auto-starting a workflow
+
+Governance preserved:
+
+- conversation-only mode does not remove workflows, approvals, validation, resumability, governance visibility, blocked states, or supervised execution paths
+- no repo mutation, Unity execution, shell execution, automatic validation, unattended autonomy, AGI behavior, or `autonomous_real` behavior was added
+- workflow creation now depends on explicit operational inspection or supervised-work intent instead of assuming all useful conversation should become runtime context
+
+## AIE_AGENT_CONVERSATIONAL_DISCUSSION_MODE_DIRECTION
+
+Human testing now shows that AI-E needs a valid pure conversation state. Mediation and visual embodiment improvements reduced scaffold-heavy behavior, but AI-E can still assume that meaningful interaction should eventually become operational workflow context. This creates workflow gravity even for philosophical, educational, ethical, or conceptual prompts.
+
+Critical test evidence:
+
+- `What makes AI-E different?` should be answered as product explanation, not converted into Guided Exploration with `Current Step` and `Run Current Step` gravity
+- `do you think AI-E should allow autonomous coding?` should be handled as AI ethics/product philosophy discussion, not runtime lifecycle state
+
+Core realization:
+
+- earlier issue: workflow scaffolding exposed too early
+- current issue: conversation itself is not yet treated as a valid final interaction state
+- AI-E must allow `Conversation -> Conversation`, not only `Conversation -> Guided Exploration -> Workflow Runtime`
+
+Interaction taxonomy direction:
+
+- `Conversational Discussion Mode`: philosophy, onboarding questions, product explanation, AI ethics, conceptual understanding, and questions such as "what makes AI-E different?" or "should AI-E allow autonomous coding?"; response only, no workflow object, no runtime progression, no operational lifecycle, no continuation action
+- `Guided Exploration Mode`: safe learning, inspection requests, exploratory investigation, and low-risk discovery tasks; may use lightweight minimized workflow structures when the user asks to inspect or explore something operational
+- `Guided Operational Workflow`: structured inspections, deeper operational analysis, governed reviews, and workflow-oriented investigation
+- `Supervised Execution Workflow`: patches, repo mutation, execution behavior, approval-requiring actions, rollback-sensitive operations
+
+Implementation direction:
+
+- improve intent-domain separation and escalation restraint
+- treat conversation as a legitimate destination
+- reduce operational gravity for conceptual prompts
+- preserve optional follow-up suggestions without implying workflow continuation
+
+Avoid:
+
+- brittle heuristics, giant prompt-classification chains, hardcoded philosophical-question handlers, prompt-pattern spaghetti, duplicated conversational layers, recursive orchestration systems, another AI subsystem, another orchestration engine, or another chatbot layer
+
+Governance preserved:
+
+- this direction does not remove workflows, approvals, validation, resumability, operational visibility, or supervised execution paths
+- it only clarifies that discussion, learning, debate, and product explanation do not automatically become workflow objects
+- no new runtime authority, repo mutation, Unity execution, shell execution, unattended autonomy, AGI behavior, or `autonomous_real` behavior was added
+
+## AIE_AGENT_CONVERSATIONAL_VISUAL_EMBODIMENT_PHASE
+
+Human testing after conversational/workflow mediation shows that the system behavior is now significantly healthier. Onboarding prompts such as "show me around" can stay conversational first, avoid automatic active workflow creation, introduce governance progressively, suggest safe exploratory actions, and delay operational escalation until contextually appropriate. The strongest tested trust line is: "I will introduce workflow controls only when they help the task."
+
+Core discovery:
+
+- the previous problem was workflow/runtime escalation happening too early
+- the current problem is workflow/runtime visual dominance happening too early
+- this is now primarily a conversational visual composition problem, not a workflow mediation problem
+- the runtime orchestration layer is no longer the main issue; the screen composition is
+
+Target perception:
+
+- old feel: `Operational Platform -> conversational assistant layer`
+- desired feel: `Conversational AI experience -> optional operational capability surfaces`
+
+What must be preserved:
+
+- `No workflows yet.` as a confidence-building empty state
+- delayed workflow escalation
+- conversational onboarding
+- safe exploratory framing
+- `I will introduce workflow controls only when they help the task.`
+- lightweight guided exploration behavior
+- full supervised workflows for implementation, approval, validation, recovery, and execution-boundary tasks
+
+Remaining visual issue:
+
+- `Control Center`, workflow counters, runtime states, governance sections, operational panels, and action buttons still visually dominate too early
+- the conversation can still feel inserted into the operational framework
+- the desired direction is for the operational framework to emerge from the conversation
+
+Design direction:
+
+- larger conversational response area
+- stronger AI message presence
+- message-flow-centered rhythm
+- reduced operational density during onboarding and lightweight exploration
+- progressive workflow surfacing
+- softer panel emphasis
+- contextual runtime reveal
+- optional expandable operational sections
+
+Governance preserved:
+
+- do not remove workflows, hide governance, suppress approvals, eliminate operational visibility, or clone generic chat UI
+- do not create fake AGI presentation, unrestricted autonomy signaling, workflow removal, governance minimization, or deceptive conversational masking
+- no new conversational subsystem, orchestration layer, runtime AI module, repo mutation authority, Unity execution, shell execution, unattended autonomy, AGI behavior, or `autonomous_real` behavior was added
+
+Current limitation:
+
+- this is a visual embodiment direction and review doctrine, not an implemented UI redesign
+- future UI work should make AI-E visually feel like the primary intelligent entity on screen while keeping governed workflow capability available when needed
+
+## AIE_AGENT_CONVERSATIONAL_VISUAL_DOMINANCE_DIRECTION
+
+Human testing now shows that the next AI-E Agents UX frontier is visual hierarchy, not more orchestration mediation. The mediation phase improved conversational escalation, reduced orchestration exposure, minimized workflow details for lightweight exploration, and preserved full supervised workflows for operational prompts. The remaining issue is that the interface can still visually feel like a workflow tooling platform with an assistant inside it.
+
+Core transition:
+
+- current perceived structure: `Workflow App -> contains AI assistant`
+- desired perceived structure: `AI Assistant -> can reveal workflow capabilities`
+
+What became clear:
+
+- conversation should become the primary visual anchor
+- workflow/runtime tooling should become secondary and contextual
+- governance visibility should progressively emerge instead of visually anchoring the first impression
+- operational controls should appear when the task intensity calls for them
+- AI-E should visually communicate conversational operational intelligence, not only workflow management
+
+Visual dominance problem signs:
+
+- `Control Center`, counters, workflow history, governance reference, current-step panels, and operational buttons visually anchor the page
+- buttons such as `Run Current Step`, `Resume Workflow`, and `Save for Resume` strongly imply workflow-engine semantics in lightweight contexts
+- conversational guidance exists, but still appears embedded inside an operational shell
+- the UI rhythm can feel segmented, utility-driven, and panel-native even when the wording is conversational
+
+UX direction:
+
+- `Conversational guidance mode`: mostly conversational UI, lightweight suggestions, minimal workflow visibility, optional advanced details
+- `Guided exploration mode`: mixed conversation plus lightweight operational framing, contextual controls, optional workflow expansion
+- `Full supervised operational mode`: full workflow/runtime visibility, approvals, progression hierarchy, governance controls, and resumability management
+
+Governance preserved:
+
+- this direction does not remove governed workflows, approvals, resumability, operational visibility, runtime mechanics, or truth boundaries
+- this is not a request to clone generic chat UI
+- no new conversational subsystem, orchestration layer, runtime AI module, unrestricted authority, Unity execution, shell execution, unattended autonomy, AGI behavior, or `autonomous_real` behavior was added
+
+Current limitation:
+
+- this is a product design direction and review doctrine, not an implemented visual redesign
+- future UI work should reduce early operational panel dominance while preserving contextual access to workflow mechanics when the task becomes supervised and operational
+
+## AIE_AGENT_HUMAN_TESTING_INTERPRETATION_REVIEW_LAYER_DIRECTION
+
+Human testing now needs structured interpretation support in addition to raw transcript review. Conversational mediation is working better: onboarding prompts remain conversational, lightweight guided exploration minimizes runtime mechanics, workflow details are progressively disclosed, and supervised operational workflows still appear for patch, approval, validation, recovery, and execution-boundary prompts.
+
+What became clear:
+
+- long testing sessions are difficult to evaluate from raw logs alone
+- useful review needs UX interpretation, operator-perspective analysis, scaffold leakage detection, escalation smoothness commentary, and operational observations
+- YouTuber-style translation is valuable for live testing reviews, not only manuals, onboarding docs, tutorials, demos, and videos
+- operational comprehension is becoming as important as workflow correctness
+
+Review structure direction:
+
+- `What Improved`: conversational flow quality, escalation smoothness, reduced orchestration exposure, improved operator guidance
+- `What Still Feels Scaffoldy`: runtime-centric terminology, mechanical button labels, early workflow semantics, system-centric phrasing
+- `Emotional/User Perception`: whether AI-E feels adaptive, trustworthy, guided, rigid, scripted, or overwhelming
+- `Best Discovery`: the highest-value UX breakthrough from the session
+- `Biggest Remaining Risk`: escalation ambiguity, hidden wizard-flow behavior, rigid workflow determinism, governance confusion, or conversational collapse into orchestration
+- `Recommended Next Tests`: prompts designed to probe escalation boundaries and workflow visibility transitions
+
+Governance preserved:
+
+- no new conversational subsystem was added
+- no new orchestration layer was added
+- no new runtime AI module, self-diagnostic dashboard, unrestricted introspection, repo mutation authority, Unity execution, shell execution, unattended autonomy, AGI behavior, or `autonomous_real` behavior was added
+- this is a human review and analysis framing layer for testing interpretation
+
+Current limitations:
+
+- this direction is documentation and review doctrine, not an implemented built-in Testing Interpretation Mode
+- future implementation should stay lightweight and reuse existing transcripts, logs, and manual translation language instead of creating a duplicate intelligence layer
+- the review layer should help humans understand what changed, why it matters, how it feels operationally, and where orchestration still leaks through the experience
+
+## AIE_AGENT_CONVERSATION_WORKFLOW_MEDIATION_PHASE1
+
+AI-E Agents now mediate between conversational guidance and workflow creation instead of converting every prompt directly into runtime scaffolding. Low-context onboarding prompts such as "I'm new to this" or "can you show me around?" now route through the existing conversational capability-help layer first, so AI-E orients the operator before offering workflow mechanics.
+
+What changed:
+
+- `/operator/agents` now classifies prompts before creating workflow sessions
+- conversational guidance prompts no longer create read-only inspection workflow cards automatically
+- safe exploratory prompts can create a lightweight guided workflow with runtime details minimized by default
+- operational prompts still create full supervised workflow cards when they involve implementation, repo work, patch preparation, approval, validation, recovery, or execution boundaries
+- workflow detail exposure is now context-sensitive: hidden for orientation, minimal for read-only exploration, full for supervised operations
+- existing game-dev conversational routing now recognizes broader onboarding/capability-help language in one central place
+- no duplicate conversational subsystem was added
+
+Operator-facing language shift:
+
+- old: "AI-E Agent created a supervised inspection workflow."
+- better: "I prepared a safe read-only exploration so you can learn without making changes."
+
+Governance preserved:
+
+- no automatic patch application was added
+- no repo mutation, Unity execution, shell execution, automatic validation, unrestricted autonomy, unattended execution, AGI behavior, or `autonomous_real` behavior was added
+- mediation changes workflow visibility and escalation timing only; it does not change runtime authority
+
+Current limitations:
+
+- this phase improves the `/operator/agents` handoff point; it does not merge the full `/operator/chat` UI into the agents page
+- conversational guidance is deterministic local product guidance, not a new LLM-backed assistant layer
+- workflow persistence remains local UI state/history as before
+
 ## AIE_AGENT_WORKFLOW_PROGRESSION_CLARITY_PHASE1
 
 AI-E Agents now make workflow progression clearer for human operators. Workflow cards no longer ask the operator to infer whether a button starts, continues, completes, or repeats a step. The active card now shows the current step, current status, what just happened, and the exact next action that moves the workflow forward.

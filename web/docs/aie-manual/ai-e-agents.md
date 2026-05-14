@@ -34,7 +34,7 @@ Chat gives advice. Agents show operational progress and boundaries.
 
 ### Engineering Explanation
 
-The `/operator/agents` surface now treats agent work as an interaction loop: prompt intake, workflow creation, card-level actions, history recording, and optional technical expansion. The UI still uses the existing workflow runtime and does not add new backend execution authority.
+The `/operator/agents` surface now treats agent work as an interaction loop: prompt intake, intent-aware mediation, workflow creation when warranted, card-level actions, history recording, and optional technical expansion. The UI still uses the existing workflow runtime and does not add new backend execution authority.
 
 ### YouTuber Explanation
 
@@ -42,7 +42,105 @@ The agent page should feel more like asking an operations assistant to handle a 
 
 ### User Explanation
 
-Start by typing what you want help with. AI-E creates a workflow card and shows the next step. More technical details are available only when you open them.
+Start by typing what you want help with. AI-E may answer conversationally first, create a lightweight exploration, or create a full supervised workflow depending on the request. More technical details are available only when they help.
+
+## Conversation And Workflow Mediation
+
+### Engineering Explanation
+
+Agent prompts now pass through a mediation layer before workflow creation. The mediator reuses existing game-dev conversational routing and chooses one of three interaction levels: conversational guidance, lightweight guided workflow, or full supervised operational mode. This prevents low-context onboarding prompts from bypassing conversational intelligence and becoming workflow cards immediately.
+
+### YouTuber Explanation
+
+AI-E should feel like an intelligent guide first. It brings out the workflow machinery when the job needs it, not every time someone asks a beginner question.
+
+### User Explanation
+
+If you ask "can you show me around?" AI-E should welcome you and explain where to start. It should offer safe workflows after orientation, not overwhelm you first.
+
+## Conversational Discussion Mode
+
+### Engineering Explanation
+
+AI-E needs a valid non-workflow interaction state for conceptual discussion. Prompts about product identity, AI ethics, autonomy, AGI framing, trust, or philosophy should be able to resolve as conversation only. They should not create workflow objects, runtime state, current steps, or operational continuation actions unless the operator asks to inspect, validate, patch, or execute something concrete.
+
+### YouTuber Explanation
+
+Sometimes the user is not asking AI-E to do a job. They are asking it to explain, compare, think through a principle, or discuss what kind of product it should be. That should be allowed to stay as conversation.
+
+### User Explanation
+
+You can ask AI-E questions without starting a workflow. If you ask what makes AI-E different or whether autonomous coding is a good idea, AI-E should answer directly instead of pushing you into workflow controls.
+
+## Multi-Destination Interaction Model
+
+### Engineering Explanation
+
+After `CONVERSATIONAL_ONLY_MODE`, AI-E should evolve from a workflow-or-not decision into a destination-selection model. Valid destinations include conversational discussion, learning/tutorial guidance, YouTuber translation, testing interpretation, guided exploration, supervised operational workflow, and workspace/drafting output. These destinations should be centrally mediated and capability-shared rather than implemented as isolated subsystems.
+
+### YouTuber Explanation
+
+AI-E should pick the right shape for the moment. Sometimes that is a direct answer. Sometimes it is a tutorial. Sometimes it is a test review. Sometimes it is a real governed workflow. The workflow is powerful, but it is not the destination of every conversation.
+
+### User Explanation
+
+Not every prompt starts a workflow. AI-E can answer, teach, translate, review a test session, help draft a document, or open a governed workflow when the task actually needs one.
+
+## Progressive Workflow Disclosure
+
+### Engineering Explanation
+
+Workflow visibility is now contextual. Orientation prompts keep workflow runtime hidden. Safe read-only exploration can show a minimized guided workflow. Implementation, repo work, patch preparation, approval, validation, recovery, and execution-boundary prompts still expose the full supervised workflow card.
+
+### YouTuber Explanation
+
+Operational complexity unfolds in layers: explain first, show a light path second, show the full governed dashboard when the task gets serious.
+
+### User Explanation
+
+You should see only the amount of workflow detail needed for the task. Use `Show Workflow Details` when you want the deeper runtime trace.
+
+## Conversational Visual Hierarchy
+
+### Engineering Explanation
+
+The next Agents UX direction is visual hierarchy and visual embodiment. Mediation can choose the correct interaction level, but the page still has to make conversation the primary visual anchor and make workflow mechanics contextual. The desired structure is `Conversational AI experience -> optional operational capability surfaces`, not `Operational Platform -> conversational assistant layer`.
+
+### YouTuber Explanation
+
+AI-E should look like you are talking to an intelligent operator first. The control panels should come forward when the job needs them, not dominate the room from the first second.
+
+### User Explanation
+
+The page should feel conversational before it feels like a dashboard. Workflow controls should appear when they help you act safely. A calm state such as `No workflows yet.` should feel intentional, not empty or broken.
+
+## YouTuber Translation
+
+### Engineering Explanation
+
+YouTuber translation remains a documentation, tutorial-script, and testing-review tool. It translates dense AI-E architecture into accurate human-facing explanation for manuals, onboarding docs, walkthroughs, demo narration, feature videos, and long-session operational reviews.
+
+### YouTuber Explanation
+
+The point is to simplify without dumbing down: approvals, blocked recovery, resumability, safe execution, workflow progression, and trust architecture should all be explainable in plain language.
+
+### User Explanation
+
+AI-E docs should explain advanced safety systems in language that helps you understand what is happening and why it matters.
+
+## Human Testing Interpretation
+
+### Engineering Explanation
+
+Long agent testing sessions need structured interpretation in addition to raw transcript review. A useful review summarizes UX improvements, remaining scaffold leakage, operator perception, best discoveries, remaining risks, and recommended next prompts. This is a human review framing layer, not a new runtime agent subsystem.
+
+### YouTuber Explanation
+
+After a long test, AI-E needs a recap that says: what got better, what still felt like machinery, how the user probably felt, and what to test next.
+
+### User Explanation
+
+Testing reviews should help you understand the experience, not force you to decode every log line. They should explain what changed, why it matters, and where the workflow still feels too technical.
 
 ## Workflow Cards and Actions
 
@@ -71,6 +169,48 @@ AI-E should not just show a status badge. It should say what is happening, why i
 ### User Explanation
 
 Look for `Next Recommended Action` first. It tells you whether to run the workflow, request approval, run validation, resume, inspect results, or resolve a blocker.
+
+## Optional Conversational Paths
+
+### Engineering Explanation
+
+When mediation keeps a prompt conversational-only, `/operator/agents` should not reuse workflow-card progression language. Conceptual, onboarding, milestone, product-direction, and testing-orientation answers can offer optional paths without creating workflow state. `Next Recommended Action` remains a workflow-card label; non-workflow conversation should use labels such as `Optional Next Paths` or `Continue From Here`.
+
+### YouTuber Explanation
+
+AI-E can say, "here are a few useful directions," without making it sound like the user has to start a workflow.
+
+### User Explanation
+
+If no workflow is required, you can keep talking, learn the current milestone, review what changed, choose a system to inspect, or start a governed workflow only when you have a concrete task.
+
+## Stacked Conversation And Continuity Memory
+
+### Engineering Explanation
+
+The agents page now keeps a bounded active conversation timeline. Each submitted prompt records a visible prompt/response turn, while workflow cards remain separate operational state. When the active conversation reaches the lifecycle threshold, the UI can offer a reviewed Continuity Memory Card. This is session continuity management, not unbounded chat history or persistent RAG memory.
+
+### YouTuber Explanation
+
+AI-E should feel like it is following the conversation, not replacing the last answer every time. When the chat gets long, it can summarize the useful progress into a card and start fresh from there.
+
+### User Explanation
+
+Your recent conversation stays visible while you are working. If it gets long, you can create, review, edit, and save a Continuity Memory Card before starting fresh from the useful progress.
+
+## Supervised System Improvement Requests
+
+### Engineering Explanation
+
+AI-E can draft formal improvement requests from repeated friction. Requests are risk-classified as low, medium, high, or critical, and they explicitly state that implementation authority remains human/dev only. Critical requests involving permissions, sandboxing, tool access, repo mutation, governance bypass, autonomous execution, or self-modification must never be self-authorized.
+
+### YouTuber Explanation
+
+AI-E can say, "this keeps causing friction, here is a proposed fix," but it cannot approve or install the fix itself.
+
+### User Explanation
+
+Improvement requests are proposals. They help humans review what should change, why it matters, what could go wrong, and what approval is required.
 
 ## Workflow Progression Clarity
 

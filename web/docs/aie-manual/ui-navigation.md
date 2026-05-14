@@ -41,16 +41,18 @@ Route: `/operator/agents`
 1. Open `/operator/agents`.
 2. Use the field labeled "Ask an AI-E Agent to help with a workflow".
 3. Enter a plain-language request or choose an example prompt chip.
-4. Select `Start Workflow` to create a supervised step-by-step workflow.
-5. Read the `AI-E Agent Summary` to understand what the workflow is doing and whether approval is needed.
-6. Read `Current Workflow Step` to see the active step, status, what just happened, and the exact next action.
-7. Read `Next Recommended Action`; treat it as the primary guidance layer.
-8. Use the emphasized action button first when it matches the operator's intent.
-9. Use other workflow card action buttons such as `Run Current Step`, `Run Approved Step`, `Resume Workflow`, `Run Validation`, `Inspect Summary`, `Explain Blocker`, `Request Approval`, or `Save for Resume` when available.
-10. Open `Show Technical Details` only when lifecycle states, approval checkpoints, validation checkpoints, blocked reasons, path scope, or rollback markers need deeper review.
-11. Review recent workflow history after a workflow has been created or updated.
-12. For blocked workflows, read `Safe Recovery Path` before opening technical details.
-13. For approval-gated workflows, read `Approval Required` before approving or denying a stage.
+4. Select `Start Workflow` to let AI-E decide whether to answer conversationally, create a lightweight exploration, or create a full supervised workflow.
+5. If AI-E answers conversationally, read the orientation or discussion response first; no workflow card is created for pure onboarding, conceptual, product-explanation, or AI ethics prompts.
+6. If a workflow card appears, read the `AI-E Agent Summary` to understand what the workflow is doing and whether approval is needed.
+7. Read `Current Workflow Step` to see the active step, status, what just happened, and the exact next action when full workflow detail is visible.
+8. Read `Next Recommended Action`; treat it as the primary guidance layer.
+9. Use the emphasized action button first when it matches the operator's intent.
+10. Use `Show Workflow Details` when a lightweight exploration hides runtime mechanics by default.
+11. Use other workflow card action buttons such as `Run Current Step`, `Run Approved Step`, `Resume Workflow`, `Run Validation`, `Inspect Summary`, `Explain Blocker`, `Request Approval`, or `Save for Resume` when available.
+12. Open `Show Technical Details` only when lifecycle states, approval checkpoints, validation checkpoints, blocked reasons, path scope, or rollback markers need deeper review.
+13. Review recent workflow history after a workflow has been created or updated.
+14. For blocked workflows, read `Safe Recovery Path` before opening technical details.
+15. For approval-gated workflows, read `Approval Required` before approving or denying a stage.
 
 Screenshot TODO: `/operator/agents` workflow selection and active workflow cards.
 
@@ -64,6 +66,8 @@ Beginner-facing controls appear first:
 
 - a plain-language workflow input
 - example prompt chips
+- conversational orientation for onboarding prompts
+- minimized workflow visibility for safe exploration
 - compact workflow cards
 - AI-E Agent Summary panels
 - Current Workflow Step panels
@@ -77,6 +81,50 @@ Beginner-facing controls appear first:
 
 Operator and engineering details remain available through expandable technical panels instead of being the default reading path.
 
+### Conversational Visual Hierarchy
+
+The desired page hierarchy is conversation first, workflow capability second. AI-E should visually feel like an intelligent operational assistant that can reveal governed workflows, not a workflow dashboard that contains an assistant.
+
+The latest embodiment target is stronger: the operator should feel they are talking with AI-E first, and that workflow capability can surface from that conversation when needed. The successful onboarding state should preserve the message `No workflows yet.` and the trust-building line `I will introduce workflow controls only when they help the task.`
+
+Visual review should check whether:
+
+- the conversation is the primary anchor on first impression
+- counters, workflow history, governance reference, and current-step panels stay visually quiet until useful
+- lightweight exploration has breathing room
+- buttons such as `Run Current Step`, `Resume Workflow`, and `Save for Resume` appear only when the interaction mode warrants operational controls
+- full panel density is reserved for full supervised operational mode
+- governance remains available without overwhelming onboarding or exploration prompts
+- the page feels conversation-native rather than panel-native
+- the operational framework emerges from the conversation instead of containing it
+
+This direction does not remove governed workflows. It changes when and how strongly workflow mechanics visually appear.
+
+### Conversation-To-Workflow Mediation
+
+The Agents page should not turn every message into a workflow card. It uses three interaction levels:
+
+- `Conversational discussion/guidance`: for onboarding, capability help, confusion, clarification, philosophy, AI ethics, product explanation, or conceptual understanding. AI-E explains naturally and does not create a workflow card.
+- `Lightweight guided workflow`: for safe read-only exploration where a workflow may help, but runtime mechanics are minimized.
+- `Full supervised operational mode`: for implementation, repo work, patch preparation, approvals, validation, rollback, blocked recovery, or execution-boundary prompts.
+
+This mediation reuses the existing conversational routing layer. It is not a duplicate chatbot.
+
+Discussion prompts such as `What makes AI-E different?` or `do you think AI-E should allow autonomous coding?` should remain conversation unless the operator asks for concrete inspection or implementation.
+
+### Human Testing Interpretation
+
+Long testing sessions should be reviewed with interpretation, not only raw transcript reading. A useful test review should summarize:
+
+- what improved
+- what still feels scaffoldy
+- emotional and operator perception
+- best discovery
+- biggest remaining risk
+- recommended next tests
+
+This review framing helps testers evaluate operational readability, conversational guidance quality, escalation smoothness, and trust signals. It does not add a new runtime subsystem or prove that external execution happened.
+
 ### Action Buttons
 
 Workflow cards may show these actions:
@@ -88,6 +136,8 @@ Workflow cards may show these actions:
 - `Validation In Progress`: disabled label showing the active step is waiting for validation evidence.
 - `Workflow Blocked`: disabled label showing the workflow stopped on a governance boundary.
 - `Workflow Complete`: disabled label showing the workflow has no runnable stages left.
+- `Show Workflow Details`: expands minimized read-only exploration into the full runtime view.
+- `Hide Workflow Details`: returns a lightweight exploration card to the simpler view.
 - `Resume Workflow`: continues a workflow only when resume state is eligible.
 - `Run Validation`: opens a validation checkpoint for a running validation-required step.
 - `Record Validation Pass`: records operator-provided validation success for a validating step.
@@ -162,14 +212,54 @@ Every workflow card should answer three operator questions before showing techni
 - Why does this state matter?
 - What should I do next?
 
-The `Next Recommended Action` panel is the most important guidance layer. Example guidance:
+The `Next Recommended Action` panel is the most important guidance layer inside actual workflow cards. Example guidance:
 
 - waiting workflow: "Run the workflow to continue execution."
 - running workflow: "Wait for report generation to complete."
 - blocked workflow: "Approval is required before execution can continue."
 - resumable workflow: "Resume the workflow from the validation stage."
 - validation pending: "Run validation to verify the workflow result."
-- no workflow: "Start a workflow using the input above."
+
+For conceptual conversations with no workflow, use optional path language instead:
+
+- no workflow required: "Ask a follow-up or choose an optional path."
+- milestone question: "Learn the current milestone or review what changed recently."
+- testing orientation: "Continue the conversation or choose a concrete system to inspect."
+- operational readiness: "Prepare a governed workflow when you have a concrete task."
+
+### Active Conversation Timeline
+
+For conversational use, `/operator/agents` should show stacked active conversation turns. This prevents the page from feeling like a single-state form where the newest answer replaces the prior one.
+
+This timeline is the primary visible response area under the input. It should not be treated as a lower archive while a separate latest-response panel dominates the page.
+
+The input now belongs below the active conversation history. The intended rhythm is:
+
+```text
+Conversation history
+	scrollable active turns
+Input field
+```
+
+This makes `/operator/agents` feel like a conversation that can reveal tools, not a form that occasionally displays chat output.
+
+Look for:
+
+- `Active Conversation`
+- `Stacked Conversation History`
+- visible `User:` and `AI-E:` turns in order
+- kind labels such as conversational, guided exploration, supervised workflow, or system improvement request
+- `Copy Conversation`
+
+The timeline is bounded active history. It is not infinite permanent chat memory.
+
+Use `Copy Conversation` when the active session needs to become a handoff, testing review, documentation artifact, architecture note, devlog source, or external review prompt.
+
+### Continuity Memory Card Panel
+
+When the active conversation gets long, AI-E may offer a `Continuity Memory Card` with actions such as `Create Memory Card`, `Review What Will Be Saved`, `Edit Memory Card First`, `Start Fresh From This Progress`, and `Keep Chatting For Now`.
+
+Use this when the session has enough accumulated progress that a fresh chat would be faster or easier to read. The card preserves useful working state, not every word perfectly.
 
 ### Status Explanations
 
