@@ -158,6 +158,8 @@ Workflow cards may show these actions:
 
 These buttons do not grant new backend authority. They use the existing supervised workflow runtime and preserve approval, validation, path-scope, and blocked-state rules.
 
+Approval-gated workflows also show a sticky `Workflow Action` banner near the top of the workflow card. This banner is the first place to look for the next meaningful human decision. Dense scope, risk, validation, rollback, and technical metadata remain lower in the card so the primary control is not buried.
+
 Unavailable buttons are intentionally disabled. For example, `Resume Workflow` stays disabled until the workflow is saved for resume or otherwise becomes resume eligible. The card explains why the action is unavailable.
 
 ### Current Workflow Step
@@ -513,4 +515,4 @@ When reviewing an AI-E operational workflow:
 9. If a workflow is resumable, confirm that approval and validation rules still make sense before continuing.
 10. If a workflow is blocked, use `Explain Blocker` and resolve the missing approval, validation, dependency, or scope issue before continuing.
 11. If `Safe Recovery Path` is visible, choose the safe recovery action before inspecting lifecycle details.
-12. If `Session Scope Approval` or `Approval Required` is visible, review scope and risk before choosing `Approve Scoped Session`, `Approve This Step`, or `Deny Approval`.
+12. If `Workflow Action` shows `Approval Needed`, use the visible `Approve Scoped Session`, `Review Scope`, or `Deny Approval` buttons before reading lower technical detail.

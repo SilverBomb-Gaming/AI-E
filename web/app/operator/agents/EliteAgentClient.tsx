@@ -300,6 +300,49 @@ function nextRecommendedAction(workflow: EliteAgentWorkflowSession): string {
   return "Run the current step to continue.";
 }
 
+function workflowActionBannerTitle(workflow: EliteAgentWorkflowSession): string {
+  const approvalGuidance = buildEliteAgentApprovalGateGuidance(workflow);
+  if (approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL") {
+    return approvalGuidance.actionBeingApproved === "Scoped dev session boundary" ? "Approval Needed" : "Approval Required";
+  }
+  if (isEliteAgentWorkflowStageAutoAdvancable(currentStage(workflow))) {
+    return "AI-E Is Working";
+  }
+  if (firstPendingValidation(workflow)) {
+    return "Validation Needed";
+  }
+  if (summarizeEliteAgentWorkflow(workflow).resumeEligible) {
+    return "Ready To Resume";
+  }
+  if (workflow.status === "BLOCKED") {
+    return "Workflow Needs Attention";
+  }
+  return "Next Action";
+}
+
+function workflowActionBannerBody(workflow: EliteAgentWorkflowSession): string {
+  const approvalGuidance = buildEliteAgentApprovalGateGuidance(workflow);
+  if (approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL") {
+    if (approvalGuidance.actionBeingApproved === "Scoped dev session boundary") {
+      return "AI-E prepared a scoped game-dev workflow. Approve the scoped session so AI-E can inspect context and prepare a safe patch proposal.";
+    }
+    return approvalGuidance.whatHappensAfterApproval;
+  }
+  if (isEliteAgentWorkflowStageAutoAdvancable(currentStage(workflow))) {
+    return "AI-E is auto-progressing a low-risk internal step and will pause when human judgment is required.";
+  }
+  if (firstPendingValidation(workflow)) {
+    return "A validation checkpoint is ready. Record real evidence before AI-E claims this step is complete.";
+  }
+  if (summarizeEliteAgentWorkflow(workflow).resumeEligible) {
+    return "This workflow was saved safely and can continue under the same approval and validation rules.";
+  }
+  if (workflow.status === "BLOCKED") {
+    return buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow)?.blockedExplanation ?? "AI-E stopped at a governance boundary before continuing.";
+  }
+  return nextRecommendedAction(workflow);
+}
+
 function latestWorkflowEvent(workflow: EliteAgentWorkflowSession): string {
   const latestApproval = workflow.approvalEvents.at(-1);
   const latestLog = workflow.logs.at(-1);
@@ -445,11 +488,12 @@ function resumeUnavailableReason(workflow: EliteAgentWorkflowSession): string | 
 function primaryActionLabel(workflow: EliteAgentWorkflowSession): string {
   const summary = summarizeEliteAgentWorkflow(workflow);
   const recoveryGuidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow);
+  const approvalGuidance = buildEliteAgentApprovalGateGuidance(workflow);
   if (summary.resumeEligible) {
     return "Resume Workflow";
   }
-  if (buildEliteAgentApprovalGateGuidance(workflow)?.approvalGateState === "WAITING_FOR_APPROVAL") {
-    return "Approve This Step";
+  if (approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL") {
+    return approvalGuidance.actionBeingApproved === "Scoped dev session boundary" ? "Approve Scoped Session" : "Approve This Step";
   }
   if (firstPendingValidation(workflow)) {
     return "Run Validation";
@@ -467,6 +511,79 @@ function primaryActionLabel(workflow: EliteAgentWorkflowSession): string {
     return "Mark Current Step Complete";
   }
   return runStepButtonLabel(workflow);
+}
+
+function WorkflowActionBanner({
+  workflow,
+  onApprove,
+  onDeny,
+  onReviewScope,
+  onExplainRisk,
+  onResume,
+  onRunValidation,
+  onRecoveryAction,
+}: {
+  workflow: EliteAgentWorkflowSession;
+  onApprove: () => void;
+  onDeny: () => void;
+  onReviewScope: () => void;
+  onExplainRisk: () => void;
+  onResume: () => void;
+  onRunValidation: () => void;
+  onRecoveryAction: (actionId: EliteAgentBlockedWorkflowRecoveryActionId) => void;
+}) {
+  const summary = summarizeEliteAgentWorkflow(workflow);
+  const approvalGuidance = buildEliteAgentApprovalGateGuidance(workflow);
+  const recoveryGuidance = buildEliteAgentBlockedWorkflowRecoveryGuidance(workflow);
+  const pendingValidation = firstPendingValidation(workflow);
+  const autoAdvancing = isEliteAgentWorkflowStageAutoAdvancable(currentStage(workflow));
+  const waitingForApproval = approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL";
+  const showBanner = waitingForApproval || autoAdvancing || Boolean(pendingValidation) || summary.resumeEligible || Boolean(recoveryGuidance);
+  if (!showBanner || summary.status === "COMPLETED") {
+    return null;
+  }
+
+  const isApproval = Boolean(waitingForApproval);
+  const tone = recoveryGuidance
+    ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-300/40 dark:bg-amber-400/10 dark:text-amber-100"
+    : isApproval
+      ? "border-violet-300 bg-violet-50 text-violet-950 dark:border-violet-300/40 dark:bg-violet-400/10 dark:text-violet-100"
+      : "border-cyan-300 bg-cyan-50 text-cyan-950 dark:border-cyan-300/40 dark:bg-cyan-400/10 dark:text-cyan-100";
+  const eyebrowClass = recoveryGuidance
+    ? "text-amber-800 dark:text-amber-100"
+    : isApproval
+      ? "text-violet-800 dark:text-violet-100"
+      : "text-cyan-800 dark:text-cyan-100";
+
+  return (
+    <div className={`sticky top-2 z-30 mt-4 rounded-md border p-4 shadow-lg shadow-slate-950/5 backdrop-blur dark:shadow-black/30 ${tone}`}>
+      <div className="flex flex-col gap-3">
+        <div className="min-w-0">
+          <p className={`text-xs font-semibold uppercase tracking-[0.14em] ${eyebrowClass}`}>Workflow Action</p>
+          <h3 className="mt-1 text-lg font-semibold">{workflowActionBannerTitle(workflow)}</h3>
+          <p className="mt-1 max-w-3xl text-sm leading-6">{workflowActionBannerBody(workflow)}</p>
+          {waitingForApproval && approvalGuidance && (
+            <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em]">Scoped session ready. Approve to begin safe inspection.</p>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {waitingForApproval && approvalGuidance && (
+            <>
+              <ActionButton label={approvalGuidance.actionBeingApproved === "Scoped dev session boundary" ? "Approve Scoped Session" : "Approve This Step"} onClick={onApprove} primary />
+              <ActionButton label="Review Scope" onClick={onReviewScope} />
+              <ActionButton label="Deny Approval" onClick={onDeny} />
+            </>
+          )}
+          {!waitingForApproval && summary.resumeEligible && <ActionButton label="Resume Workflow" onClick={onResume} primary />}
+          {!waitingForApproval && pendingValidation && <ActionButton label="Run Validation" onClick={onRunValidation} primary />}
+          {!waitingForApproval && recoveryGuidance && recoveryGuidance.actions.map((action, index) => (
+            <ActionButton key={action.id} label={action.label} onClick={() => onRecoveryAction(action.id)} primary={index === 0} />
+          ))}
+          {waitingForApproval && <ActionButton label="Explain Risk" onClick={onExplainRisk} />}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function StageTimeline({ workflow }: { workflow: EliteAgentWorkflowSession }) {
@@ -494,27 +611,35 @@ function StageTimeline({ workflow }: { workflow: EliteAgentWorkflowSession }) {
   );
 }
 
-function WorkflowProgressPanel({ workflow }: { workflow: EliteAgentWorkflowSession }) {
+function WorkflowProgressPanel({ workflow, hasActionBanner }: { workflow: EliteAgentWorkflowSession; hasActionBanner?: boolean }) {
   const progress = workflowProgress(workflow);
   const isComplete = workflow.status === "COMPLETED";
+  const approvalGuidance = buildEliteAgentApprovalGateGuidance(workflow);
+  const awaitingApproval = approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL";
+  const panelPositionClass = hasActionBanner ? "relative" : "sticky top-2 z-10";
+  const title = isComplete ? "Workflow Complete" : awaitingApproval ? "Awaiting Approval" : progress.label;
+  const badge = isComplete ? "100%" : awaitingApproval ? "Approval needed" : `${progress.percent}%`;
+  const expectation = awaitingApproval
+    ? "Scoped session ready. Approve to begin safe inspection; AI-E has not applied files or claimed validation."
+    : progress.expectation;
   return (
-    <div className={`sticky top-2 z-10 mt-4 rounded-md border p-4 shadow-sm ${isComplete ? "border-emerald-200 bg-emerald-50 dark:border-emerald-300/30 dark:bg-emerald-400/10" : "border-sky-200 bg-sky-50 dark:border-sky-300/30 dark:bg-sky-400/10"}`}>
+    <div className={`${panelPositionClass} mt-4 rounded-md border p-4 shadow-sm ${isComplete ? "border-emerald-200 bg-emerald-50 dark:border-emerald-300/30 dark:bg-emerald-400/10" : awaitingApproval ? "border-violet-200 bg-violet-50 dark:border-violet-300/30 dark:bg-violet-400/10" : "border-sky-200 bg-sky-50 dark:border-sky-300/30 dark:bg-sky-400/10"}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className={`text-xs font-semibold uppercase tracking-[0.14em] ${isComplete ? "text-emerald-800 dark:text-emerald-100" : "text-sky-800 dark:text-sky-100"}`}>Workflow Progress</p>
-          <p className={`mt-1 text-lg font-semibold ${isComplete ? "text-emerald-950 dark:text-emerald-100" : "text-sky-950 dark:text-sky-100"}`}>{isComplete ? "Workflow Complete" : progress.label}</p>
+          <p className={`text-xs font-semibold uppercase tracking-[0.14em] ${isComplete ? "text-emerald-800 dark:text-emerald-100" : awaitingApproval ? "text-violet-800 dark:text-violet-100" : "text-sky-800 dark:text-sky-100"}`}>Workflow Progress</p>
+          <p className={`mt-1 text-lg font-semibold ${isComplete ? "text-emerald-950 dark:text-emerald-100" : awaitingApproval ? "text-violet-950 dark:text-violet-100" : "text-sky-950 dark:text-sky-100"}`}>{title}</p>
         </div>
-        <div className={`rounded-full border bg-white px-3 py-1 text-sm font-semibold ${isComplete ? "border-emerald-200 text-emerald-800 dark:border-emerald-300/30 dark:bg-[#070b12] dark:text-emerald-100" : "border-sky-200 text-sky-800 dark:border-sky-300/20 dark:bg-[#070b12] dark:text-sky-100"}`}>{progress.percent}%</div>
+        <div className={`rounded-full border bg-white px-3 py-1 text-sm font-semibold ${isComplete ? "border-emerald-200 text-emerald-800 dark:border-emerald-300/30 dark:bg-[#070b12] dark:text-emerald-100" : awaitingApproval ? "border-violet-200 text-violet-800 dark:border-violet-300/20 dark:bg-[#070b12] dark:text-violet-100" : "border-sky-200 text-sky-800 dark:border-sky-300/20 dark:bg-[#070b12] dark:text-sky-100"}`}>{badge}</div>
       </div>
-      <div className="mt-3 h-3 overflow-hidden rounded-full bg-white dark:bg-[#070b12]" aria-label={`Workflow progress ${progress.percent}%`}>
-        <div className={`h-full rounded-full transition-all ${isComplete ? "bg-emerald-500" : "bg-sky-500"}`} style={{ width: `${progress.percent}%` }} />
+      <div className="mt-3 h-3 overflow-hidden rounded-full bg-white dark:bg-[#070b12]" aria-label={awaitingApproval ? "Workflow awaiting approval" : `Workflow progress ${progress.percent}%`}>
+        <div className={`h-full rounded-full transition-all ${isComplete ? "bg-emerald-500" : awaitingApproval ? "bg-violet-500" : "bg-sky-500"}`} style={{ width: `${awaitingApproval ? 12 : progress.percent}%` }} />
       </div>
-      <div className={`mt-3 grid gap-2 text-sm sm:grid-cols-3 ${isComplete ? "text-emerald-900 dark:text-emerald-100" : "text-sky-900 dark:text-sky-100"}`}>
+      <div className={`mt-3 grid gap-2 text-sm sm:grid-cols-3 ${isComplete ? "text-emerald-900 dark:text-emerald-100" : awaitingApproval ? "text-violet-900 dark:text-violet-100" : "text-sky-900 dark:text-sky-100"}`}>
         <p><span className="font-semibold">Completed:</span> {progress.completed} of {progress.total}</p>
         <p><span className="font-semibold">Remaining:</span> {progress.remaining}</p>
         <p><span className="font-semibold">Current:</span> {isComplete ? "Final state" : stageLabel(currentStage(workflow)?.type ?? null)}</p>
       </div>
-      <p className={`mt-2 text-xs leading-5 ${isComplete ? "text-emerald-800 dark:text-emerald-100" : "text-sky-800 dark:text-sky-100"}`}>{progress.expectation}</p>
+      <p className={`mt-2 text-xs leading-5 ${isComplete ? "text-emerald-800 dark:text-emerald-100" : awaitingApproval ? "text-violet-800 dark:text-violet-100" : "text-sky-800 dark:text-sky-100"}`}>{expectation}</p>
     </div>
   );
 }
@@ -642,7 +767,7 @@ export function EliteAgentClient() {
     }
     const target = workflowCardRefs.current[pendingFocusWorkflowId];
     if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
       target.focus({ preventScroll: true });
       setPendingFocusWorkflowId(null);
     }
@@ -1200,10 +1325,10 @@ export function EliteAgentClient() {
 
           <aside className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-white/10 dark:bg-[#0d1420]">
             <h2 className="text-lg font-semibold">Control Center</h2>
-            <div className="mt-4 grid grid-cols-3 gap-2">
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs text-slate-500 dark:text-zinc-400">Active</p><p className="text-2xl font-semibold">{workflows.length}</p></div>
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs text-slate-500 dark:text-zinc-400">Resumable</p><p className="text-2xl font-semibold">{resumableHistory.length}</p></div>
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs text-slate-500 dark:text-zinc-400">Blocked</p><p className="text-2xl font-semibold">{failedHistory.length}</p></div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+              <div className="min-w-0 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-zinc-400">Active</p><p className="mt-1 text-2xl font-semibold leading-none">{workflows.length}</p></div>
+              <div className="min-w-0 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-zinc-400">Resumable</p><p className="mt-1 text-2xl font-semibold leading-none">{resumableHistory.length}</p></div>
+              <div className="min-w-0 rounded-md border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/5"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500 dark:text-zinc-400">Blocked</p><p className="mt-1 text-2xl font-semibold leading-none">{failedHistory.length}</p></div>
             </div>
             <button type="button" onClick={runSampleTask} disabled={isRunning} className="mt-4 w-full rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 transition hover:border-cyan-400 hover:bg-cyan-50 disabled:opacity-50 dark:border-white/10 dark:bg-[#111827] dark:text-zinc-100 dark:hover:border-cyan-300/60">
               {isRunning ? "Running bounded task..." : "Run Scoped Sample Task"}
@@ -1275,6 +1400,7 @@ export function EliteAgentClient() {
               const primary = primaryActionLabel(workflow);
               const runLabel = runStepButtonLabel(workflow);
               const isAutoAdvancingStage = isEliteAgentWorkflowStageAutoAdvancable(activeStage);
+              const hasActionBanner = approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL" || isAutoAdvancingStage || Boolean(pendingValidation) || canResume || Boolean(recoveryGuidance);
               const runDisabled = !activeStage || isAutoAdvancingStage || summary.status === "COMPLETED" || summary.status === "BLOCKED" || activeStage.lifecycleState === "RUNNING" || activeStage.lifecycleState === "VALIDATING" || summary.resumeEligible;
               const visibility = workflowVisibility[workflow.workflowSessionId] ?? "full";
               const showWorkflowRuntime = visibility === "full" || Boolean(expandedWorkflowDetails[workflow.workflowSessionId]);
@@ -1295,7 +1421,18 @@ export function EliteAgentClient() {
                     <span className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${statusClass(summary.status.toLowerCase())}`}>{statusLabel(summary.status)}</span>
                   </div>
 
-                  <WorkflowProgressPanel workflow={workflow} />
+                  <WorkflowActionBanner
+                    workflow={workflow}
+                    onApprove={() => approveThisStep(workflow)}
+                    onDeny={() => denyApproval(workflow)}
+                    onReviewScope={() => reviewApprovalScope(workflow)}
+                    onExplainRisk={() => explainApprovalRisk(workflow)}
+                    onResume={() => resumeWorkflow(workflow)}
+                    onRunValidation={() => runValidation(workflow)}
+                    onRecoveryAction={(actionId) => handleRecoveryAction(workflow, actionId)}
+                  />
+
+                  <WorkflowProgressPanel workflow={workflow} hasActionBanner={hasActionBanner} />
 
                   {isSimulationWorkflow(workflow) && (
                     <div className="mt-4 rounded-md border border-cyan-200 bg-cyan-50 p-4 dark:border-cyan-300/20 dark:bg-cyan-400/10">
@@ -1334,7 +1471,11 @@ export function EliteAgentClient() {
                   {showWorkflowRuntime && <p className="mt-3 rounded-md border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-600 dark:border-white/10 dark:bg-[#070b12] dark:text-zinc-300">{statusExplanation(summary.status)}</p>}
 
                   {summary.status !== "COMPLETED" && (
-                    <p className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">Current step progress is not the same as workflow completion. This workflow is {progress.percent}% complete overall, with {progress.remaining} supervised step{progress.remaining === 1 ? "" : "s"} remaining.</p>
+                    <p className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                      {approvalGuidance?.approvalGateState === "WAITING_FOR_APPROVAL"
+                        ? "Approval checkpoint is active. AI-E is waiting on your judgment before it begins low-risk internal inspection and preparation."
+                        : `Current step progress is not the same as workflow completion. This workflow is ${progress.percent}% complete overall, with ${progress.remaining} supervised step${progress.remaining === 1 ? "" : "s"} remaining.`}
+                    </p>
                   )}
 
                   {showWorkflowRuntime && <StageTimeline workflow={workflow} />}
@@ -1371,7 +1512,8 @@ export function EliteAgentClient() {
                   )}
 
                   {approvalGuidance && !recoveryGuidance && (
-                    <div className="mt-3 rounded-md border border-violet-200 bg-violet-50 p-4 dark:border-violet-300/30 dark:bg-violet-400/10">
+                    <details className="mt-3 rounded-md border border-violet-200 bg-violet-50 p-4 dark:border-violet-300/30 dark:bg-violet-400/10" open={approvalGuidance.approvalGateState !== "WAITING_FOR_APPROVAL"}>
+                      <summary className="cursor-pointer text-sm font-semibold text-violet-950 dark:text-violet-100">Approval boundary details</summary>
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <p className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-800 dark:text-violet-100">{approvalGuidance.actionBeingApproved === "Scoped dev session boundary" ? "Session Scope Approval" : approvalGuidance.title}</p>
                         <span className="rounded-full border border-violet-300 px-2 py-1 text-xs font-semibold text-violet-900 dark:border-violet-200/40 dark:text-violet-100">{approvalGateLabel(approvalGuidance)}</span>
@@ -1394,7 +1536,7 @@ export function EliteAgentClient() {
                       <div className="mt-3 flex flex-wrap gap-2">
                         {approvalGuidance.approvalGateState === "WAITING_FOR_APPROVAL" ? (
                           <>
-                            <ActionButton label={approvalGuidance.actionBeingApproved === "Scoped dev session boundary" ? "Approve Scoped Session" : "Approve This Step"} onClick={() => approveThisStep(workflow)} primary={primary === "Approve This Step"} />
+                            <ActionButton label={approvalGuidance.actionBeingApproved === "Scoped dev session boundary" ? "Approve Scoped Session" : "Approve This Step"} onClick={() => approveThisStep(workflow)} primary={primary === (approvalGuidance.actionBeingApproved === "Scoped dev session boundary" ? "Approve Scoped Session" : "Approve This Step")} />
                             <ActionButton label="Deny Approval" onClick={() => denyApproval(workflow)} />
                           </>
                         ) : (
@@ -1403,7 +1545,7 @@ export function EliteAgentClient() {
                         <ActionButton label="Review Scope" onClick={() => reviewApprovalScope(workflow)} />
                         <ActionButton label="Explain Risk" onClick={() => explainApprovalRisk(workflow)} />
                       </div>
-                    </div>
+                    </details>
                   )}
 
                   <div className="mt-4 flex flex-wrap gap-2">

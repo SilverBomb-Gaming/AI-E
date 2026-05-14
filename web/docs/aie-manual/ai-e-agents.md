@@ -330,13 +330,15 @@ Before approving, read `Session Scope Approval` or `Approval Required`. It tells
 
 `Approve Scoped Session` or `Approve This Step` records `APPROVED_BY_OPERATOR` for the displayed approval boundary. `Deny Approval` records `APPROVAL_DENIED` and blocks the workflow safely. `Review Scope` surfaces path and permission metadata. `Explain Risk` renders the approval rationale, risk, allowed behavior, disallowed behavior, and validation expectation. Completed approval decisions become read-only history instead of showing active approve/deny controls.
 
+Approval-gated workflow cards now place the primary decision in a sticky `Workflow Action` banner before dense workflow detail. When a concrete dev session waits for approval, the banner says `Approval Needed`, explains the scoped session in one sentence, and keeps `Approve Scoped Session`, `Review Scope`, `Deny Approval`, and `Explain Risk` immediately visible. The full approval boundary metadata remains available below as expandable governance detail.
+
 ### YouTuber Explanation
 
-The approval button now has guardrails around it: approve the scoped room, deny it, inspect scope, or ask why the approval is risky.
+The approval button now has guardrails around it and stays visually anchored: approve the scoped room, deny it, inspect scope, or ask why the approval is risky.
 
 ### User Explanation
 
-Use `Review Scope` before approval if you are unsure. Use `Deny Approval` when the scope or risk does not match your intent.
+Use the sticky `Workflow Action` banner first. Use `Review Scope` before approval if you are unsure. Use `Deny Approval` when the scope or risk does not match your intent.
 
 ## Approval History
 

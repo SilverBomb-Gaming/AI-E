@@ -2,6 +2,39 @@
 
 Controlled execution surface for supported projects. AI-E turns a bounded request into a real, reviewable result with guardrails, live status, proof summaries, and saved history.
 
+## AIE_APPROVAL_GATE_VISIBILITY_AND_STICKY_ACTION_UX_MILESTONE
+
+Human testing after the session-level approval model confirmed that workflow state could be correct while the interface still felt stalled. The BABYLON prompt created the right supervised workflow and paused at the right approval boundary, but the primary approval action was buried under expanding conversation, summary, progress, and governance detail sections.
+
+Product realization:
+
+- workflow correctness is not enough if the next meaningful action is visually hidden
+- approval-gated workflows must feel like AI-E is waiting on operator judgment
+- the user should never need to search for the control that advances the workflow
+
+Implementation update:
+
+- workflow cards now render a sticky `Workflow Action` banner before dense operational detail
+- approval-gated concrete dev workflows show `Approval Needed`, a short boundary explanation, and immediate `Approve Scoped Session`, `Review Scope`, `Deny Approval`, and `Explain Risk` actions
+- approval-waiting progress now emphasizes `Awaiting Approval` and `Approval needed` instead of foregrounding `0%`
+- the old approval-state helper text no longer says the workflow is `0% complete overall` while the meaningful approval checkpoint is active
+- dense approval boundary metadata is expandable while the workflow is waiting, then opens as read-only history after approval
+- the Control Center status row uses responsive separated stat cards to avoid cramped labels and counts
+- newly created workflow cards scroll to the card top so the action banner is the first operational focus
+
+Trust boundary:
+
+- the sticky banner does not auto-approve workflows
+- approvals, denial, scope review, and risk explanation remain explicit
+- AI-E still does not claim file application, Unity/browser validation, commits, pushes, deployment, or external execution without evidence
+
+UX principle:
+
+- make the next human decision visually dominant
+- keep governance available
+- move dense technical detail below the primary action
+- preserve the feeling that AI-E is paused for judgment, not stalled
+
 ## AIE_SESSION_LEVEL_APPROVAL_BOUNDARY_MODEL
 
 Human testing after workflow auto-advancement exposed the next approval-model frontier: reducing button friction is not enough if approval is still modeled as a per-step interruption. A game-development assistant should ask the operator to approve the room AI-E may work inside, then continue inside that room until scope, risk, mutation authority, validation authority, or external effects change.
