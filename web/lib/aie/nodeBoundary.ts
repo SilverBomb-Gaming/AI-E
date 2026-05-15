@@ -1041,7 +1041,7 @@ export function selectOperatorPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTran
     selected_plan_id: normalizedPlanId,
     operator_feedback_capture: buildOperatorFeedbackCapture(plan, normalizedPlanId),
     execution_confirmation: undefined,
-  };
+  } as T & { selected_plan_id: string };
 }
 
 function resolveSelectedPlanForExecution<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(
@@ -2007,7 +2007,7 @@ export function attachInsightsToPlan<T extends NodeAdvisoryPlan | CoreNodeTaskTr
     decision_record: normalizeDecisionRecordSnapshot(plan.decision_record),
     execution_confirmation: normalizeExecutionConfirmation(plan.execution_confirmation),
     execution_intent_locked: plan.execution_intent_locked,
-  };
+  } as T & { annotations: NodePlanAnnotation[]; operator_acknowledgement: NodePlanOperatorAcknowledgement };
 }
 
 export function acknowledgePlanInsights<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(
@@ -2037,7 +2037,7 @@ export function acknowledgePlanInsights<T extends NodeAdvisoryPlan | CoreNodeTas
     decision_record: normalizeDecisionRecordSnapshot(plan.decision_record),
     execution_confirmation: normalizeExecutionConfirmation(plan.execution_confirmation),
     execution_intent_locked: plan.execution_intent_locked,
-  };
+  } as T & { operator_acknowledgement: NodePlanOperatorAcknowledgement };
 }
 
 export function confirmExecutionSubmission<T extends NodeAdvisoryPlan | CoreNodeTaskTranslationPlan | CoreNodePipelineDraftPlan>(

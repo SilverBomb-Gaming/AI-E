@@ -44,7 +44,11 @@ function cloneState(state: OperatorDashboardState): OperatorDashboardState {
     ...state,
     active_goal: state.active_goal ? cloneGoal(state.active_goal) : null,
     queued_goals: state.queued_goals.map((goal) => cloneGoal(goal)),
-    blocked_goals: state.blocked_goals.map((goal) => ({ ...cloneGoal(goal), blocker_ids: [...goal.blocker_ids] })),
+    blocked_goals: state.blocked_goals.map((goal) => ({
+      ...cloneGoal(goal),
+      blocker_type: goal.blocker_type,
+      blocker_ids: [...goal.blocker_ids],
+    })),
     completed_goals: state.completed_goals.map((goal) => cloneGoal(goal)),
     paused_goals: state.paused_goals.map((goal) => cloneGoal(goal)),
     dependency_blockers: state.dependency_blockers.map((item) => ({ ...item, blocker_ids: [...item.blocker_ids] })),
@@ -250,10 +254,15 @@ export function projectApprovedWorkItemsToExecution(input: AutonomousWorkPlannin
 
   const selectedItems = eligibleItems.slice(0, maxNewWorkItems);
   const scheduledWorkItemIds = selectedItems.map((item) => item.work_item_id);
+  const newlyScheduledItems: AutonomousWorkItem[] = selectedItems.map((item) => ({
+    ...item,
+    status: "scheduled",
+    updated_at: input.timestamp,
+  }));
 
   nextState.proposed_work_items = proposedWorkItems.filter((item) => !scheduledWorkItemIds.includes(item.work_item_id));
   nextState.scheduled_work_items = [
-    ...selectedItems.map((item) => ({ ...item, status: "scheduled", updated_at: input.timestamp })),
+    ...newlyScheduledItems,
     ...scheduledWorkItems.filter((item) => !scheduledWorkItemIds.includes(item.work_item_id)),
   ];
   nextState.queued_goals = [

@@ -21,7 +21,7 @@ export function buildConversationalResponse(
   const { readiness, route } = decision;
   const requestText = readiness.planner_ready_request?.rawRequest ?? readiness.interpreted_intent;
   const productionPipelinePlan = deriveProductionPipelinePlan(requestText, route);
-  const proposal = readiness.planner_ready_request
+  const proposal: OperatorDashboardChatProposal | null = readiness.planner_ready_request
     ? {
       proposal_id: createChatProposalId(sessionId, createdAt, route),
       title: route === "plan"

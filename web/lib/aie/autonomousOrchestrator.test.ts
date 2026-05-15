@@ -61,10 +61,10 @@ test("proposes logical next step", () => {
 
   assert.equal(decision.status, "orchestration_ready");
   assert.match(decision.plan.proposed_steps[0]?.title ?? "", /review follow-up opportunities/i);
-  assert.equal(decision.plan.second_brain_project_key, "babylon-2026");
-  assert.match(decision.plan.second_brain_known_good_state ?? "", /wave loop/i);
-  assert.match(decision.plan.second_brain_next_safe_task ?? "", /Integrate second-brain context retrieval/i);
-  assert.ok(decision.plan.second_brain_anti_patterns?.some((entry) => /legacy BABYLON/i.test(entry)));
+  assert.equal(decision.plan.second_brain_project_key, "ai-e");
+  assert.match(decision.plan.second_brain_known_good_state ?? "", /second-brain continuity work|AI-E focus/i);
+  assert.match(decision.plan.second_brain_next_safe_task ?? "", /persistent second-brain foundation|preserves project context/i);
+  assert.ok(decision.plan.second_brain_anti_patterns?.some((entry) => /hidden repair loops|mixed-owner/i.test(entry)));
   assert.equal(decision.plan.second_brain_fallback_mode, "standard_hybrid_mode");
 });
 

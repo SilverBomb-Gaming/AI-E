@@ -122,7 +122,9 @@ function mapDryRunBlockers(blockers: ExecutionDryRunBlocker[]): ReviewedPatchPre
   return blockers.map((blocker) => ({
     code: blocker.code === "invalid_handoff_packet" ? "invalid_dry_run_report" : "dry_run_not_ready",
     message: blocker.message,
-    recommended_next_action: blocker.recommended_next_action,
+    recommended_next_action: blocker.recommended_next_action === "review_handoff_packet"
+      ? "review_dry_run_report"
+      : blocker.recommended_next_action,
   }));
 }
 
@@ -135,7 +137,9 @@ export function validateDryRunForPatchPreparation(
     blockers.push({
       code: report.status === "dry_run_invalid_packet" ? "invalid_dry_run_report" : "dry_run_not_ready",
       message: `Dry-run status is ${report.status}; only dry_run_ready reports may produce a reviewed patch plan.`,
-      recommended_next_action: report.next_operator_action,
+      recommended_next_action: report.next_operator_action === "review_handoff_packet"
+        ? "review_dry_run_report"
+        : report.next_operator_action,
     });
   }
 
@@ -229,7 +233,9 @@ export function prepareReviewedPatchPlan(
   const blockers = validateDryRunForPatchPreparation(report);
 
   let status: ReviewedPatchPreparationStatus = "patch_plan_ready";
-  let recommendedNextOperatorAction: ArtifactExecutionNextAction | "review_dry_run_report" = report.next_operator_action;
+  let recommendedNextOperatorAction: ArtifactExecutionNextAction | "review_dry_run_report" = report.next_operator_action === "review_handoff_packet"
+    ? "review_dry_run_report"
+    : report.next_operator_action;
 
   if (blockers.some((blocker) => blocker.code === "high_risk")) {
     status = "high_risk_blocked";
@@ -242,7 +248,10 @@ export function prepareReviewedPatchPlan(
     recommendedNextOperatorAction = "review_dry_run_report";
   } else if (blockers.length > 0) {
     status = "patch_plan_blocked";
-    recommendedNextOperatorAction = blockers[0]?.recommended_next_action ?? report.next_operator_action;
+    recommendedNextOperatorAction = blockers[0]?.recommended_next_action
+      ?? (report.next_operator_action === "review_handoff_packet"
+        ? "review_dry_run_report"
+        : report.next_operator_action);
   }
 
   if (blockers.length > 0) {
@@ -284,7 +293,9 @@ export function prepareReviewedPatchPlan(
       "Confirm that all work remains inside the approved file target list.",
       "Explicitly note whether playtesting remains required.",
     ],
-    next_operator_action: report.next_operator_action,
+    next_operator_action: report.next_operator_action === "review_handoff_packet"
+      ? "review_dry_run_report"
+      : report.next_operator_action,
   };
 
   return {
@@ -292,7 +303,9 @@ export function prepareReviewedPatchPlan(
     ready_for_patch_plan: true,
     patch_plan: patchPlan,
     blockers: [],
-    recommended_next_operator_action: report.next_operator_action,
+    recommended_next_operator_action: report.next_operator_action === "review_handoff_packet"
+      ? "review_dry_run_report"
+      : report.next_operator_action,
     explanation: `Reviewed patch plan ${patchPlan.patch_plan_id} is ready for operator review before any future patch application gate.`,
   };
 }

@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import {
   appendAutonomousStep,
   buildAutonomousSessionContextBlock,
@@ -48,7 +50,7 @@ import { runAnalysis } from "./run-analysis";
 import { getRetryDecision } from "./retryPolicy";
 import { getRecoveryDecision, type AutonomousRecoveryStrategy } from "./strategySwitch";
 import { detectTestFiles, findRelevantFiles, resolveRepoRoot } from "./repoContext";
-import { updateSecondBrainOutcomeLog } from "./secondBrainMemory";
+import { resolveSecondBrainProjectKey, updateSecondBrainOutcomeLog } from "./secondBrainMemory";
 import { saveAutonomousSession } from "./autonomousSessionStore";
 import { assignTaskToNode, enqueueTask, getRunnableTasks, listTasks, updateTaskStatus } from "./taskQueueStore";
 import {
@@ -124,6 +126,7 @@ async function recordSecondBrainOutcomeForStep(input: {
   executionResult?: ExecutionRuntimeResult;
   nextDecision?: AutonomousStepDecision;
 }): Promise<void> {
+  const projectKey = normalizeText(input.session.projectKey) || await resolveSecondBrainProjectKey({ root: input.repoRoot });
   const title = normalizeText(input.step.featureTitle)
     || normalizeText(input.step.proposedAction)
     || `Autonomous step ${input.step.index}`;
@@ -151,7 +154,7 @@ async function recordSecondBrainOutcomeForStep(input: {
     entry: {
       outcome_id: `${input.session.sessionId}-step-${input.step.index}`,
       recorded_at: input.step.timestamp,
-      project_key: "babylon-2026",
+      project_key: projectKey,
       task_source: "ai-e",
       task_title: title,
       attempted,
@@ -244,6 +247,14 @@ function clampSessionRuntimeMs(value: unknown): number | undefined {
   }
 
   return Math.max(1_000, Math.min(8 * 60 * 60 * 1_000, Math.floor(numericValue)));
+}
+
+function isSameRepoRoot(left: string | undefined, right: string): boolean {
+  if (!left) {
+    return true;
+  }
+
+  return path.resolve(left) === path.resolve(right);
 }
 
 function mergeUniqueTaskIds(...lists: Array<string[] | undefined>): string[] {
@@ -470,6 +481,16 @@ function deriveFeatureDependencyGraph(params: {
       downstreamFeatureCount: previous?.downstreamFeatureCount ?? 0,
       dependencyDepth: previous?.dependencyDepth ?? 0,
       criticalPathWeight: previous?.criticalPathWeight ?? 0,
+      telemetryPlanningAdjustment: previous?.telemetryPlanningAdjustment ?? 0,
+      featureInterventionRate: previous?.featureInterventionRate ?? 0,
+      featureApprovalFriction: previous?.featureApprovalFriction ?? 0,
+      featureFailureRate: previous?.featureFailureRate ?? 0,
+      featureSessionSlowdownScore: previous?.featureSessionSlowdownScore ?? 0,
+      featureResumeCount: previous?.featureResumeCount ?? 0,
+      featurePauseFrequency: previous?.featurePauseFrequency ?? 0,
+      featureOperatorOverrideFrequency: previous?.featureOperatorOverrideFrequency ?? 0,
+      telemetryRiskLevel: previous?.telemetryRiskLevel ?? "unobserved",
+      telemetryPlanningSummary: previous?.telemetryPlanningSummary,
       recommendedPlanningReason: previous?.recommendedPlanningReason,
       featureStatus: previous?.featureStatus ?? "planned",
       completedTaskCount: 0,
@@ -826,20 +847,12 @@ function buildTaskChainSnapshot(params: {
       status: skippedTaskIds.includes(task.taskId) ? "skipped" : task.status,
     })),
     featureGraph: featureGraph.map((feature) => ({
-      featureId: feature.featureId,
-      featureTitle: feature.featureTitle,
-      featureDescription: feature.featureDescription,
+      ...feature,
       relatedTasks: [...feature.relatedTasks],
       dependsOnFeatureIds: [...feature.dependsOnFeatureIds],
       blockedByFeatures: [...feature.blockedByFeatures],
       unlocksFeatures: [...feature.unlocksFeatures],
-      dependencyStatusSummary: feature.dependencyStatusSummary,
-      featureStatus: feature.featureStatus,
-      completedTaskCount: feature.completedTaskCount,
-      totalTaskCount: feature.totalTaskCount,
       blockedTaskIds: [...feature.blockedTaskIds],
-      currentTaskId: feature.currentTaskId,
-      nextRecommendedTaskId: feature.nextRecommendedTaskId,
     })),
     currentTaskId,
     currentFeatureId,
@@ -1748,6 +1761,7 @@ export async function runAutonomousSession(params: RunAutonomousSessionParams): 
   const dependencies = resolveDependencies(params.dependencies);
   const cwd = params.executionContext?.cwd ?? process.cwd();
   const repoRoot = params.executionContext?.repoRoot ?? await resolveRepoRoot(cwd);
+  const runtimeProjectKey = await resolveSecondBrainProjectKey({ root: repoRoot });
   const executionContext: ExecutionAdapterContext = {
     cwd,
     repoRoot,
@@ -1755,10 +1769,35 @@ export async function runAutonomousSession(params: RunAutonomousSessionParams): 
     allowedDirectories: params.executionContext?.allowedDirectories,
     runtimeMode: params.executionContext?.runtimeMode ?? "web",
   };
+  const existingProjectKey = normalizeText(params.existingSession?.projectKey);
+  const existingRepoRoot = normalizeText(params.existingSession?.repoRoot);
+
+  if (params.existingSession) {
+    const staleProjectKey = existingProjectKey && existingProjectKey !== runtimeProjectKey;
+    const staleRepoRoot = existingRepoRoot && !isSameRepoRoot(existingRepoRoot, repoRoot);
+    if (staleProjectKey || staleRepoRoot) {
+      const blockedSession = updateAutonomousSessionStatus(
+        {
+          ...params.existingSession,
+          repoRoot: params.existingSession.repoRoot ?? repoRoot,
+          projectKey: params.existingSession.projectKey ?? runtimeProjectKey,
+        },
+        "blocked",
+        staleProjectKey
+          ? `Stored autonomous session project ${existingProjectKey} does not match active project ${runtimeProjectKey}.`
+          : `Stored autonomous session repo root ${existingRepoRoot} does not match active repo root ${repoRoot}.`,
+      );
+      await dependencies.saveAutonomousSession(blockedSession);
+      return blockedSession;
+    }
+  }
+
   let session = params.existingSession
     ? {
         ...params.existingSession,
         goal: normalizeText(params.goal) || params.existingSession.goal,
+        repoRoot: params.existingSession.repoRoot ?? repoRoot,
+        projectKey: params.existingSession.projectKey ?? runtimeProjectKey,
         maxSteps: params.maxSteps ?? params.existingSession.maxSteps,
         sessionLoop: {
           ...params.existingSession.sessionLoop,
@@ -1782,6 +1821,8 @@ export async function runAutonomousSession(params: RunAutonomousSessionParams): 
         maxFailuresPerSession: params.maxFailuresPerSession,
         maxRuntimeMs: params.maxRuntimeMs,
         sessionMode: "repo-coding",
+        repoRoot,
+        projectKey: runtimeProjectKey,
       });
 
   if (params.clearSteering) {

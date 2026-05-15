@@ -396,22 +396,30 @@ test("successful reviewed Unity playtest records a runtime-auto outcome when fea
         feature: "enemy-health",
         runtimeLogPath: harness.logPath,
       },
+      post_playtest_feature_selection: {
+        feature_pool: ["enemy-health", "next-target"],
+      },
     });
 
     assert.equal(result.executed, true);
     assert.equal(result.post_playtest_learning?.status, "recorded");
+    assert.equal(result.post_playtest_feature_selection?.status, "feature_selected");
+    assert.equal(result.post_playtest_feature_selection?.selected_feature, "next-target");
     assert.equal(result.post_playtest_decision?.status, "ready_for_next_feature");
     assert.equal(result.post_playtest_strategy_selection?.status, "no_strategy_needed");
     assert.equal(result.post_playtest_fix_plan?.status, "no_fix_needed");
     assert.equal(result.post_playtest_execution_plan?.status, "no_action_needed");
     assert.equal(result.post_playtest_execution_result?.status, "no_action_needed");
     assert.match(result.delivery_summary, /Post-playtest learning recorded a runtime-auto outcome/i);
+    assert.match(result.delivery_summary, /Selected feature next-target/i);
     assert.match(result.delivery_summary, /Post-playtest decision status: ready_for_next_feature/i);
     assert.match(result.delivery_summary, /Post-playtest strategy selection status: no_strategy_needed/i);
     assert.match(result.delivery_summary, /Post-playtest fix plan status: no_fix_needed/i);
     assert.match(result.delivery_summary, /Post-playtest execution plan status: no_action_needed/i);
     assert.match(result.delivery_summary, /Post-playtest execution result status: no_action_needed/i);
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest learning status: recorded/i.test(entry)));
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest feature selection: next-target/i.test(entry)));
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Candidate score: next-target = 100/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest decision recommendation: Mark the feature stable and select the next validation target\./i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest strategy selection status: no_strategy_needed/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest fix step: Mark current feature stable and select next validation target\./i.test(entry)));
@@ -521,6 +529,7 @@ test("successful reviewed Unity playtest surfaces a blocked learning message whe
 
     assert.equal(result.executed, true);
     assert.equal(result.post_playtest_learning?.status, "blocked");
+    assert.equal(result.post_playtest_feature_selection?.status, "selection_blocked");
     assert.equal(result.post_playtest_decision?.status, "blocked");
     assert.equal(result.post_playtest_strategy_selection?.status, "strategy_blocked");
     assert.equal(result.post_playtest_fix_plan?.status, "blocked");
@@ -528,6 +537,7 @@ test("successful reviewed Unity playtest surfaces a blocked learning message whe
     assert.equal(result.post_playtest_execution_result?.status, "blocked");
     assert.match(result.delivery_summary, /Post-playtest learning blocked/i);
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest learning reason: --feature is required/i.test(entry)));
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest feature selection: none/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest decision status: blocked/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest strategy selection status: strategy_blocked/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest fix plan status: blocked/i.test(entry)));
@@ -579,17 +589,30 @@ test("successful reviewed Unity playtest recommends retry when the recorded runt
         feature: "enemy-health",
         runtimeLogPath: harness.logPath,
       },
+      post_playtest_feature_selection: {
+        feature_pool: ["enemy-health", "next-target", "stable-target"],
+        feature_evidence: [
+          { feature: "next-target", latest_outcome: null, known_outcome_state: "unseen" },
+          { feature: "stable-target", latest_outcome: null, known_outcome_state: "passing" },
+        ],
+      },
     });
 
     assert.equal(result.post_playtest_learning?.status, "recorded");
+    assert.equal(result.post_playtest_feature_selection?.status, "feature_selected");
+    assert.equal(result.post_playtest_feature_selection?.selected_feature, "enemy-health");
     assert.equal(result.post_playtest_decision?.status, "retry_recommended");
     assert.equal(result.post_playtest_strategy_selection?.status, "strategy_selected");
     assert.equal(result.post_playtest_strategy_selection?.selected_strategy_id, "minimal_code_patch");
     assert.equal(result.post_playtest_fix_plan?.status, "fix_plan_ready");
     assert.equal(result.post_playtest_execution_plan?.status, "execution_ready");
     assert.equal(result.post_playtest_execution_result?.status, "operator_approval_required");
+    assert.match(result.delivery_summary, /Selected feature enemy-health/i);
+    assert.match(result.delivery_summary, /Top-ranked alternatives: next-target \(100\), stable-target \(10\)/i);
     assert.match(result.delivery_summary, /Post-playtest strategy selection status: strategy_selected/i);
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest decision recommendation: Review failure evidence, apply the smallest safe fix, then rerun the reviewed Unity playtest\./i.test(entry)));
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Candidate score: enemy-health = 300/i.test(entry)));
+    assert.ok(result.delivery_package?.validation_results.some((entry) => /Candidate score: next-target = 100/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest strategy selection id: minimal_code_patch/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest strategy selection label: Minimal code patch/i.test(entry)));
     assert.ok(result.delivery_package?.validation_results.some((entry) => /Post-playtest fix step: Inspect failure evidence from the reviewed Unity playtest\./i.test(entry)));

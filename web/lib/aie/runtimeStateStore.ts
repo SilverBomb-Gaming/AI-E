@@ -9,7 +9,6 @@ import type {
   AutonomousWorkItem,
   AutonomousWorkItemPolicyFeedback,
   AutonomousWorkItemStatus,
-  OperatorDashboardPlanningRecommendation,
 } from "./autonomousWorkPlanning";
 import type {
   OperatorDashboardApprovalRequirement,
@@ -22,6 +21,7 @@ import type {
   OperatorDashboardBlockedGoal,
   OperatorDashboardBlocker,
   OperatorDashboardFailure,
+  OperatorDashboardPlanningRecommendation,
   OperatorDashboardGoal,
   OperatorDashboardRecoveryRecommendation,
   OperatorDashboardState,

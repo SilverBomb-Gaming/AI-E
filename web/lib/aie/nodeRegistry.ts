@@ -36,6 +36,7 @@ function normalizeStatus(value: unknown): NodeRegistryStatus {
 
 function normalizeCapabilities(capabilities: readonly ExecutionNodeCapability[]): ExecutionNodeCapability[] {
   const seen = new Set<ExecutionNodeCapability>();
+  const supportedCapabilities: ExecutionNodeCapability[] = ["inspection", "validation-check", "file-write", "test-run", "repo-scan"];
 
   for (const capability of capabilities) {
     if (
@@ -49,7 +50,7 @@ function normalizeCapabilities(capabilities: readonly ExecutionNodeCapability[])
     }
   }
 
-  return ["inspection", "validation-check", "file-write", "test-run", "repo-scan"]
+  return supportedCapabilities
     .filter((capability): capability is ExecutionNodeCapability => seen.has(capability));
 }
 

@@ -152,7 +152,7 @@ function buildStepId(chainId: string, order: number, title: string): string {
   return `${chainId}-step-${order}-${slugify(title)}`;
 }
 
-function deriveRequestedSteps(input: AutonomousTaskChainInput): AutonomousTaskChainInput["requestedSteps"] {
+function deriveRequestedSteps(input: AutonomousTaskChainInput): NonNullable<AutonomousTaskChainInput["requestedSteps"]> {
   if (Array.isArray(input.requestedSteps) && input.requestedSteps.length > 0) {
     return input.requestedSteps;
   }

@@ -397,7 +397,7 @@ export function createOperatorDashboardDemoState(): OperatorDashboardState {
       title: "Ship first playable studio loop",
       summary: "Prioritize the playable studio loop that proves AI-E can coordinate a bounded milestone from strategy through delivery.",
       category: "product",
-      priority: "critical",
+      priority: "high",
       impact_score: 92,
       effort_score: 56,
       risk_score: 34,

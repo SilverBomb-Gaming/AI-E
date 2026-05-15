@@ -294,8 +294,6 @@ export async function runPostPlaytestFeatureChain(
       result: loopResult,
     });
     confidence = mergeConfidence(confidence, loopResult.confidence);
-    const latestLearningSummary = loopResult.learning_results[loopResult.learning_results.length - 1] ?? "";
-    const latestLearning = loopResult.result ? null : null;
 
     const finalLearningEntry = loopResult.learning_results[loopResult.learning_results.length - 1] ?? "";
     if (/recorded fail for /i.test(finalLearningEntry)) {
@@ -313,6 +311,8 @@ export async function runPostPlaytestFeatureChain(
           projectPath: "proj",
           feature,
           evaluation: {
+            projectPath: "proj",
+            logPath: "",
             session: {
               mode: "marker-session",
               startMarker: "",
@@ -322,7 +322,6 @@ export async function runPostPlaytestFeatureChain(
               sourceLogPath: "",
               lines: [],
             },
-            logPath: "",
             evaluatedLineCount: 0,
             signals: [],
             parsedResult: {
@@ -334,7 +333,21 @@ export async function runPostPlaytestFeatureChain(
             reason: ["runtime pass detected"],
           },
           recorded: {
-            record: { sessionKey: `${feature}-chain-pass` },
+            record: {
+              id: `${feature}-chain-pass`,
+              timestamp: new Date().toISOString(),
+              projectPath: "proj",
+              feature,
+              action: "post-playtest feature chain",
+              result: "pass",
+              userObservation: "runtime pass detected",
+              consoleSignals: [],
+              filesChanged: [],
+              rollbackUsed: false,
+              evaluationSource: "runtime-auto",
+              sessionKey: `${feature}-chain-pass`,
+            },
+            logPath: "",
             duplicate: false,
           },
           summary: {

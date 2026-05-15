@@ -11,7 +11,7 @@ export type CinematicEventBeat = {
 };
 
 const MICRO_SEQUENCE_BEATS: CinematicBeatType[] = ["BASELINE", "ANTICIPATION", "BEACON_REVEAL"];
-const MOTION_PREVIEW_BEATS: CinematicBeatType[] = ["BASELINE", "ANTICIPATION", "BEACON_REVEAL", "SETTLE"];
+const MOTION_PREVIEW_BEATS: CinematicBeatType[] = ["ANTICIPATION", "BEACON_REVEAL", "DRONE_RESPONSE", "AFTERMATH_HOLD", "SETTLE"];
 
 export function buildDeterministicEventBeat(input: {
   frameIndex: number;
@@ -29,6 +29,8 @@ export function buildDeterministicEventBeat(input: {
       return { beatType, beatPhase, pulseIntensity: 1, environmentResponse: 1, formationEmphasis: 0.36 };
     case "DRONE_RESPONSE":
       return { beatType, beatPhase, pulseIntensity: 0.84, environmentResponse: 0.8, formationEmphasis: 0.3 };
+    case "AFTERMATH_HOLD":
+      return { beatType, beatPhase, pulseIntensity: 0.74, environmentResponse: 0.78, formationEmphasis: 0.22 };
     case "SETTLE":
       return { beatType, beatPhase, pulseIntensity: 0.62, environmentResponse: 0.58, formationEmphasis: 0.14 };
     case "BASELINE":

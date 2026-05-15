@@ -36,7 +36,7 @@ function normalizeText(value: string | null | undefined): string {
     .trim();
 }
 
-function unique(values: string[]): string[] {
+function unique<T extends string>(values: T[]): T[] {
   return [...new Set(values.filter(Boolean))];
 }
 

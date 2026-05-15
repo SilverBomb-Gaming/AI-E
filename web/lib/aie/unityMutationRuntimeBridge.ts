@@ -176,7 +176,7 @@ function normalizeTimeoutMs(value: unknown, fallback: number = DEFAULT_UNITY_TIM
 }
 
 function buildUnavailableResult(
-  input: UnityMutationBridgeInput,
+  input: UnityMutationBridgeInput | UnityRollbackBridgeInput,
   source: UnityMutationBridgeSource,
   reason: string,
   rawEvidenceSummary: string | null = null,
@@ -192,7 +192,7 @@ function buildUnavailableResult(
 }
 
 function buildFailureResult(
-  input: UnityMutationBridgeInput,
+  input: UnityMutationBridgeInput | UnityRollbackBridgeInput,
   source: UnityMutationBridgeSource,
   reason: string,
   rawEvidenceSummary: string | null = null,

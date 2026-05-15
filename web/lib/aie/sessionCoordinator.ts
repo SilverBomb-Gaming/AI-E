@@ -105,7 +105,7 @@ export function evaluateSessionCoordination(input: {
   const blockedSessionIds = unique(dependencies.filter((dependency) => dependency.status === "blocked" || dependency.status === "pending").map((dependency) => dependency.target_session_id));
   const readySessionIds = unique(dependencies.filter((dependency) => dependency.status === "ready").map((dependency) => dependency.target_session_id));
 
-  const groups = coordinator.groups.map((group) => {
+  const groups: SessionCoordinationGroup[] = coordinator.groups.map((group) => {
     const groupSessions = group.session_ids.map((sessionId) => sessionMap.get(sessionId)).filter(Boolean);
     const allCompleted = groupSessions.length > 0 && groupSessions.every((session) => session?.status === "completed");
     const anyBlocked = groupSessions.some((session) => session?.status === "blocked" || session?.status === "failed");

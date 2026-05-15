@@ -40,9 +40,9 @@ test("readiness overlays second-brain orchestration context", () => {
   const readiness = evaluateWorkSessionReadiness(session, "2026-04-25T10:05:00.000Z");
 
   assert.ok(readiness.orchestration_decision);
-  assert.equal(readiness.orchestration_decision?.plan.second_brain_project_key, "babylon-2026");
-  assert.match(readiness.orchestration_decision?.plan.second_brain_next_safe_task ?? "", /Integrate second-brain context retrieval/i);
-  assert.ok(readiness.orchestration_decision?.plan.second_brain_anti_patterns?.some((entry) => /legacy BABYLON/i.test(entry)));
+  assert.equal(readiness.orchestration_decision?.plan.second_brain_project_key, "ai-e");
+  assert.match(readiness.orchestration_decision?.plan.second_brain_next_safe_task ?? "", /persistent second-brain foundation|preserves project context/i);
+  assert.ok(readiness.orchestration_decision?.plan.second_brain_anti_patterns?.some((entry) => /hidden repair loops|mixed-owner/i.test(entry)));
 });
 
 test("requires explicit session approval", () => {

@@ -187,7 +187,18 @@ function movementScriptScore(scriptPath: string): number {
 
 function classifyScriptSignals(scripts: readonly string[]): GameProjectSnapshot["analysis"]["scriptSignals"] {
   const movementScripts = scripts
-    .filter((scriptPath) => /player|controller|mover|movement|keyboard|input/i.test(path.basename(scriptPath)))
+    .filter((scriptPath) => {
+      const fileName = path.basename(scriptPath);
+      if (!/player|controller|mover|movement|keyboard|input/i.test(fileName)) {
+        return false;
+      }
+
+      if (/enemy|ai|npc|combat|weapon|camera/i.test(fileName) && !/mover|movement|keyboard|input/i.test(fileName)) {
+        return false;
+      }
+
+      return true;
+    })
     .sort((left, right) => movementScriptScore(right) - movementScriptScore(left) || left.localeCompare(right));
   const aiScripts = scripts.filter((scriptPath) => /ai|enemy|npc|behavior/i.test(path.basename(scriptPath)));
   const combatScripts = scripts.filter((scriptPath) => /combat|weapon|attack|damage|health/i.test(path.basename(scriptPath)));

@@ -887,6 +887,95 @@ function buildProductionMovementReplacement(analysis: ExistingScriptAnalysis): s
   return bodyLines.join("\n");
 }
 
+function buildGameLoopControllerCode(): string {
+  return [
+    "using UnityEngine;",
+    "using UnityEngine.SceneManagement;",
+    "",
+    "namespace EnemyAIDemo",
+    "{",
+    "    /// <summary>",
+    "    /// Tracks a minimal win/lose loop for the current prototype, reveals a visible completion marker, and supports quick restart.",
+    "    /// </summary>",
+    "    [DisallowMultipleComponent]",
+    "    public sealed class GameLoopController : MonoBehaviour",
+    "    {",
+    "        [SerializeField] private string sceneName = \"EnemyAIDemo\";",
+    "        [SerializeField] private KeyCode restartKey = KeyCode.R;",
+    "        [SerializeField] private GameObject winFeedbackRoot;",
+    "        [SerializeField] private bool hideWinFeedbackOnStart = true;",
+    "        [SerializeField] private bool debugGameLoop = true;",
+    "",
+    "        private bool gameOver;",
+    "        private string gameOverReason = string.Empty;",
+    "",
+    "        public bool IsGameOver => gameOver;",
+    "        public string GameOverReason => gameOverReason;",
+    "",
+    "        private void Awake()",
+    "        {",
+    "            if (hideWinFeedbackOnStart)",
+    "            {",
+    "                SetWinFeedbackVisible(false);",
+    "            }",
+    "        }",
+    "",
+    "        private void Update()",
+    "        {",
+    "            if (gameOver && Input.GetKeyDown(restartKey))",
+    "            {",
+    "                RestartLevel();",
+    "            }",
+    "        }",
+    "",
+    "        public void RegisterWin(string reason = \"Objective complete. You win.\")",
+    "        {",
+    "            SetGameOver(reason, true);",
+    "        }",
+    "",
+    "        public void RegisterLoss(string reason = \"Player lost the encounter.\")",
+    "        {",
+    "            SetGameOver(reason, false);",
+    "        }",
+    "",
+    "        public void RestartLevel()",
+    "        {",
+    "            string targetScene = string.IsNullOrWhiteSpace(sceneName)",
+    "                ? SceneManager.GetActiveScene().name",
+    "                : sceneName;",
+    "            SceneManager.LoadScene(targetScene);",
+    "        }",
+    "",
+    "        private void SetGameOver(string reason, bool showWinFeedback)",
+    "        {",
+    "            gameOver = true;",
+    "            gameOverReason = string.IsNullOrWhiteSpace(reason) ? \"Game over.\" : reason;",
+    "            if (showWinFeedback)",
+    "            {",
+    "                SetWinFeedbackVisible(true);",
+    "            }",
+    "",
+    "            if (debugGameLoop)",
+    "            {",
+    "                Debug.Log($\"[AIE Game Loop] {gameOverReason}\", this);",
+    "            }",
+    "        }",
+    "",
+    "        private void SetWinFeedbackVisible(bool visible)",
+    "        {",
+    "            if (winFeedbackRoot == null)",
+    "            {",
+    "                return;",
+    "            }",
+    "",
+    "            winFeedbackRoot.SetActive(visible);",
+    "        }",
+    "    }",
+    "}",
+    "",
+  ].join("\n");
+}
+
 function buildCameraFollowCode(): string {
   return [
     "using UnityEngine;",
@@ -1143,10 +1232,48 @@ async function buildCameraFollowArtifact(snapshot: GameProjectSnapshot, targetFi
   };
 }
 
+async function buildGameLoopArtifact(snapshot: GameProjectSnapshot, targetFile = "Assets/Scripts/GameLoopController.cs"): Promise<UnityPatchArtifact> {
+  if (snapshot.engine !== "unity") {
+    throw new Error("Game loop generation requires a Unity project.");
+  }
+
+  const absoluteTargetPath = path.join(snapshot.rootPath, targetFile);
+  const replacementCode = buildGameLoopControllerCode();
+  return {
+    patchKind: "gameplay-update",
+    operation: "create-new-script",
+    targetFile,
+    absoluteTargetPath,
+    originalSha256: "missing-file",
+    replacementSha256: sha256(replacementCode),
+    replacementCode,
+    validationRules: {
+      preserveClassName: "GameLoopController",
+      preserveNamespace: "EnemyAIDemo",
+      forbiddenClassNames: ["PlayerController"],
+      requireNoDuplicateMethods: true,
+    },
+    safety: {
+      requiresCleanRecoveryState: true,
+      createsBackupBeforeApply: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
 export async function generateCameraFollowArtifact(snapshot: GameProjectSnapshot, targetFile = "Assets/Scripts/CameraFollow.cs"): Promise<UnityPatchArtifact> {
   const artifact = await buildCameraFollowArtifact(snapshot, targetFile);
   if (await fileExists(artifact.absoluteTargetPath)) {
     throw new Error(`Camera follow target already exists: ${targetFile}`);
+  }
+
+  return artifact;
+}
+
+export async function generateGameLoopArtifact(snapshot: GameProjectSnapshot, targetFile = "Assets/Scripts/GameLoopController.cs"): Promise<UnityPatchArtifact> {
+  const artifact = await buildGameLoopArtifact(snapshot, targetFile);
+  if (await fileExists(artifact.absoluteTargetPath)) {
+    throw new Error(`Game loop target already exists: ${targetFile}`);
   }
 
   return artifact;

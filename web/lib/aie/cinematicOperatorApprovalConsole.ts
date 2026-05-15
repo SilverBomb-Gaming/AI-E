@@ -99,7 +99,7 @@ export async function readCinematicOperatorApprovalConsole(input?: {
     continuity_dependencies: job.continuity_context.dependency_shot_ids,
     prompt_summary: promptSummary(job),
     execution_lifecycle_state: job.generation_status,
-    validation_warnings: job.validation_state === "invalid" ? ["Provider or continuity validation flagged this job."] : [],
+    validation_warnings: job.validation_state !== "validated" ? ["Provider or continuity validation flagged this job."] : [],
     budget_status: job.requires_manual_approval ? "awaiting operator governance" : "policy-cleared",
     manual_approval_status: job.manual_approval_status,
     approval_token_id: job.approval_token_id,

@@ -100,9 +100,11 @@ function buildApplicationPacket(
       required: true,
     }],
     git_commit_plan: {
+      branch: "current-worktree",
       commit_message: "reviewed post-playtest guarded fix",
       stage_only: targets,
       github_procedure: ["Stage only the guarded post-playtest targets after review approval."],
+      push_required: false,
     },
     playtest_required: true,
     required_operator_review: true,

@@ -1,6 +1,7 @@
 import type { GameDevChatRoute, GameDevSessionContext } from "./gameDevChatTypes";
 import { buildExecutionOwnershipMetadata, type ExecutionOwnershipMetadata } from "./executionIdentityEngine";
 import { selectSupervisedExecutionRoute, type SupervisedExecutionRouteSelection } from "./supervisedExecutionRoutes";
+import { buildSupervisedRuntimeLifecycle, type SupervisedRuntimeLifecycle } from "./supervisedRuntimeLifecycle";
 
 export type ConversationalReasoningConfidence = "LOW" | "MEDIUM" | "HIGH";
 export type RuntimeAvailabilityStatus = "available_supervised" | "available_read_only" | "disabled_or_requires_approval" | "blocked_not_implemented" | "not_applicable";
@@ -30,7 +31,7 @@ export type GameplayFeedbackAnalysis = {
 };
 
 export type ConversationalReasoningResult = {
-  phaseId: "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1" | "DEEP_GAMEPLAY_REASONING_AND_DECOMPOSITION_PHASE1" | "BROADER_REASONING_COVERAGE_AND_SMART_FALLBACK_PHASE1" | "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1" | "INTERNAL_EXECUTION_AND_OPERATOR_OWNERSHIP_PHASE1" | "SUPERVISED_REAL_EXECUTION_ROUTES_PHASE1_FOUNDATION";
+  phaseId: "CONVERSATIONAL_INTELLIGENCE_AND_DYNAMIC_REASONING_PHASE1" | "DEEP_GAMEPLAY_REASONING_AND_DECOMPOSITION_PHASE1" | "BROADER_REASONING_COVERAGE_AND_SMART_FALLBACK_PHASE1" | "NON_REPETITIVE_RESPONSE_SYNTHESIS_AND_ROUTING_PRECISION_PHASE1" | "INTERNAL_EXECUTION_AND_OPERATOR_OWNERSHIP_PHASE1" | "SUPERVISED_REAL_EXECUTION_ROUTES_PHASE1_FOUNDATION" | "RUNTIME_LIFECYCLE_ARCHITECTURE_PHASE1";
   inferredIntent: string;
   probableUserGoal: string;
   confidence: ConversationalReasoningConfidence;
@@ -57,6 +58,7 @@ export type ConversationalReasoningResult = {
   };
   executionOwnership: ExecutionOwnershipMetadata;
   executionRoute: SupervisedExecutionRouteSelection;
+  runtimeLifecycle: SupervisedRuntimeLifecycle;
   runtimeAwareness: {
     runtimeAvailability: RuntimeAvailabilityStatus;
     realCapabilities: string[];
@@ -901,6 +903,7 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
   const runtimeIntrospection = runtimeIntrospectionFor(message, realCapabilities, blockedCapabilities);
   const executionOwnership = buildExecutionOwnershipMetadata({ message, route, subsystem: input.subsystem, runtimeIntrospectionKind: runtimeIntrospection?.kind });
   const executionRoute = selectSupervisedExecutionRoute({ message, route, subsystem: input.subsystem });
+  const runtimeLifecycle = buildSupervisedRuntimeLifecycle(executionRoute);
   const ambiguity = [
     route.confidence === "LOW" ? "Route confidence is low; the user may need to name the target system or desired action." : undefined,
     route.needsClarification ? "The request lacks enough detail to safely choose an implementation path." : undefined,
@@ -952,6 +955,7 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
       `Context importance: ${contextImportance}.`,
       `Runtime availability: ${runtimeAvailability}.`,
       `Execution route: ${executionRoute.routeType} (${executionRoute.contract.executionStatus}).`,
+      `Runtime lifecycle: ${runtimeLifecycle.currentStage} (${runtimeLifecycle.lifecycleStatus}).`,
       missing ?? "No missing runtime capability was required for the prepared response.",
     ],
     dynamicDecomposition: decomposition,
@@ -965,6 +969,7 @@ export function runConversationalReasoning(input: ReasoningInput): Conversationa
     runtimeIntrospection,
     executionOwnership,
     executionRoute,
+    runtimeLifecycle,
     runtimeAwareness: {
       runtimeAvailability,
       realCapabilities,
@@ -991,6 +996,7 @@ export function formatReasoningPreface(reasoning: ConversationalReasoningResult)
       `Runtime introspection: ${reasoning.runtimeIntrospection.label}.`,
       `Execution owner: ${reasoning.executionOwnership.ownerLabel} (${reasoning.executionOwnership.workflowType}).`,
       `Execution route: ${reasoning.executionRoute.routeType}; approval ${reasoning.executionRoute.contract.approvalStatus}; mutation ${reasoning.executionRoute.contract.mutationAllowed ? "allowed" : "not allowed"}; validation ${reasoning.executionRoute.contract.validationRequired ? "required" : "not required"}.`,
+      `Runtime lifecycle: ${reasoning.runtimeLifecycle.currentStage}; next gate: ${reasoning.runtimeLifecycle.nextGate}`,
       approvalBoundary,
       "Capability breakdown: real capabilities, bounded/supervised capabilities, external dependencies, and blocked capabilities.",
       `Runtime note: ${reasoning.limitationExplanation}`,
@@ -1001,6 +1007,7 @@ export function formatReasoningPreface(reasoning: ConversationalReasoningResult)
     `Reasoning summary: I read this as ${reasoning.probableUserGoal}.`,
     `Execution owner: ${reasoning.executionOwnership.ownerLabel} (${reasoning.executionOwnership.workflowType}).`,
     `Execution route: ${reasoning.executionRoute.routeType}; approval ${reasoning.executionRoute.contract.approvalStatus}; mutation ${reasoning.executionRoute.contract.mutationAllowed ? "allowed" : "not allowed"}; validation ${reasoning.executionRoute.contract.validationRequired ? "required" : "not required"}.`,
+    `Runtime lifecycle: ${reasoning.runtimeLifecycle.currentStage}; next gate: ${reasoning.runtimeLifecycle.nextGate}`,
     approvalBoundary,
     `Why this route: ${reasoning.routeRationale}`,
     reasoning.ambiguity.length > 0 ? `Uncertainty: ${reasoning.ambiguity.join(" ")}` : undefined,

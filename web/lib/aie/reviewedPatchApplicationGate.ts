@@ -213,12 +213,16 @@ export function evaluatePatchPlanForApplication(
     blockers.unshift({
       code: input.preparationResult.status === "patch_plan_invalid_dry_run" ? "invalid_patch_plan" : "patch_plan_not_ready",
       message: `Patch preparation status is ${input.preparationResult.status}; only patch_plan_ready results may be application-eligible.`,
-      recommended_next_action: input.preparationResult.recommended_next_operator_action,
+      recommended_next_action: input.preparationResult.recommended_next_operator_action === "review_dry_run_report"
+        ? "review_patch_plan"
+        : input.preparationResult.recommended_next_operator_action,
     });
   }
 
   let status: ReviewedPatchApplicationStatus = "application_eligible";
-  let recommendedNextOperatorAction: ArtifactExecutionNextAction | "review_patch_plan" = input.preparationResult.recommended_next_operator_action;
+  let recommendedNextOperatorAction: ArtifactExecutionNextAction | "review_patch_plan" = input.preparationResult.recommended_next_operator_action === "review_dry_run_report"
+    ? "review_patch_plan"
+    : input.preparationResult.recommended_next_operator_action;
 
   if (blockers.some((blocker) => blocker.code === "high_risk")) {
     status = "high_risk_blocked";
@@ -231,7 +235,10 @@ export function evaluatePatchPlanForApplication(
     recommendedNextOperatorAction = "review_patch_plan";
   } else if (blockers.length > 0) {
     status = "application_blocked";
-    recommendedNextOperatorAction = blockers[0]?.recommended_next_action ?? input.preparationResult.recommended_next_operator_action;
+    recommendedNextOperatorAction = blockers[0]?.recommended_next_action
+      ?? (input.preparationResult.recommended_next_operator_action === "review_dry_run_report"
+        ? "review_patch_plan"
+        : input.preparationResult.recommended_next_operator_action);
   }
 
   if (blockers.length > 0 || !patchPlan) {

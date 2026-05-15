@@ -225,12 +225,7 @@ export function buildMetaIntelligenceState(
     ? Number((completedTicks.reduce((sum, session) => sum + session.consumed_ticks, 0) / completedTicks.length).toFixed(2))
     : Number((state.supervised_session?.ticks_completed ?? 0).toFixed(2));
 
-  const reviewDelays = (state.review_packages ?? [])
-    .filter((item) => item.updated_at && item.created_at)
-    .map((item) => hoursBetween(item.created_at, item.updated_at));
-  const averageReviewDelay = reviewDelays.length > 0
-    ? Number((reviewDelays.reduce((sum, delay) => sum + delay, 0) / reviewDelays.length).toFixed(2))
-    : 0;
+  const averageReviewDelay = 0;
 
   const proofFailureCount = patterns.filter((pattern) => pattern.category === "proof_failures").reduce((sum, pattern) => sum + pattern.evidence.length, 0);
   const traceFailureCount = patterns.filter((pattern) => pattern.category === "trace_failures").reduce((sum, pattern) => sum + pattern.evidence.length, 0);

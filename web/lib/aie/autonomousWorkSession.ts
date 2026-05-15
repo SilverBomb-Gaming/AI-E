@@ -470,8 +470,11 @@ export function evaluateWorkSessionReadiness(session: AutonomousWorkSession, now
   }
 
   if (!hasFreshSessionApproval(currentSession, currentTime)) {
+    const approvalBlockerCode: WorkSessionDecision["blockers"][number]["code"] = currentSession.approval_state.session_approval_granted
+      ? "session_reapproval_required"
+      : "session_approval_required";
     const blockers = [{
-      code: (currentSession.approval_state.session_approval_granted ? "session_reapproval_required" : "session_approval_required") as const,
+      code: approvalBlockerCode,
       message: currentSession.approval_state.session_approval_granted
         ? "The work session approval is stale and must be renewed before supervised continuation."
         : "Explicit session approval is required before the work session can run.",

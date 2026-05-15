@@ -398,6 +398,140 @@ function normalizeText(value: unknown): string {
   return String(value ?? "").trim();
 }
 
+function normalizeProjectKey(value: unknown): string {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function formatProjectTitle(projectKey: string): string {
+  const normalized = normalizeProjectKey(projectKey);
+  if (!normalized) {
+    return "Unknown Project";
+  }
+
+  if (normalized === "ai-e") {
+    return "AI-E";
+  }
+
+  return normalized
+    .split("-")
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+function resolveProjectRecordKey(record: SecondBrainRecord, projectKey?: string): string | undefined {
+  const explicitKey = normalizeText(projectKey);
+  if (!explicitKey) {
+    return undefined;
+  }
+
+  if (record.projects[explicitKey]) {
+    return explicitKey;
+  }
+
+  const normalizedKey = normalizeProjectKey(explicitKey);
+  if (!normalizedKey) {
+    return undefined;
+  }
+
+  if (record.projects[normalizedKey]) {
+    return normalizedKey;
+  }
+
+  const matchingProject = Object.values(record.projects).find((project) => {
+    return normalizeProjectKey(project.project_key) === normalizedKey || normalizeProjectKey(project.title) === normalizedKey;
+  });
+
+  return matchingProject?.project_key ?? normalizedKey;
+}
+
+function inferProjectKeyFromRepoRoot(record: SecondBrainRecord, repoRoot: string): string | undefined {
+  const repoNameKey = normalizeProjectKey(path.basename(repoRoot));
+  const activeRepoProjectKey = normalizeProjectKey(record.sections.working_memory.active_repo_project);
+  if (activeRepoProjectKey && existsSync(path.join(repoRoot, record.sections.working_memory.active_repo_project))) {
+    return activeRepoProjectKey;
+  }
+
+  if (!repoNameKey) {
+    return undefined;
+  }
+
+  if (activeRepoProjectKey && activeRepoProjectKey === repoNameKey) {
+    return activeRepoProjectKey;
+  }
+
+  if (record.projects[repoNameKey]) {
+    return repoNameKey;
+  }
+
+  const matchingProject = Object.values(record.projects).find((project) => {
+    return normalizeProjectKey(project.project_key) === repoNameKey || normalizeProjectKey(project.title) === repoNameKey;
+  });
+
+  return matchingProject?.project_key;
+}
+
+function buildDerivedProjectContext(initialization: SecondBrainInitialization, projectKey: string): CurrentProjectContext {
+  const { record } = initialization;
+  const { working_memory, architecture_memory, outcome_memory, recovery_memory, agent_coordination_memory } = record.sections;
+  const normalizedProjectKey = normalizeProjectKey(projectKey) || normalizeProjectKey(working_memory.active_repo_project) || record.current_project_key;
+  const title = normalizedProjectKey === normalizeProjectKey(working_memory.active_repo_project)
+    ? normalizeText(working_memory.active_repo_project) || formatProjectTitle(normalizedProjectKey)
+    : formatProjectTitle(normalizedProjectKey);
+  const validationStatus = outcome_memory.latest_outcomes
+    .filter((entry) => normalizeProjectKey(entry.project_key) === normalizedProjectKey)
+    .slice(0, 4)
+    .map((entry) => `${entry.task_title}: ${entry.status} (${entry.validation_result})`);
+
+  return {
+    project: {
+      project_key: normalizedProjectKey,
+      title,
+      summary: working_memory.current_task_state || `Derived repo-scoped continuity context for ${title}.`,
+      status: normalizedProjectKey === normalizeProjectKey(record.current_project_key)
+        ? "active_second_brain_context"
+        : "repo_scoped_fallback_context",
+      current_state: [
+        working_memory.current_task_state,
+        `Current objective: ${working_memory.current_objective}`,
+        `Resume checkpoint: ${working_memory.resume_checkpoint}`,
+      ].filter(Boolean),
+      next_safe_task: working_memory.current_objective || `Continue the next bounded supervised step for ${title}.`,
+      anti_patterns: architecture_memory.anti_patterns.slice(0, 8),
+      positive_patterns: agent_coordination_memory.safe_task_boundaries.slice(0, 8),
+      validation_status: validationStatus.length > 0 ? validationStatus : outcome_memory.what_passed.slice(0, 4),
+      continuation_context: working_memory.resume_checkpoint || `Resume the latest bounded continuity slice for ${title}.`,
+      known_good_commits: recovery_memory.known_good_commits.slice(0, 8),
+    },
+    working_memory,
+    architecture_memory,
+    next_safe_task: working_memory.current_objective || `Continue the next bounded supervised step for ${title}.`,
+    continuation_context: working_memory.resume_checkpoint || `Resume the latest bounded continuity slice for ${title}.`,
+  };
+}
+
+function resolveCurrentProjectContext(initialization: SecondBrainInitialization, projectKey?: string): CurrentProjectContext {
+  const resolvedProjectKey = resolveProjectRecordKey(initialization.record, projectKey)
+    ?? inferProjectKeyFromRepoRoot(initialization.record, initialization.repoRoot)
+    ?? resolveProjectRecordKey(initialization.record, initialization.record.current_project_key)
+    ?? initialization.record.current_project_key;
+  const project = initialization.record.projects[resolvedProjectKey];
+  if (!project) {
+    return buildDerivedProjectContext(initialization, resolvedProjectKey);
+  }
+
+  return {
+    project,
+    working_memory: initialization.record.sections.working_memory,
+    architecture_memory: initialization.record.sections.architecture_memory,
+    next_safe_task: project.next_safe_task,
+    continuation_context: project.continuation_context,
+  };
+}
+
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
     const fileText = await readFile(filePath, "utf8");
@@ -575,19 +709,7 @@ export async function retrieveCurrentProjectContext(input?: {
   projectKey?: string;
 }): Promise<CurrentProjectContext> {
   const initialization = await loadBrainRecord(input?.root);
-  const projectKey = input?.projectKey ?? initialization.record.current_project_key;
-  const project = initialization.record.projects[projectKey];
-  if (!project) {
-    throw new Error(`No second-brain project context found for ${projectKey}.`);
-  }
-
-  return {
-    project,
-    working_memory: initialization.record.sections.working_memory,
-    architecture_memory: initialization.record.sections.architecture_memory,
-    next_safe_task: project.next_safe_task,
-    continuation_context: project.continuation_context,
-  };
+  return resolveCurrentProjectContext(initialization, input?.projectKey);
 }
 
 export function retrieveCurrentProjectContextSync(input?: {
@@ -595,19 +717,22 @@ export function retrieveCurrentProjectContextSync(input?: {
   projectKey?: string;
 }): CurrentProjectContext {
   const initialization = loadBrainRecordSync(input?.root);
-  const projectKey = input?.projectKey ?? initialization.record.current_project_key;
-  const project = initialization.record.projects[projectKey];
-  if (!project) {
-    throw new Error(`No second-brain project context found for ${projectKey}.`);
-  }
+  return resolveCurrentProjectContext(initialization, input?.projectKey);
+}
 
-  return {
-    project,
-    working_memory: initialization.record.sections.working_memory,
-    architecture_memory: initialization.record.sections.architecture_memory,
-    next_safe_task: project.next_safe_task,
-    continuation_context: project.continuation_context,
-  };
+export async function resolveSecondBrainProjectKey(input?: {
+  root?: string;
+  projectKey?: string;
+}): Promise<string> {
+  const context = await retrieveCurrentProjectContext(input);
+  return context.project.project_key;
+}
+
+export function resolveSecondBrainProjectKeySync(input?: {
+  root?: string;
+  projectKey?: string;
+}): string {
+  return retrieveCurrentProjectContextSync(input).project.project_key;
 }
 
 export async function summarizeSecondBrainMemory(input?: {

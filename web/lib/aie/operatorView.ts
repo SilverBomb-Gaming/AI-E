@@ -145,7 +145,12 @@ export function renderOperatorView(state: OperatorViewState): OperatorViewResult
     score: routingScore(index, allCandidates.length),
   }));
 
-  const dispatchRecent = [...state.dispatchResults].map((result) => ({
+  const dispatchRecent: {
+    intent: string;
+    targetNode: string;
+    result: "blocked" | "simulated";
+    timestamp: string;
+  }[] = [...state.dispatchResults].map((result) => ({
     intent: result.reason ?? (result.dispatched ? "dispatch intent recorded" : "dispatch blocked"),
     targetNode: result.node_id,
     result: result.dispatched ? "simulated" : "blocked",

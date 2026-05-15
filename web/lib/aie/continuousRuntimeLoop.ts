@@ -20,6 +20,7 @@ import {
   type RuntimeStateRecord,
   type RuntimeStateStore,
 } from "./runtimeStateStore";
+import type { OperatorDashboardState } from "./operatorDashboardState";
 import {
   assignGoalToAgentRuntime,
   createAgentRuntimeRegistry,
@@ -130,7 +131,7 @@ function buildRuntimeEventType(params: {
   return "tick_observed";
 }
 
-function summarizeActiveGoal(goal: RuntimeStateRecord["operator_dashboard_state"]["active_goal"] | null | undefined) {
+function summarizeActiveGoal(goal: NonNullable<RuntimeStateRecord["operator_dashboard_state"]>["active_goal"] | null | undefined) {
   if (!goal) {
     return null;
   }

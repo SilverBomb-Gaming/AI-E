@@ -43,6 +43,7 @@ import {
   createSupervisedAutonomySessionId,
   type OvernightAutonomyAllowedAgentRole,
   type SupervisedAutonomyApprovalPolicy,
+  type SupervisedAutonomySessionRecord,
   type SupervisedAutonomyRecoveryPolicy,
 } from "./supervisedAutonomySession";
 import {
@@ -839,7 +840,10 @@ function upsertDeliveryPackage(state: OperatorDashboardState, nextItem: Autonomo
   ];
 }
 
-function buildSupervisedSession(state: OperatorDashboardState, input: SupervisedSessionControlInput | undefined) {
+function buildSupervisedSession(
+  state: OperatorDashboardState,
+  input: SupervisedSessionControlInput | undefined,
+): SupervisedAutonomySessionRecord {
   const createdAt = nextStateTimestamp(state);
   const approvalPolicy = input?.approval_policy ?? state.supervised_session?.approval_policy ?? "operator_must_approve_start";
   const recoveryPolicy = input?.recovery_policy ?? state.supervised_session?.recovery_policy ?? "request_operator_review";

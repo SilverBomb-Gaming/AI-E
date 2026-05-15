@@ -586,7 +586,8 @@ export async function queryDecisionRecords(filters: DecisionRecordQueryFilters =
     }
 
     if (filters.minimum_severity) {
-      filtered = filtered.filter((record) => hasSeverityAtOrAbove(record.severity_summary, filters.minimum_severity));
+      const minimumSeverity = filters.minimum_severity;
+      filtered = filtered.filter((record) => hasSeverityAtOrAbove(record.severity_summary, minimumSeverity));
     }
 
     if (typeof filters.limit === "number" && Number.isFinite(filters.limit) && filters.limit >= 0) {

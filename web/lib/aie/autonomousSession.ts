@@ -616,6 +616,8 @@ export type AutonomousSession = {
   sessionId: string;
   goal: string;
   sessionMode: AutonomousSessionMode;
+  repoRoot?: string;
+  projectKey?: string;
   status: AutonomousSessionStatus;
   createdAt: string;
   updatedAt: string;
@@ -771,6 +773,8 @@ type CreateAutonomousSessionParams = {
   maxRuntimeMs?: number;
   sessionId?: string;
   sessionMode?: AutonomousSessionMode;
+  repoRoot?: string;
+  projectKey?: string;
 };
 
 type AppendAutonomousStepParams = {
@@ -1743,6 +1747,13 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
         : bundle.dependsOnFeatureIds.length > 0
           ? `Ready: dependencies satisfied (${bundle.dependsOnFeatureIds.join(", ")}).`
           : "Ready: no feature dependencies.";
+      const featureStatus: AutonomousFeatureBundleStatus = isCompleted
+        ? "completed"
+        : blockedByFeatures.length > 0 || (hasBlockedTasks && !isCurrent && !hasNextRecommendation) || awaitingApprovalOnCurrentFeature
+          ? "blocked"
+          : isCurrent || hasNextRecommendation || bundle.completedTaskCount > 0
+            ? "in-progress"
+            : "planned";
 
       return {
         ...bundle,
@@ -1752,13 +1763,7 @@ function deriveAutonomousFeatureBundles(session: AutonomousSession): AutonomousF
         unlocksFeatures: [...unlocksFeatures],
         dependencyStatusSummary,
         blockedTaskIds: [...bundle.blockedTaskIds],
-        featureStatus: isCompleted
-          ? "completed"
-          : blockedByFeatures.length > 0 || (hasBlockedTasks && !isCurrent && !hasNextRecommendation) || awaitingApprovalOnCurrentFeature
-            ? "blocked"
-            : isCurrent || hasNextRecommendation || bundle.completedTaskCount > 0
-              ? "in-progress"
-              : "planned",
+        featureStatus,
       };
     })
       .sort((left, right) => left.featureTitle.localeCompare(right.featureTitle) || left.featureId.localeCompare(right.featureId)),
@@ -2112,6 +2117,15 @@ function normalizeText(value: string | null | undefined): string {
   return String(value ?? "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeAutonomousProjectKey(value: unknown): string | undefined {
+  const normalized = normalizeText(typeof value === "string" ? value : String(value ?? ""))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || undefined;
 }
 
 function clampAutonomousMaxSteps(value: unknown): number {
@@ -3631,7 +3645,7 @@ function deriveAutonomousWorkflowRepoActions(params: {
     actionMap.set(artifact.stepIndex, existing);
   }
 
-  return clampAutonomousWorkflowRepoActions(Array.from(actionMap.entries()).map(([stepIndex, artifacts]) => {
+  const repoActions: AutonomousWorkflowRepoAction[] = Array.from(actionMap.entries()).flatMap(([stepIndex, artifacts]) => {
     const sourceStep = params.session.steps.find((step) => step.index === stepIndex);
     const artifactFilePaths = Array.from(new Set(artifacts.map((artifact) => artifact.filePath).filter(Boolean)));
     const actionId = buildRepoActionId(stepIndex, artifactFilePaths);
@@ -3646,23 +3660,33 @@ function deriveAutonomousWorkflowRepoActions(params: {
     const executed = latestAttempt?.executionResult?.status === "success";
     const attempted = Boolean(latestAttempt);
     const failed = latestAttempt?.executionResult?.status === "failed" || latestAttempt?.executionResult?.status === "blocked";
+    const approvalStatus: AutonomousWorkflowRepoActionApprovalStatus = executed
+      ? "executed"
+      : attempted
+        ? "approved"
+        : "pending";
+    const executionStatus: AutonomousWorkflowRepoActionExecutionStatus = pendingApproval
+      ? "awaiting-approval"
+      : executed
+        ? "executed"
+        : failed
+          ? "failed"
+          : attempted
+            ? "approved-awaiting-execution"
+            : "awaiting-approval";
 
-    return executionPreview ? {
+    if (!executionPreview) {
+      return [];
+    }
+
+    return [{
       actionId,
       artifactStepIndex: stepIndex,
       artifactFilePaths,
       changeSummary: artifacts[0]?.changeSummary,
       artifactReference: artifacts.map((artifact) => `${artifact.stepIndex}:${artifact.filePath}`).join(", "),
-      approvalStatus: executed ? "executed" : attempted ? "approved" : "pending",
-      executionStatus: pendingApproval
-        ? "awaiting-approval"
-        : executed
-          ? "executed"
-          : failed
-            ? "failed"
-            : attempted
-              ? "approved-awaiting-execution"
-              : "awaiting-approval",
+      approvalStatus,
+      executionStatus,
       executed,
       failureReason: normalizeText(
         latestAttempt?.failureReason
@@ -3670,8 +3694,10 @@ function deriveAutonomousWorkflowRepoActions(params: {
           || latestAttempt?.executionResult?.output,
       ) || undefined,
       executionPreview,
-    } : null;
-  }).filter((action): action is AutonomousWorkflowRepoAction => Boolean(action)));
+    }];
+  });
+
+  return clampAutonomousWorkflowRepoActions(repoActions);
 }
 
 function summarizeCodingScope(paths: string[] | undefined, fallbackTargetPath?: string, fallbackAllowedRoot?: string): string | undefined {
@@ -4513,11 +4539,6 @@ function deriveSystemLoopHealth(
       contributingSignals.push("safe-boundary-restart-value");
       scores["restart-from-last-safe-boundary"] += 2;
     }
-  }
-
-  if (chainPhase === "completed-safe-boundary") {
-    contributingSignals.push("completed-safe-boundary");
-    scores.stop += 8;
   }
 
   if (contributingSignals.length === 0) {
@@ -6114,6 +6135,8 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
     sessionId,
     goal: goal || "Resolve the current bounded autonomous debugging goal.",
     sessionMode: normalizeAutonomousSessionMode(params.sessionMode) ?? "general",
+    repoRoot: normalizeText(params.repoRoot) || undefined,
+    projectKey: normalizeAutonomousProjectKey(params.projectKey),
     status: "active",
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -6172,6 +6195,8 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
         currentFeatureId: undefined,
         currentFeatureTitle: undefined,
         currentFeatureProgress: undefined,
+        nextLikelyFeatureIds: [],
+        readyFeatures: 0,
         completedFeatures: 0,
         blockedFeatures: 0,
         keyFilesOrAssetsChanged: [],
@@ -6203,6 +6228,10 @@ export function createAutonomousSession(params: CreateAutonomousSessionParams): 
       currentFeatureId: undefined,
       currentFeatureTitle: undefined,
       featureBundles: [],
+      readyFeatureIds: [],
+      featureDependencyGraph: [],
+      recommendedFeatureSequence: [],
+      nextLikelyFeatureIds: [],
       recentCompletedTaskIds: [],
       blockedTaskIds: [],
       completedFeatureIds: [],
@@ -6473,6 +6502,8 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
     sessionId: normalizeText(source.sessionId),
     goal: normalizeText(source.goal),
     sessionMode: normalizeAutonomousSessionMode(source.sessionMode) ?? "general",
+    repoRoot: normalizeText(typeof source.repoRoot === "string" ? source.repoRoot : "") || undefined,
+    projectKey: normalizeAutonomousProjectKey(source.projectKey),
     status,
     createdAt: normalizeText(source.createdAt),
     updatedAt: normalizeText(source.updatedAt),
@@ -6561,6 +6592,8 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
         currentFeatureId: undefined,
         currentFeatureTitle: undefined,
         currentFeatureProgress: undefined,
+        nextLikelyFeatureIds: [],
+        readyFeatures: 0,
         completedFeatures: 0,
         blockedFeatures: 0,
         keyFilesOrAssetsChanged: [],
@@ -6596,6 +6629,10 @@ export function normalizeAutonomousSession(value: unknown): AutonomousSession | 
       currentFeatureId: undefined,
       currentFeatureTitle: undefined,
       featureBundles: [],
+      readyFeatureIds: [],
+      featureDependencyGraph: [],
+      recommendedFeatureSequence: [],
+      nextLikelyFeatureIds: [],
       recentCompletedTaskIds: [],
       blockedTaskIds: [],
       completedFeatureIds: [],

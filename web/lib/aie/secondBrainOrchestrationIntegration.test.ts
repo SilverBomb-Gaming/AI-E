@@ -49,7 +49,7 @@ test("planning startup loads BABYLON second-brain context", async () => {
       nextActionText: "Run the paired repo context test.",
     });
 
-    assert.equal(hints.secondBrainProjectKey, "babylon-2026");
+    assert.equal(hints.secondBrainProjectKey, "ai-e");
     assert.match(hints.repoContextSummary, /Known-good state:/i);
     assert.match(hints.hintSummary, /Avoid:/i);
     assert.match(hints.hintSummary, /Fallback mode:/i);
@@ -87,9 +87,9 @@ test("orchestration startup loads next safe task and anti-pattern constraints", 
     now: "2026-04-25T23:15:00.000Z",
   });
 
-  assert.equal(decision.plan.second_brain_project_key, "babylon-2026");
+  assert.equal(decision.plan.second_brain_project_key, "ai-e");
   assert.match(decision.plan.context_summary, /Next safe task:/i);
-  assert.ok(decision.plan.second_brain_anti_patterns?.some((entry) => /legacy BABYLON/i.test(entry)));
+  assert.ok(decision.plan.second_brain_anti_patterns?.some((entry) => /hidden repair loops|mixed-owner/i.test(entry)));
   assert.equal(decision.plan.second_brain_fallback_mode, "local_memory_only_mode");
 });
 

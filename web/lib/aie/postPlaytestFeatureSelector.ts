@@ -28,6 +28,7 @@ export type PostPlaytestRejectedFeature = {
 export type PostPlaytestFeatureEvidenceSnapshot = {
   feature: string;
   latest_outcome: AutoRecordOutcomeResult | null;
+  known_outcome_state?: PostPlaytestFeatureKnownOutcomeState;
 };
 
 export type PostPlaytestFeatureSelectorInput = {
@@ -52,7 +53,12 @@ function normalizeFeatureName(feature: string): string {
 
 function resolveKnownOutcomeState(
   outcome: AutoRecordOutcomeResult | null | undefined,
+  knownOutcomeState?: PostPlaytestFeatureKnownOutcomeState,
 ): PostPlaytestFeatureKnownOutcomeState {
+  if (knownOutcomeState) {
+    return knownOutcomeState;
+  }
+
   if (!outcome) {
     return "unseen";
   }
@@ -120,7 +126,7 @@ export function selectPostPlaytestFeature(
     .filter(Boolean);
   const completedFeatures = new Set((input.completed_features ?? []).map(normalizeFeatureName));
   const evidenceMap = new Map(
-    (input.feature_evidence ?? []).map((entry) => [normalizeFeatureName(entry.feature), entry.latest_outcome]),
+    (input.feature_evidence ?? []).map((entry) => [normalizeFeatureName(entry.feature), entry]),
   );
   const attemptedFeatures = new Set((input.attempted_features ?? []).map(normalizeFeatureName));
   const rejectedFeatures: PostPlaytestRejectedFeature[] = [];
@@ -146,8 +152,9 @@ export function selectPostPlaytestFeature(
       continue;
     }
 
-    const outcome = evidenceMap.get(feature) ?? null;
-    const knownOutcomeState = resolveKnownOutcomeState(outcome);
+    const evidence = evidenceMap.get(feature);
+    const outcome = evidence?.latest_outcome ?? null;
+    const knownOutcomeState = resolveKnownOutcomeState(outcome, evidence?.known_outcome_state);
 
     if (knownOutcomeState === "blocked") {
       rejectedFeatures.push({
@@ -228,4 +235,29 @@ export function selectPostPlaytestFeature(
         ? "medium"
         : "low",
   };
+}
+
+export function renderPostPlaytestFeatureSelectionReport(
+  result: PostPlaytestFeatureSelectorResult,
+): string {
+  const lines = [
+    "FEATURE SELECTION REPORT",
+    "",
+    `Status: ${result.status}`,
+    `Selected Feature: ${result.selected_feature ?? "none"}`,
+    `Reason: ${result.selected_reason}`,
+    `Confidence: ${result.confidence}`,
+    "",
+    "Ranked Candidates:",
+    ...(result.candidate_scores.length > 0
+      ? result.candidate_scores.map((candidate, index) => `${index + 1}. ${candidate.feature} | score=${candidate.score} | state=${candidate.known_outcome_state} | ${candidate.reason}`)
+      : ["1. None available."]),
+    "",
+    "Rejected Features:",
+    ...(result.rejected_features.length > 0
+      ? result.rejected_features.map((entry, index) => `${index + 1}. ${entry.feature} | ${entry.reason}`)
+      : ["1. None."]),
+  ];
+
+  return lines.join("\n");
 }

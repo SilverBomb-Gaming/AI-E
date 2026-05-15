@@ -700,6 +700,8 @@ test("Unity physics validation maps to blocked external route", () => {
   assert.equal(response.reasoning.executionRoute.routeType, "BLOCKED_CAPABILITY");
   assert.equal(response.reasoning.executionRoute.contract.approvalStatus, "blocked_external_dependency");
   assert.equal(response.reasoning.executionRoute.contract.runtimeOwnershipLevel, "external_dependency_blocked");
+  assert.equal(response.reasoning.runtimeLifecycle.currentStage, "EXTERNAL_DEPENDENCY_BLOCKED");
+  assert.equal(response.reasoning.runtimeLifecycle.allowedTransitions.length, 0);
   assert.match(response.assistantMessage, /trusted editor automation bridge|Unity Editor control is not implemented/i);
   assert.doesNotMatch(response.assistantMessage, /I ran Unity|I validated physics|autonomous_real is available/i);
 });
@@ -712,6 +714,7 @@ test("repo work without approval is blocked by supervised execution contract", (
   assert.equal(response.reasoning.executionRoute.routeType, "PATCH_APPLICATION_REQUIRES_APPROVAL");
   assert.equal(response.reasoning.executionRoute.contract.executionStatus, "blocked_requires_approval");
   assert.equal(response.reasoning.executionRoute.contract.mutationAllowed, false);
+  assert.equal(response.reasoning.runtimeLifecycle.nextGate, "Operator approval is missing; mutation and runtime dispatch stay blocked.");
   assert.match(response.assistantMessage, /approval blocked capability query|blocked_missing_approval|explicit approval/i);
   assert.doesNotMatch(response.assistantMessage, /I executed|I changed|unrestricted repo autonomy is available/i);
 });

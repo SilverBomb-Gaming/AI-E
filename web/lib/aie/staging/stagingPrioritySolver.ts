@@ -23,8 +23,11 @@ export function selectCinematicStagingFocusSubject(beatType: ReturnType<typeof b
     case "BEACON_REVEAL":
       return "BEACON";
     case "DRONE_RESPONSE":
-    case "SETTLE":
       return "DRONE_GROUP";
+    case "AFTERMATH_HOLD":
+      return "FORMATION_CENTER";
+    case "SETTLE":
+      return "CHAMBER";
     case "BASELINE":
     default:
       return "CUBE";

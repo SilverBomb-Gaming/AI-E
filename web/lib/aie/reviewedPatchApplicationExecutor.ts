@@ -123,10 +123,10 @@ function buildApplicationInstructions(draft: ReviewedPatchDraft): string[] {
   );
 
   const validationLines = draft.validation_requirements.map((requirement) => {
-    const command = normalizeText(requirement.command);
-    return command
-      ? `Validation command: ${command}`
-      : `Validation requirement: ${requirement.description}`;
+    const details = normalizeText(requirement.details);
+    return details
+      ? `Validation requirement: ${requirement.title} - ${details}`
+      : `Validation requirement: ${requirement.title}`;
   });
 
   return [
@@ -155,7 +155,9 @@ export function validateDraftResultForApplicationPacket(
     blockers.push({
       code: "draft_not_ready",
       message: `Patch draft result status is ${draftResult.status}; only draft_ready results may produce an application packet.`,
-      recommended_next_action: draftResult.recommended_next_operator_action,
+      recommended_next_action: draftResult.recommended_next_operator_action === "review_patch_application_decision"
+        ? "review_patch_draft"
+        : draftResult.recommended_next_operator_action,
     });
   }
 
@@ -234,7 +236,9 @@ export function createReviewedPatchApplicationPacket(
   const blockers = validateDraftResultForApplicationPacket(input.draftResult);
 
   let status: ReviewedPatchApplicationExecutorStatus = "application_packet_ready";
-  let recommendedNextOperatorAction: ArtifactExecutionNextAction | "review_patch_draft" = input.draftResult?.recommended_next_operator_action ?? "review_patch_draft";
+  let recommendedNextOperatorAction: ArtifactExecutionNextAction | "review_patch_draft" = input.draftResult?.recommended_next_operator_action === "review_patch_application_decision"
+    ? "review_patch_draft"
+    : input.draftResult?.recommended_next_operator_action ?? "review_patch_draft";
 
   if (blockers.some((blocker) => blocker.code === "high_risk")) {
     status = "high_risk_blocked";
@@ -293,14 +297,18 @@ export function createReviewedPatchApplicationPacket(
       "Confirm human approval is still required before any file mutation.",
       "Restate the commit intent without creating a commit or patch.",
     ],
-    next_operator_action: draft.next_operator_action,
+    next_operator_action: draft.next_operator_action === "review_patch_application_decision"
+      ? "review_patch_draft"
+      : draft.next_operator_action,
   };
 
   return {
     status: "application_packet_ready",
     application_packet: applicationPacket,
     blockers: [],
-    recommended_next_operator_action: draft.next_operator_action,
+    recommended_next_operator_action: draft.next_operator_action === "review_patch_application_decision"
+      ? "review_patch_draft"
+      : draft.next_operator_action,
     explanation: `Reviewed patch application packet ${applicationPacket.application_packet_id} is ready for human review before any future controlled patch execution step.`,
   };
 }

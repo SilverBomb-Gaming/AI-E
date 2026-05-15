@@ -4,6 +4,7 @@ import path from "node:path";
 import type { GameProjectSnapshot } from "./gameProjectInspector";
 import { readOutcomeRecords, type OutcomeRecord } from "./outcomeLearning";
 import { buildRetrySuggestionFromRecords } from "./retryEngine";
+import { inspectUnityBasicEnemyStatus, inspectUnityGameLoopStatus, inspectUnityPlayerAttackStatus } from "./unitySceneWiring";
 
 export type GameProgressionStage = {
   id: "movement" | "camera-control" | "basic-enemy" | "player-attack" | "game-loop";
@@ -39,6 +40,9 @@ export type GameProgressionResult = {
     jumpExists: boolean;
     playerScriptPresent: boolean;
     cameraExists: boolean;
+    basicEnemyReady: boolean;
+    playerAttackReady: boolean;
+    gameLoopReady: boolean;
   };
   nextTask: NextGameTask;
 };
@@ -70,6 +74,34 @@ async function detectJumpExists(snapshot: GameProjectSnapshot): Promise<boolean>
     && source.includes("Mathf.Sqrt(jumpHeight * -2f * gravity)");
 }
 
+function resolveGameLoopScriptPath(snapshot: GameProjectSnapshot): string | undefined {
+  const exactMatch = snapshot.structure.scripts.find((scriptPath) => /GameLoopController\.cs$/i.test(path.basename(scriptPath)));
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  return snapshot.structure.scripts.find((scriptPath) => /game.*loop|win|lose|restart/i.test(path.basename(scriptPath)));
+}
+
+async function detectGameLoopReady(snapshot: GameProjectSnapshot): Promise<boolean> {
+  const gameLoopStatus = await inspectUnityGameLoopStatus(snapshot.rootPath, true).catch(() => null);
+  if (gameLoopStatus) {
+    return gameLoopStatus.safeToOpenUnityForCompileOrPlaytest;
+  }
+
+  const gameLoopScript = resolveGameLoopScriptPath(snapshot);
+  if (!gameLoopScript) {
+    return false;
+  }
+
+  const absolutePath = path.join(snapshot.rootPath, gameLoopScript);
+  const source = await readFile(absolutePath, "utf-8");
+  return source.includes("RegisterWin(")
+    && source.includes("RegisterLoss(")
+    && source.includes("RestartLevel(")
+    && source.includes("SceneManager.LoadScene");
+}
+
 function buildStages(signals: GameProgressionResult["signals"]): GameProgressionStage[] {
   return [
     {
@@ -88,19 +120,19 @@ function buildStages(signals: GameProgressionResult["signals"]): GameProgression
       id: "basic-enemy",
       label: "Stage 3: Basic enemy",
       description: "Introduce a simple enemy presence and movement.",
-      complete: false,
+      complete: signals.basicEnemyReady,
     },
     {
       id: "player-attack",
       label: "Stage 4: Player attack",
       description: "Allow the player to damage enemies.",
-      complete: false,
+      complete: signals.playerAttackReady,
     },
     {
       id: "game-loop",
       label: "Stage 5: Game loop",
       description: "Define win and lose conditions.",
-      complete: false,
+      complete: signals.gameLoopReady,
     },
   ];
 }
@@ -158,6 +190,31 @@ function buildFallbackTask(stage: NextGameTask["stage"], title: string, scriptNa
       "Inspect existing scripts before creating a new gameplay system.",
       "Prefer modifying existing structure when a related script already exists.",
       "Use the guarded patch workflow for modifications instead of manual copy/paste.",
+    ],
+    safety: {
+      noDuplicateSystems: true,
+      preferExistingStructure: true,
+      guardedPatchWorkflow: true,
+      noUnityExecution: true,
+    },
+  };
+}
+
+function buildCompletedGameLoopTask(): NextGameTask {
+  return {
+    stage: "game-loop",
+    title: "Validate and extend the existing game loop",
+    scriptName: "GameLoopController.cs",
+    behaviorDescription: "The baseline win/lose loop already exists. Extend or integrate the current controller instead of creating a duplicate game loop script.",
+    executionPlan: "modify-existing-script",
+    implementationMode: "modify-existing-script",
+    targetFile: "Assets/Scripts/GameLoopController.cs",
+    requiredPatchType: "game-loop-script",
+    reasonBasedOnOutcomes: "All tracked progression stages are complete; continue by refining the existing game loop rather than recreating it.",
+    safeImplementationPlan: [
+      "Inspect the existing GameLoopController.cs implementation before making changes.",
+      "Prefer extending the current win, lose, and restart hooks instead of creating another controller.",
+      "Use the guarded patch workflow for any refinements so restart behavior stays stable.",
     ],
     safety: {
       noDuplicateSystems: true,
@@ -246,14 +303,19 @@ function buildOutcomeGuidance(stage: GameProgressionStage["id"], records: Outcom
 }
 
 function determineNextTask(stages: GameProgressionStage[], records: OutcomeRecord[]): NextGameTask {
-  const nextStage = stages.find((stage) => !stage.complete)?.id ?? "game-loop";
-  const outcomeGuidance = buildOutcomeGuidance(nextStage, records);
+  const nextStage = stages.find((stage) => !stage.complete)?.id;
+  const selectedStage = nextStage ?? "game-loop";
+  const outcomeGuidance = buildOutcomeGuidance(selectedStage, records);
 
   const applyOutcomeGuidance = (task: NextGameTask): NextGameTask => ({
     ...task,
     reasonBasedOnOutcomes: outcomeGuidance.reasonBasedOnOutcomes,
     safeImplementationPlan: [...outcomeGuidance.guidanceSteps, ...task.safeImplementationPlan],
   });
+
+  if (!nextStage) {
+    return applyOutcomeGuidance(buildCompletedGameLoopTask());
+  }
 
   switch (nextStage) {
     case "camera-control":
@@ -270,12 +332,35 @@ function determineNextTask(stages: GameProgressionStage[], records: OutcomeRecor
 }
 
 export async function determineGameProgression(snapshot: GameProjectSnapshot): Promise<GameProgressionResult> {
+  const unityFeatureSignals = snapshot.engine === "unity" && snapshot.structure.scenes.length > 0
+    ? await Promise.all([
+      inspectUnityBasicEnemyStatus(snapshot.rootPath, true).catch(() => undefined),
+      inspectUnityPlayerAttackStatus(snapshot.rootPath, true).catch(() => undefined),
+    ])
+    : undefined;
+  const basicEnemyStatus = unityFeatureSignals?.[0];
+  const playerAttackStatus = unityFeatureSignals?.[1];
   const outcomeRecords = await readOutcomeRecords(snapshot.rootPath);
+  const gameLoopReady = await detectGameLoopReady(snapshot).catch(() => false);
   const signals = {
     movementExists: snapshot.analysis.scriptSignals.movementScripts.length > 0,
     jumpExists: await detectJumpExists(snapshot),
     playerScriptPresent: snapshot.analysis.scriptSignals.movementScripts.some((scriptPath) => /player|mover|controller/i.test(path.basename(scriptPath))),
     cameraExists: snapshot.analysis.scriptSignals.cameraScripts.length > 0,
+    basicEnemyReady: Boolean(
+      basicEnemyStatus
+      && basicEnemyStatus.basicEnemyScriptExists
+      && basicEnemyStatus.enemyExists
+      && basicEnemyStatus.scriptAttached
+      && basicEnemyStatus.positionedOnGround,
+    ),
+    playerAttackReady: Boolean(
+      playerAttackStatus
+      && playerAttackStatus.playerAttackScriptExists
+      && playerAttackStatus.playerAttackAttached
+      && playerAttackStatus.attackKeyConfigured,
+    ),
+    gameLoopReady,
   };
 
   const stages = buildStages(signals);
@@ -297,6 +382,9 @@ export function renderNextGameTask(result: GameProgressionResult): string {
     `Jump Exists: ${result.signals.jumpExists ? "YES" : "NO"}`,
     `Player Script Present: ${result.signals.playerScriptPresent ? "YES" : "NO"}`,
     `Camera Exists: ${result.signals.cameraExists ? "YES" : "NO"}`,
+    `Basic Enemy Ready: ${result.signals.basicEnemyReady ? "YES" : "NO"}`,
+    `Player Attack Ready: ${result.signals.playerAttackReady ? "YES" : "NO"}`,
+    `Game Loop Ready: ${result.signals.gameLoopReady ? "YES" : "NO"}`,
     "",
     "Progression:",
     ...result.stages.map((stage) => `- ${stage.label}: ${stage.complete ? "DONE" : "NEXT"} - ${stage.description}`),

@@ -300,8 +300,8 @@ test("no auto-start on import", async () => {
   };
 
   try {
-    const module = await import("../../scripts/runBackgroundRuntime");
-    assert.equal(typeof module.main, "function");
+    const runtimeModule = await import("../../scripts/runBackgroundRuntime");
+    assert.equal(typeof runtimeModule.main, "function");
     assert.equal(captured.length, 0);
   } finally {
     console.log = originalLog;

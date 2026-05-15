@@ -6,6 +6,7 @@ import type { AutoRecordOutcomeResult } from "./autoOutcomeRecording";
 import type { PostPlaytestDecisionResult } from "./postPlaytestDecisionEngine";
 import type { PostPlaytestExecutionPlanResult } from "./postPlaytestExecutionEngine";
 import type { PostPlaytestExecutionResult } from "./postPlaytestExecutor";
+import type { PostPlaytestFeatureSelectorResult } from "./postPlaytestFeatureSelector";
 import type { PostPlaytestFixPlanResult } from "./postPlaytestFixPlanner";
 import type { PostPlaytestStrategySelectorResult } from "./postPlaytestStrategySelector";
 
@@ -99,6 +100,7 @@ export type UnityValidationExecutionResult = {
   review_package: AutonomousReviewPackage | null;
   delivery_package: AutonomousDeliveryPackage | null;
   post_playtest_learning: AutoRecordOutcomeResult | null;
+  post_playtest_feature_selection: PostPlaytestFeatureSelectorResult | null;
   post_playtest_decision: PostPlaytestDecisionResult | null;
   post_playtest_strategy_selection: PostPlaytestStrategySelectorResult | null;
   post_playtest_fix_plan: PostPlaytestFixPlanResult | null;
@@ -239,7 +241,7 @@ function buildUnityPlanningScope(requestTypes: UnityProductionRequestType[]): st
 }
 
 function buildUnityReviewArtifacts(requestTypes: UnityProductionRequestType[]): string[] {
-  return uniqueDomains([]).concat(...requestTypes.map((requestType) => {
+  return requestTypes.flatMap((requestType) => {
     switch (requestType) {
       case "scene_request":
         return ["scene review packet", "affected-scene diff summary"];
@@ -256,7 +258,7 @@ function buildUnityReviewArtifacts(requestTypes: UnityProductionRequestType[]): 
       default:
         return [];
     }
-  })).filter((value, index, values) => values.indexOf(value) === index);
+  }).filter((value, index, values) => values.indexOf(value) === index);
 }
 
 function buildUnityApprovalGates(requestTypes: UnityProductionRequestType[]): string[] {

@@ -994,10 +994,9 @@ export function createSafeRuntimeActionBridgeResult(
     }
 
     default: {
-      const unsupportedAction = action satisfies never;
       return buildResult(
         source,
-        unsupportedAction,
+        action,
         "action_unsupported",
         "no_op",
         "the requested operator action is not supported by the safe runtime action bridge",

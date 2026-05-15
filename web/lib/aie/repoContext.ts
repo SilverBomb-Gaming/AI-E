@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -111,6 +112,21 @@ export async function resolveRepoRoot(root = process.cwd()): Promise<string> {
   }
 
   if (await pathExists(directWebDirectory)) {
+    return normalizedRoot;
+  }
+
+  return normalizedRoot;
+}
+
+export function resolveRepoRootSync(root = process.cwd()): string {
+  const normalizedRoot = path.resolve(root);
+  const directWebDirectory = path.join(normalizedRoot, "web");
+
+  if (path.basename(normalizedRoot).toLowerCase() === "web") {
+    return path.resolve(normalizedRoot, "..");
+  }
+
+  if (existsSync(directWebDirectory)) {
     return normalizedRoot;
   }
 

@@ -108,7 +108,7 @@ function normalizeAction(value: unknown): OperatorControlAction | null {
       || candidate.session_priority === "medium"
       || candidate.session_priority === "low"
       ? candidate.session_priority
-      : null,
+      : undefined,
     work_item_id: typeof candidate.work_item_id === "string"
       ? candidate.work_item_id.trim() || null
       : candidate.work_item_id === null || candidate.work_item_id === undefined

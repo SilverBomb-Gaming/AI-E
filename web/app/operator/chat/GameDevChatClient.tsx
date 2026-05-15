@@ -436,6 +436,10 @@ export function GameDevChatClient() {
                               <p><span className="font-semibold text-zinc-100">Validation Requirement:</span> {message.reasoning.executionRoute.contract.validationRequired ? "required" : "not required"}</p>
                               <p><span className="font-semibold text-zinc-100">Rollback Availability:</span> {message.reasoning.executionRoute.contract.rollbackAvailable ? "available" : "not available"}</p>
                               <p><span className="font-semibold text-zinc-100">Runtime Ownership Level:</span> {message.reasoning.executionRoute.contract.runtimeOwnershipLevel}</p>
+                              <p><span className="font-semibold text-zinc-100">Lifecycle Stage:</span> {message.reasoning.runtimeLifecycle.currentStage}</p>
+                              <p><span className="font-semibold text-zinc-100">Lifecycle Status:</span> {message.reasoning.runtimeLifecycle.lifecycleStatus}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Next Gate:</span> {message.reasoning.runtimeLifecycle.nextGate}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Persistence Plan:</span> {message.reasoning.runtimeLifecycle.persistencePlan}</p>
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Mutation Scope:</span> {message.reasoning.executionOwnership.mutationScope}</p>
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Validation Scope:</span> {message.reasoning.executionOwnership.validationScope}</p>
                               <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Dependency:</span> {message.reasoning.executionOwnership.dependencyExplanation}</p>
@@ -469,6 +473,10 @@ export function GameDevChatClient() {
                               <p><span className="font-semibold text-zinc-100">Validation Requirement:</span> {message.reasoning.executionRoute.contract.validationRequired ? "required" : "not required"}</p>
                               <p><span className="font-semibold text-zinc-100">Rollback Availability:</span> {message.reasoning.executionRoute.contract.rollbackAvailable ? "available" : "not available"}</p>
                               <p><span className="font-semibold text-zinc-100">Runtime Ownership Level:</span> {message.reasoning.executionRoute.contract.runtimeOwnershipLevel}</p>
+                              <p><span className="font-semibold text-zinc-100">Lifecycle Stage:</span> {message.reasoning.runtimeLifecycle.currentStage}</p>
+                              <p><span className="font-semibold text-zinc-100">Lifecycle Status:</span> {message.reasoning.runtimeLifecycle.lifecycleStatus}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Next Gate:</span> {message.reasoning.runtimeLifecycle.nextGate}</p>
+                              <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Persistence Plan:</span> {message.reasoning.runtimeLifecycle.persistencePlan}</p>
                               {message.reasoning.inferredFeedbackCategory && <p><span className="font-semibold text-zinc-100">Feedback Category:</span> {message.reasoning.inferredFeedbackCategory}</p>}
                               {message.reasoning.categoryMatchKind && <p><span className="font-semibold text-zinc-100">Match:</span> {message.reasoning.categoryMatchKind}</p>}
                               {message.reasoning.matchedPhraseFamily && <p className="md:col-span-2"><span className="font-semibold text-zinc-100">Phrase Family:</span> {message.reasoning.matchedPhraseFamily}</p>}

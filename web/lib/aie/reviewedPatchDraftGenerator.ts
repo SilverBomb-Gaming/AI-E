@@ -127,7 +127,9 @@ export function validateApplicationDecisionForDraft(
     blockers.push({
       code: "decision_not_eligible",
       message: `Application decision status is ${decision.status}; only application_eligible decisions may produce a reviewed patch draft.`,
-      recommended_next_action: decision.recommended_next_operator_action,
+      recommended_next_action: decision.recommended_next_operator_action === "review_patch_plan"
+        ? "review_patch_application_decision"
+        : decision.recommended_next_operator_action,
     });
   }
 
@@ -205,7 +207,9 @@ export function generateReviewedPatchDraft(
   const blockers = validateApplicationDecisionForDraft(input.decision);
 
   let status: ReviewedPatchDraftStatus = "draft_ready";
-  let recommendedNextOperatorAction: ArtifactExecutionNextAction | "review_patch_application_decision" = input.decision?.recommended_next_operator_action ?? "review_patch_application_decision";
+  let recommendedNextOperatorAction: ArtifactExecutionNextAction | "review_patch_application_decision" = input.decision?.recommended_next_operator_action === "review_patch_plan"
+    ? "review_patch_application_decision"
+    : input.decision?.recommended_next_operator_action ?? "review_patch_application_decision";
 
   if (blockers.some((blocker) => blocker.code === "high_risk")) {
     status = "high_risk_blocked";
@@ -263,14 +267,18 @@ export function generateReviewedPatchDraft(
       "Confirm the draft stays inside the reviewed patch plan targets.",
       "State the commit intent without creating any commit or patch.",
     ],
-    next_operator_action: input.decision.recommended_next_operator_action,
+    next_operator_action: input.decision.recommended_next_operator_action === "review_patch_plan"
+      ? "review_patch_application_decision"
+      : input.decision.recommended_next_operator_action,
   };
 
   return {
     status: "draft_ready",
     draft,
     blockers: [],
-    recommended_next_operator_action: input.decision.recommended_next_operator_action,
+    recommended_next_operator_action: input.decision.recommended_next_operator_action === "review_patch_plan"
+      ? "review_patch_application_decision"
+      : input.decision.recommended_next_operator_action,
     explanation: `Reviewed patch draft ${draft.draft_id} is ready for human review before any future controlled patch execution step.`,
   };
 }

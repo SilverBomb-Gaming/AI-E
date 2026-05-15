@@ -46,6 +46,26 @@ test("second brain retrieves current project context and anti-pattern guidance",
   }
 });
 
+test("second brain derives an AI-E project context from the active repo root", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-second-brain-ai-e-parent-"));
+  const aieRoot = path.join(tempRoot, "AI-E");
+
+  try {
+    await ensureSecondBrainInitialized(aieRoot);
+    const context = await retrieveCurrentProjectContext({ root: aieRoot });
+    const summary = await summarizeSecondBrainMemory({ root: aieRoot });
+
+    assert.equal(context.project.project_key, "ai-e");
+    assert.equal(context.project.title, "AI-E");
+    assert.match(context.next_safe_task, /persistent second-brain foundation|preserves project context/i);
+    assert.ok(context.architecture_memory.anti_patterns.some((entry) => /hidden repair loops/i.test(entry)));
+    assert.equal(summary.current_project_key, "ai-e");
+    assert.match(summary.summary, /AI-E/i);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("second brain records append-only outcome logs and updates persisted memory", async () => {
   const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-second-brain-outcomes-"));
 

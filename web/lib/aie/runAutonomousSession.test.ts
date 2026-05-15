@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -253,6 +254,90 @@ test("runAutonomousSession resumes an awaiting-approval session from stored pend
   assert.match(resumed.workflowContinuity.memory.lastValidationOutcome ?? "", /healthy result confirmed/i);
   assert.equal(resumed.workflowContinuity.loopHealth.recommendedNextPhase, "stop");
   assert.equal(analysisCalls, 1);
+});
+
+test("runAutonomousSession records second-brain outcomes against the active project", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-runtime-project-key-parent-"));
+  const projectRoot = path.join(tempRoot, "AI-E");
+
+  try {
+    await mkdir(projectRoot, { recursive: true });
+
+    const session = await runAutonomousSession({
+      goal: "Record a bounded success against the active AI-E project.",
+      maxSteps: 1,
+      executionContext: {
+        cwd: projectRoot,
+        repoRoot: projectRoot,
+      },
+      dependencies: {
+        runAnalysis: async () => ({
+          what_happened: "The bounded validation completed successfully.",
+          what_matters: ["The runtime should attribute the outcome to the active project."],
+          what_to_do_next: ["Stop."],
+          upgrade_hint: "",
+          proposedAction: "Run the bounded validation command.",
+          expectedOutcome: "The validation output should report a healthy result.",
+          execution: makeSafeAction("Run the bounded validation command."),
+        }),
+        executeAction: async () => ({
+          status: "success",
+          output: "Healthy result confirmed for the active AI-E runtime path.",
+        }),
+        saveAutonomousSession: async () => {},
+      },
+    });
+
+    const outcomeLog = await readFile(path.join(projectRoot, "data", "second_brain", "outcomes.jsonl"), "utf8");
+    const latestOutcome = JSON.parse(outcomeLog.trim().split(/\r?\n/).at(-1) ?? "{}");
+
+    assert.equal(session.projectKey, "ai-e");
+    assert.equal(latestOutcome.project_key, "ai-e");
+    assert.equal(latestOutcome.outcome_id, `${session.sessionId}-step-1`);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("runAutonomousSession blocks stale sessions from a different project", async () => {
+  const tempRoot = await mkdtemp(path.join(tmpdir(), "aie-runtime-stale-session-parent-"));
+  const aieRoot = path.join(tempRoot, "AI-E");
+  const babylonRoot = path.join(tempRoot, "BABYLON-2026");
+
+  try {
+    await mkdir(aieRoot, { recursive: true });
+    await mkdir(babylonRoot, { recursive: true });
+
+    const session = createAutonomousSession({
+      goal: "Resume the bounded continuity slice safely.",
+      sessionMode: "repo-coding",
+      repoRoot: aieRoot,
+      projectKey: "ai-e",
+    });
+
+    const resumed = await runAutonomousSession({
+      goal: session.goal,
+      existingSession: session,
+      executionContext: {
+        cwd: babylonRoot,
+        repoRoot: babylonRoot,
+      },
+      dependencies: {
+        runAnalysis: async () => {
+          throw new Error("stale sessions should not reach analysis");
+        },
+        executeAction: async () => {
+          throw new Error("stale sessions should not execute actions");
+        },
+        saveAutonomousSession: async () => {},
+      },
+    });
+
+    assert.equal(resumed.status, "blocked");
+    assert.match(resumed.stateReason ?? "", /does not match active project|does not match active repo root/i);
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("runAutonomousSession keeps a successful validation in needs-verification before final completion", async () => {

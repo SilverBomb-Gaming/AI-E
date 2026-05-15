@@ -243,7 +243,7 @@ export function summarizeRuntimeEntrypoint(result: RuntimeEntrypointResult): str
     summarizeBootResume(result.boot_resume),
     `Require supervised scope: ${result.config.require_supervised_scope}`,
     summarizeRuntimeProfile({
-      profile_name: result.config.profile_name,
+      profile_name: result.config.profile_name as RuntimeProfile["profile_name"],
       description: result.config.profile_description,
       tick_interval_ms: result.config.tick_interval_ms,
       max_ticks_per_run: result.config.max_ticks_per_run,

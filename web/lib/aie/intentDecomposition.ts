@@ -53,7 +53,7 @@ function normalizeText(value: string | null | undefined): string {
     .trim();
 }
 
-function unique(values: string[]): string[] {
+function unique<T extends string>(values: T[]): T[] {
   return [...new Set(values.filter(Boolean))];
 }
 
@@ -251,7 +251,7 @@ export function recoverVagueIntent(input: string): string[] {
 }
 
 export function prioritizeIntents(intents: SubIntent[]): SubIntent[] {
-  const ranked = [...intents]
+  const ranked: SubIntent[] = [...intents]
     .sort((left, right) => scoreIntent(right) - scoreIntent(left) || left.order - right.order)
     .map((intent, index) => ({
       ...intent,

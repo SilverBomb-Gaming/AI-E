@@ -123,7 +123,11 @@ test("inspection request maps to read-only supervised execution route contract",
   assert.equal(response.reasoning.executionRoute.routeType, "READ_ONLY_INSPECTION");
   assert.equal(response.reasoning.executionRoute.contract.mutationAllowed, false);
   assert.equal(response.reasoning.executionRoute.contract.approvalStatus, "pending");
+  assert.equal(response.reasoning.runtimeLifecycle.phaseId, "RUNTIME_LIFECYCLE_ARCHITECTURE_PHASE1");
+  assert.equal(response.reasoning.runtimeLifecycle.currentStage, "AWAITING_APPROVAL");
+  assert.match(response.reasoning.runtimeLifecycle.truthfulnessBoundary, /architectural planning/);
   assert.match(response.assistantMessage, /Execution route: READ_ONLY_INSPECTION/);
+  assert.match(response.assistantMessage, /Runtime lifecycle: AWAITING_APPROVAL/);
 });
 
 test("patch preparation request creates non-mutating supervised contract", () => {
@@ -133,6 +137,8 @@ test("patch preparation request creates non-mutating supervised contract", () =>
   assert.equal(response.reasoning.executionRoute.routeType, "PATCH_PREPARATION");
   assert.equal(response.reasoning.executionRoute.contract.mutationAllowed, false);
   assert.equal(response.reasoning.executionRoute.contract.executionStatus, "candidate_prepared");
+  assert.equal(response.reasoning.runtimeLifecycle.lifecycleStatus, "approval_required");
+  assert.match(response.reasoning.runtimeLifecycle.nextGate, /Operator must approve/);
   assert.match(response.assistantMessage, /AI-E can prepare a supervised execution contract/);
 });
 
@@ -143,6 +149,8 @@ test("automatic patch application remains blocked on approval contract", () => {
   assert.equal(response.reasoning.executionRoute.routeType, "PATCH_APPLICATION_REQUIRES_APPROVAL");
   assert.equal(response.reasoning.executionRoute.contract.approvalStatus, "blocked_missing_approval");
   assert.equal(response.reasoning.executionRoute.contract.rollbackAvailable, true);
+  assert.equal(response.reasoning.runtimeLifecycle.currentStage, "APPROVAL_BLOCKED");
+  assert.equal(response.reasoning.runtimeLifecycle.lifecycleStatus, "blocked");
   assert.match(response.assistantMessage, /patch application would still require explicit approval/i);
   assert.doesNotMatch(response.assistantMessage, /I applied|I modified files|autonomous_real is available/i);
 });

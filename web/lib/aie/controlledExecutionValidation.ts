@@ -438,7 +438,7 @@ export async function runControlledValidation(input: ControlledValidationInput):
     };
   });
 
-  const checks = [
+  const checks: ValidationCheck[] = [
     {
       check_id: buildCheckId("preview-diff", 0),
       title: "Execution preview diff exists",

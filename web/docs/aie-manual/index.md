@@ -16,6 +16,7 @@ This is not marketing copy, lore, or a placeholder README expansion. It is the f
 - [Conversational Discussion Mode](./conversational-discussion-mode.md): explains when conversation should remain a valid final state without workflow creation.
 - [Human Testing Interpretation](./testing-interpretation.md): explains how to review long human testing sessions for UX interpretation, scaffold leakage, escalation quality, and operator trust signals.
 - [Conversational Visual Hierarchy](./visual-hierarchy.md): explains how AI-E should visually prioritize conversation while revealing governed workflow capability contextually.
+- [Semantic Grounding](./semantic-grounding.md): explains WordNet-style lexical grounding, AI-E operational ontology, and Second Brain semantic direction without AGI overclaiming.
 - [REAL vs NOT REAL](./real-vs-not-real.md): defines official truthfulness doctrine for the product.
 
 ## Who This Manual Serves
@@ -45,6 +46,7 @@ This Phase 1 manual covers:
 - stacked active conversation, Continuity Memory Cards, and supervised system improvement requests
 - human testing interpretation reviews
 - conversational visual hierarchy direction
+- semantic grounding and operational ontology direction
 - validation and approval indicators
 - blocked workflow states
 - rollback preparation markers
