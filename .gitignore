@@ -21,6 +21,7 @@ build_artifacts/
 # Existing AI-E runtime artifacts
 runner_artifacts/
 .aie/
+runtime_models/
 
 # Local machine cache roots
 AI_SYSTEM/

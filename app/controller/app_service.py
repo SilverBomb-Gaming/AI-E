@@ -98,6 +98,7 @@ from .web_fetcher import WebFetchError, WebFetchSnapshot, WebFetcher
 from .workflow_executor import WorkflowExecutor
 from .workflow_models import WorkflowRecord
 from .workflow_store import WorkflowStore
+from .workflow_scope import WorkflowScopeAnalyzer
 from .repo_inspector import RepoInspectionSnapshot, RepoInspector, RepoInspectorError
 from .telegram_service import TelegramApiError, TelegramChannelService, TelegramInboundMessage, mask_telegram_token
 from .task_chain_formatter import TaskChainFormatter
@@ -112,6 +113,7 @@ from .task_execution_conversation import (
 from ..platform.secrets import SecretStore, get_secret_store
 from ..providers import OllamaProviderAdapter, OpenAIProviderAdapter, ProviderReply, ProviderStatus, ProviderType as AdapterProviderType, mask_secret
 from ..runtime.manager import OpenClawRuntimeManager
+from ..runtime.agent_router import RuntimeAgentReply, RuntimeAgentRouter
 from ..runtime.log_sanitizer import sanitize_log_text
 
 try:
@@ -405,6 +407,13 @@ class ControllerService:
             config_store=self._config_store,
             secret_store=self._secret_store,
         )
+        self._runtime_agent_router = RuntimeAgentRouter(
+            runtime_manager=self._runtime_manager,
+            provider_adapters=self._provider_adapters,
+            get_config=lambda: self._config,
+            get_secret_store=lambda: self._secret_store,
+            provider_timeout_seconds=self._provider_timeout_seconds,
+        )
         self._scope_validator = ScopeValidator()
         self._capability_evaluator = CapabilityEvaluator()
         self._capability_executor = CapabilityExecutor(self)
@@ -413,6 +422,7 @@ class ControllerService:
             lifetime_seconds=_WORKFLOW_LIFETIME_SECONDS,
         )
         self._workflow_executor = WorkflowExecutor(self, self._capability_executor)
+        self._workflow_scope_analyzer = WorkflowScopeAnalyzer()
         self._audit_store = AuditStore(max_records=_AUDIT_LOG_MAX_RECORDS)
         self._data_capture = DataCapture()
         self._data_record_store = DataRecordStore(root_path=self._config_store.path.parent / "data_records")
@@ -610,6 +620,15 @@ class ControllerService:
         else:
             self._last_message = runtime_status.status_message
         return self.snapshot()
+
+    def route_conversation_prompt(self, prompt: str) -> RuntimeAgentReply:
+        workflow_scope = self._workflow_scope_analyzer.analyze(prompt)
+        reply = self._runtime_agent_router.route_prompt(prompt, workflow_scope=workflow_scope)
+        if reply.routed:
+            self._last_message = f"Conversation routed to {reply.agent_label}."
+        else:
+            self._last_message = reply.response_text
+        return reply
 
     def snapshot(self) -> ControllerSnapshot:
         self._cleanup_expired_confirmations()

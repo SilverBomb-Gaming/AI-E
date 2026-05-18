@@ -12,8 +12,31 @@ from .app_service import ControllerService
 from .models import ControllerSnapshot, Mode, Policy, ProviderType
 
 
+APP_TITLE = "AI-E Operator Console"
+APP_SUBTITLE = (
+    "A governed conversational AI environment for bounded developer assistance. "
+    "Runtime plugins stay optional; AI-E keeps approvals, scope, and operational truth visible."
+)
+DEFAULT_TRUTH_LINE = "Workflow Not Started | Mutation Not Applied | Validation Not Run | Playtest Not Confirmed | Deploy Not Deployed"
+STARTUP_CONVERSATION_GREETING = (
+    "AI-E: Ready. Tell me what you want to inspect, fix, or prepare. "
+    "I will scope the request first and ask for approval before any bounded action."
+)
+INFRASTRUCTURE_SECTION_TITLE = "Infrastructure"
+INFRASTRUCTURE_DEFAULT_EXPANDED = False
+INFRASTRUCTURE_COMPRESSED_PANELS = (
+    "Mode + Provider Settings",
+    "Telegram Channel",
+    "Diagnostics",
+    "Runtime Actions",
+    "Status Panel",
+    "Runtime Logs",
+)
+
+
 class _Bridge(QtCore.QObject):
     snapshot_ready = QtCore.Signal(object)
+    conversation_ready = QtCore.Signal(object)
     failure = QtCore.Signal(str)
 
 
@@ -25,6 +48,7 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self._service = service or ControllerService()
         self._bridge = _Bridge()
         self._bridge.snapshot_ready.connect(self._apply_snapshot)
+        self._bridge.conversation_ready.connect(self._apply_conversation_reply)
         self._bridge.failure.connect(self._handle_background_failure)
         self._refresh_form_on_next_snapshot = True
         self._clear_openai_key_on_next_snapshot = False
@@ -37,7 +61,7 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self._apply_snapshot(self._service.snapshot())
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("AI-E OpenClaw Controller")
+        self.setWindowTitle(APP_TITLE)
         self.resize(1080, 820)
         self.setMinimumSize(920, 700)
 
@@ -50,28 +74,107 @@ class FoundationWindow(QtWidgets.QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(16)
 
-        title = QtWidgets.QLabel("OpenClaw Foundation")
+        title = QtWidgets.QLabel(APP_TITLE)
         title.setStyleSheet("font-size: 24px; font-weight: 700;")
         layout.addWidget(title)
 
-        subtitle = QtWidgets.QLabel(
-            "This controller exposes runtime control plus the first safe pass at Offline and Online provider selection."
-        )
+        subtitle = QtWidgets.QLabel(APP_SUBTITLE)
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("color: #555;")
         layout.addWidget(subtitle)
 
-        layout.addWidget(self._build_settings_panel())
-        layout.addWidget(self._build_telegram_panel())
-        layout.addWidget(self._build_diagnostics_panel())
-        layout.addWidget(self._build_actions_panel())
-        layout.addWidget(self._build_status_panel())
-        layout.addWidget(self._build_logs_panel(), stretch=1)
+        self.runtime_readiness_strip = QtWidgets.QLabel("Runtime readiness: Detecting plugins...")
+        self.runtime_readiness_strip.setObjectName("runtimeReadinessStrip")
+        self.runtime_readiness_strip.setWordWrap(True)
+        self.runtime_readiness_strip.setStyleSheet(
+            "padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; "
+            "background: #f8fafc; color: #0f172a; font-weight: 600;"
+        )
+        layout.addWidget(self.runtime_readiness_strip)
+
+        layout.addWidget(self._build_conversation_panel(), stretch=1)
+        layout.addWidget(self._build_infrastructure_section())
         layout.addStretch(1)
 
         scroll_area.setWidget(root)
         self.setCentralWidget(scroll_area)
         self.statusBar().showMessage("Controller ready.")
+
+    def _build_conversation_panel(self) -> QtWidgets.QGroupBox:
+        group = QtWidgets.QGroupBox("Conversation")
+        layout = QtWidgets.QVBoxLayout(group)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        self.conversation_view = QtWidgets.QPlainTextEdit()
+        self.conversation_view.setReadOnly(True)
+        self.conversation_view.setMinimumHeight(360)
+        self.conversation_view.setPlaceholderText("Conversation history will appear here.")
+        self.conversation_view.setPlainText(f"{STARTUP_CONVERSATION_GREETING}\n\nTruth: {DEFAULT_TRUTH_LINE}")
+        layout.addWidget(self.conversation_view)
+
+        input_row = QtWidgets.QHBoxLayout()
+        input_row.setContentsMargins(0, 0, 0, 0)
+        input_row.setSpacing(10)
+
+        self.conversation_input = QtWidgets.QLineEdit()
+        self.conversation_input.setPlaceholderText("Ask AI-E to inspect a game-dev issue, prepare a safe plan, or explain current runtime readiness...")
+        self.conversation_input.returnPressed.connect(self._handle_conversation_submit)
+        self._configure_input_widget(self.conversation_input)
+
+        self.conversation_send_button = QtWidgets.QPushButton("Send")
+        self.conversation_send_button.clicked.connect(self._handle_conversation_submit)
+        self._configure_button(self.conversation_send_button)
+
+        input_row.addWidget(self.conversation_input, stretch=1)
+        input_row.addWidget(self.conversation_send_button)
+        layout.addLayout(input_row)
+
+        self.conversation_processing_label = self._create_value_label("Idle - conversation is primary; infrastructure stays below.")
+        self.conversation_processing_label.setStyleSheet("color: #475569;")
+        layout.addWidget(self.conversation_processing_label)
+        return group
+
+    def _build_infrastructure_section(self) -> QtWidgets.QWidget:
+        section = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        self.infrastructure_toggle = QtWidgets.QToolButton()
+        self.infrastructure_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.infrastructure_toggle.setCheckable(True)
+        self.infrastructure_toggle.setChecked(INFRASTRUCTURE_DEFAULT_EXPANDED)
+        self.infrastructure_toggle.toggled.connect(self._set_infrastructure_expanded)
+        self.infrastructure_toggle.setStyleSheet(
+            "padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; "
+            "background: #ffffff; color: #334155; font-weight: 600;"
+        )
+        layout.addWidget(self.infrastructure_toggle)
+
+        self.infrastructure_content = QtWidgets.QWidget()
+        content_layout = QtWidgets.QVBoxLayout(self.infrastructure_content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(12)
+        content_layout.addWidget(self._build_settings_panel())
+        content_layout.addWidget(self._build_telegram_panel())
+        content_layout.addWidget(self._build_diagnostics_panel())
+        content_layout.addWidget(self._build_actions_panel())
+        content_layout.addWidget(self._build_status_panel())
+        content_layout.addWidget(self._build_logs_panel())
+        layout.addWidget(self.infrastructure_content)
+
+        self._set_infrastructure_expanded(INFRASTRUCTURE_DEFAULT_EXPANDED)
+        return section
+
+    def _set_infrastructure_expanded(self, expanded: bool) -> None:
+        self.infrastructure_content.setVisible(expanded)
+        self.infrastructure_toggle.setArrowType(
+            QtCore.Qt.ArrowType.DownArrow if expanded else QtCore.Qt.ArrowType.RightArrow
+        )
+        self.infrastructure_toggle.setText(
+            f"Hide {INFRASTRUCTURE_SECTION_TITLE}" if expanded else f"Show {INFRASTRUCTURE_SECTION_TITLE}"
+        )
 
     def _build_settings_panel(self) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox("Mode + Provider Settings")
@@ -450,6 +553,7 @@ class FoundationWindow(QtWidgets.QMainWindow):
     def _apply_snapshot(self, snapshot: ControllerSnapshot) -> None:
         self.runtime_state_value.setText(snapshot.runtime_state)
         self.status_message_value.setText(snapshot.status_message)
+        self.runtime_readiness_strip.setText(self._runtime_plugin_readiness_label(snapshot))
         self.readiness_state_value.setText(self._readiness_label(snapshot.readiness_state))
         self.readiness_message_value.setText(snapshot.readiness_message)
         self.current_mode_value.setText(snapshot.mode)
@@ -532,6 +636,10 @@ class FoundationWindow(QtWidgets.QMainWindow):
 
     def _handle_background_failure(self, details: str) -> None:
         self._set_controls_enabled(True)
+        if hasattr(self, "conversation_input"):
+            self.conversation_input.setEnabled(True)
+        if hasattr(self, "conversation_send_button"):
+            self.conversation_send_button.setEnabled(True)
         self.status_message_value.setText("Background action failed. See runtime logs.")
         self.statusBar().showMessage("Background action failed.", 4000)
         current_text = self.logs_view.toPlainText().strip()
@@ -667,6 +775,54 @@ class FoundationWindow(QtWidgets.QMainWindow):
         clipboard.setText(self.diagnostic_summary_view.toPlainText())
         self.statusBar().showMessage("Diagnostic summary copied to clipboard.", 3000)
 
+    def _handle_conversation_submit(self) -> None:
+        prompt = self.conversation_input.text().strip()
+        if not prompt:
+            self.conversation_processing_label.setText("Idle - enter a request to begin scoped operational assistance.")
+            return
+
+        self.conversation_input.clear()
+        self._append_conversation_message("User", prompt)
+        self.conversation_processing_label.setText("Routing - AI-E is preparing a governance envelope for the selected runtime agent.")
+        self.conversation_input.setEnabled(False)
+        self.conversation_send_button.setEnabled(False)
+        thread = threading.Thread(target=self._invoke_conversation_route, args=(prompt,), daemon=True)
+        thread.start()
+
+    def _invoke_conversation_route(self, prompt: str) -> None:
+        try:
+            reply = self._service.route_conversation_prompt(prompt)
+        except Exception:  # noqa: BLE001
+            self._bridge.failure.emit(traceback.format_exc())
+            return
+        self._bridge.conversation_ready.emit(reply)
+
+    def _apply_conversation_reply(self, reply: object) -> None:
+        agent_label = str(getattr(reply, "agent_label", "Runtime Agent"))
+        response_text = str(getattr(reply, "response_text", "Runtime agent did not return a response."))
+        truth_line = str(getattr(reply, "truth_line", DEFAULT_TRUTH_LINE))
+        route_state = str(getattr(reply, "route_state", "runtime_agent_unknown"))
+        routed = bool(getattr(reply, "routed", False))
+
+        self._append_conversation_message(agent_label, response_text)
+        self._append_conversation_message("Truth", truth_line)
+        self.conversation_input.setEnabled(True)
+        self.conversation_send_button.setEnabled(True)
+        if routed:
+            self.conversation_processing_label.setText("Ready - runtime agent response shown inside AI-E truth boundaries.")
+            self.statusBar().showMessage(f"Conversation routed: {route_state}.", 3000)
+        else:
+            self.conversation_processing_label.setText("Ready - no runtime agent was available; no action executed.")
+            self.statusBar().showMessage("Conversation was not routed to a runtime agent.", 3000)
+
+    def _append_conversation_message(self, speaker: str, message: str) -> None:
+        current_text = self.conversation_view.toPlainText().strip()
+        prefix = f"{current_text}\n\n" if current_text else ""
+        self.conversation_view.setPlainText(f"{prefix}{speaker}: {message}")
+        cursor = self.conversation_view.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.MoveOperation.End)
+        self.conversation_view.setTextCursor(cursor)
+
     def _selected_mode(self) -> Mode:
         return self.mode_selector.currentData()  # type: ignore[return-value]
 
@@ -743,6 +899,22 @@ class FoundationWindow(QtWidgets.QMainWindow):
     @staticmethod
     def _readiness_label(state: str) -> str:
         return {"ready": "Ready", "degraded": "Degraded", "not_ready": "Not Ready"}.get(state, state)
+
+    @staticmethod
+    def _runtime_plugin_readiness_label(snapshot: ControllerSnapshot) -> str:
+        if snapshot.runtime_state == "error":
+            state = "Plugin Requires Setup"
+        elif snapshot.runtime_state in {"running", "starting"} and snapshot.openclaw_installed:
+            state = "OpenClaw Connected" if snapshot.runtime_state == "running" else "OpenClaw Starting"
+        elif snapshot.runtime_state == "running":
+            state = "Runtime Available"
+        elif snapshot.openclaw_installed:
+            state = "OpenClaw Available"
+        else:
+            state = "No Runtime Loaded"
+
+        detail = snapshot.status_message.strip() or "AI-E is ready to inspect available runtime plugins."
+        return f"Runtime readiness: {state} - {detail}"
 
     @staticmethod
     def _format_installation(installed: bool, path: str) -> str:
