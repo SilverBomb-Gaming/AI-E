@@ -413,6 +413,7 @@ class ControllerService:
             get_config=lambda: self._config,
             get_secret_store=lambda: self._secret_store,
             provider_timeout_seconds=self._provider_timeout_seconds,
+            get_provider_status=lambda provider: self._provider_status_cache.get(provider),
         )
         self._scope_validator = ScopeValidator()
         self._capability_evaluator = CapabilityEvaluator()

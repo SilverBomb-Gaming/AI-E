@@ -15,6 +15,14 @@ class FakeConfig:
     openai_secret_id: str = "openai/default"
 
 
+@dataclass
+class StaleConfig:
+    current_mode: str = "offline"
+    preferred_ollama_model: str = "stale-model"
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    openai_secret_id: str = "openai/default"
+
+
 class FakeRuntimeManager:
     def __init__(self, status: RuntimeStatus) -> None:
         self.status = status
@@ -51,6 +59,54 @@ class ReadyOllamaAdapter:
             message="ok",
             model="local-model",
         )
+
+
+class ModelSensitiveOllamaAdapter:
+    last_preferred_model = ""
+
+    def validate(self, **kwargs):
+        preferred_model = str(kwargs.get("preferred_model") or "")
+        return ProviderStatus(
+            provider="ollama",
+            display_name="Ollama",
+            configured=True,
+            available=preferred_model == "validated-model",
+            validation_state="valid" if preferred_model == "validated-model" else "invalid",
+            ready=preferred_model == "validated-model",
+            message="Ollama ready." if preferred_model == "validated-model" else "Stale model unavailable.",
+            is_local=True,
+            model=preferred_model,
+        )
+
+    def ask(self, **kwargs):
+        self.last_preferred_model = str(kwargs.get("preferred_model") or "")
+        if self.last_preferred_model != "validated-model":
+            return ProviderReply(provider="ollama", ok=False, text="", message="Stale model unavailable.", model=self.last_preferred_model)
+        return ProviderReply(
+            provider="ollama",
+            ok=True,
+            text="Validated model answered.",
+            message="ok",
+            model="validated-model",
+        )
+
+
+class FailingReadyOllamaAdapter:
+    def validate(self, **kwargs):
+        return ProviderStatus(
+            provider="ollama",
+            display_name="Ollama",
+            configured=True,
+            available=True,
+            validation_state="valid",
+            ready=True,
+            message="Ollama ready.",
+            is_local=True,
+            model="validated-model",
+        )
+
+    def ask(self, **kwargs):
+        return ProviderReply(provider="ollama", ok=False, text="", message="Generation failed.", model="validated-model")
 
 
 class UnreadyOllamaAdapter:
@@ -113,6 +169,64 @@ class RuntimeAgentRouterTests(unittest.TestCase):
         self.assertIn("Scope: execution_request", reply.truth_line)
         self.assertIn("Approval Required Before Action", reply.truth_line)
         self.assertEqual(reply.approval_state, "Approval Required Before Action")
+
+    def test_validated_provider_model_overrides_stale_config_for_routing(self) -> None:
+        adapter = ModelSensitiveOllamaAdapter()
+        validated_status = ProviderStatus(
+            provider="ollama",
+            display_name="Ollama",
+            configured=True,
+            available=True,
+            validation_state="valid",
+            ready=True,
+            message="Ollama ready.",
+            is_local=True,
+            model="validated-model",
+        )
+        router = RuntimeAgentRouter(
+            runtime_manager=FakeRuntimeManager(RuntimeStatus(ollama=OllamaInstallation(installed=True, path="ollama"))),
+            provider_adapters={"ollama": adapter},
+            get_config=StaleConfig,
+            get_secret_store=lambda: object(),
+            provider_timeout_seconds=lambda provider: 1.0,
+            get_provider_status=lambda provider: validated_status if provider == "ollama" else None,
+        )
+
+        reply = router.route_prompt("Help me inspect my current BABYLON gameplay loop safely.")
+
+        self.assertTrue(reply.routed)
+        self.assertEqual(adapter.last_preferred_model, "validated-model")
+        self.assertEqual(reply.agent_label, "Ollama / validated-model")
+        self.assertNotIn("No conversational runtime agent is ready", reply.response_text)
+
+    def test_generation_failure_after_validation_is_not_reported_as_readiness_absence(self) -> None:
+        validated_status = ProviderStatus(
+            provider="ollama",
+            display_name="Ollama",
+            configured=True,
+            available=True,
+            validation_state="valid",
+            ready=True,
+            message="Ollama ready.",
+            is_local=True,
+            model="validated-model",
+        )
+        router = RuntimeAgentRouter(
+            runtime_manager=FakeRuntimeManager(RuntimeStatus(ollama=OllamaInstallation(installed=True, path="ollama"))),
+            provider_adapters={"ollama": FailingReadyOllamaAdapter()},
+            get_config=StaleConfig,
+            get_secret_store=lambda: object(),
+            provider_timeout_seconds=lambda provider: 1.0,
+            get_provider_status=lambda provider: validated_status if provider == "ollama" else None,
+        )
+
+        reply = router.route_prompt("Help me inspect my current BABYLON gameplay loop safely.")
+
+        self.assertFalse(reply.routed)
+        self.assertEqual(reply.route_state, "runtime_agent_request_failed")
+        self.assertIn("Runtime agent request failed", reply.response_text)
+        self.assertNotIn("No conversational runtime agent is ready", reply.response_text)
+        self.assertIn("Runtime Agent Request Failed", reply.truth_line)
 
     def test_reports_unrouted_state_when_no_conversational_agent_is_ready(self) -> None:
         router = RuntimeAgentRouter(

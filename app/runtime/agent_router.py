@@ -61,19 +61,21 @@ class RuntimeAgentRouter:
         get_config: Callable[[], object],
         get_secret_store: Callable[[], object],
         provider_timeout_seconds: Callable[[str], float],
+        get_provider_status: Callable[[str], ProviderStatus | None] | None = None,
     ) -> None:
         self._runtime_manager = runtime_manager
         self._provider_adapters = provider_adapters
         self._get_config = get_config
         self._get_secret_store = get_secret_store
         self._provider_timeout_seconds = provider_timeout_seconds
+        self._get_provider_status = get_provider_status or (lambda provider: None)
 
     def handshakes(self) -> tuple[RuntimeAgentHandshake, ...]:
         config = self._get_config()
         status = self._runtime_manager.get_status()
         openclaw = getattr(status, "openclaw", None)
-        ollama_status = self._validate_ollama(config, status)
-        openai_status = self._validate_openai(config)
+        ollama_status = self._get_provider_status("ollama") or self._validate_ollama(config, status)
+        openai_status = self._get_provider_status("openai") or self._validate_openai(config)
         runtime_state = str(getattr(status, "runtime_state", "stopped"))
 
         return (
@@ -127,22 +129,31 @@ class RuntimeAgentRouter:
         adapter = self._provider_adapters.get("ollama")
         if adapter is None or not hasattr(adapter, "ask"):
             return None
+        provider_status = self._get_provider_status("ollama") or self._validate_ollama(config, self._runtime_manager.get_status())
+        if provider_status is not None and not provider_status.ready:
+            return None
+        preferred_model = provider_status.model.strip() if provider_status is not None and provider_status.ready else str(getattr(config, "preferred_ollama_model", ""))
         response = adapter.ask(  # type: ignore[attr-defined]
             runtime_status=self._runtime_manager.get_status(),
             base_url=str(getattr(config, "ollama_base_url", "http://127.0.0.1:11434")),
-            preferred_model=str(getattr(config, "preferred_ollama_model", "")),
+            preferred_model=preferred_model,
             prompt=self._runtime_prompt(envelope),
             response_style="concise",
             timeout_seconds=self._provider_timeout_seconds("ollama"),
         )
-        if not isinstance(response, ProviderReply) or not response.ok:
+        if not isinstance(response, ProviderReply):
             return None
+        if not response.ok:
+            return self._runtime_request_failed_reply("ollama", "Ollama", response.message)
         model = response.model or "local model"
         return self._routed_reply("ollama", f"Ollama / {model}", response.text, envelope)
 
     def _ask_openai(self, config: object, envelope: RuntimePromptEnvelope) -> RuntimeAgentReply | None:
         adapter = self._provider_adapters.get("openai")
         if adapter is None or not hasattr(adapter, "ask"):
+            return None
+        provider_status = self._get_provider_status("openai") or self._validate_openai(config)
+        if provider_status is not None and not provider_status.ready:
             return None
         response = adapter.ask(  # type: ignore[attr-defined]
             secret_store=self._get_secret_store(),
@@ -151,8 +162,10 @@ class RuntimeAgentRouter:
             prompt=self._runtime_prompt(envelope),
             response_style="concise",
         )
-        if not isinstance(response, ProviderReply) or not response.ok:
+        if not isinstance(response, ProviderReply):
             return None
+        if not response.ok:
+            return self._runtime_request_failed_reply("openai", "OpenAI", response.message)
         model = response.model or "OpenAI"
         return self._routed_reply("openai", f"OpenAI / {model}", response.text, envelope)
 
@@ -240,4 +253,16 @@ class RuntimeAgentRouter:
             route_state="runtime_agent_unavailable",
             response_text=message,
             truth_line="Runtime Agent Not Routed | Mutation Not Applied | Validation Not Run | Approval Not Requested | Audit Visible",
+        )
+
+    @staticmethod
+    def _runtime_request_failed_reply(agent_id: RuntimeAgentKind, agent_label: str, message: str) -> RuntimeAgentReply:
+        detail = message.strip() or f"{agent_label} did not return a usable response."
+        return RuntimeAgentReply(
+            agent_id=agent_id,
+            agent_label=agent_label,
+            routed=False,
+            route_state="runtime_agent_request_failed",
+            response_text=f"Runtime agent request failed: {detail}",
+            truth_line="Runtime Agent Request Failed | Mutation Not Applied | Validation Not Run | Approval Not Requested | Audit Visible",
         )
