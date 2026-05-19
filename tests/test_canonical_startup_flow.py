@@ -1,4 +1,5 @@
 from dataclasses import replace
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -220,6 +221,67 @@ class CanonicalStartupFlowTests(unittest.TestCase):
         self.assertTrue(hasattr(window.FoundationWindow, "_invoke_conversation_route"))
         self.assertTrue(hasattr(window.FoundationWindow, "_apply_conversation_reply"))
         self.assertTrue(hasattr(window.FoundationWindow, "_apply_provider_validation_snapshot"))
+
+    def test_approval_pending_card_helpers_are_scope_aware(self):
+        window = self._import_window_module()
+
+        truth_line = "Runtime Agent Routed | Scope: mutation_request | Risk: mutation_requested | Approval Required | Boundary: read_only_plan_until_operator_approval | Mutation Not Applied | Validation Not Run | Approval Required Before Action | Audit Visible"
+
+        self.assertEqual(window.APPROVAL_PENDING_IDLE, "No scoped action pending.")
+        self.assertTrue(window.FoundationWindow._approval_pending_required("Approval Required Before Action"))
+        self.assertFalse(window.FoundationWindow._approval_pending_required("No Approval Requested"))
+        self.assertEqual(
+            window.FoundationWindow._pending_request_from_truth_line(truth_line),
+            "Mutation-capable request awaiting operator approval.",
+        )
+        self.assertEqual(window.FoundationWindow._pending_risk_from_truth_line(truth_line), "Mutation requested.")
+        self.assertEqual(window.FoundationWindow._pending_boundary_from_truth_line(truth_line), "No files changed yet.")
+
+    def test_approval_pending_card_visibility_follows_reply_governance(self):
+        window = self._import_window_module()
+
+        class Field:
+            def __init__(self):
+                self.text = ""
+
+            def setText(self, text):
+                self.text = text
+
+        class Card:
+            def __init__(self):
+                self.visible = False
+
+            def setVisible(self, visible):
+                self.visible = visible
+
+        fake_window = SimpleNamespace(
+            approval_pending_card=Card(),
+            approval_request_value=Field(),
+            approval_risk_value=Field(),
+            approval_boundary_value=Field(),
+            _pending_approval_scope_line="",
+            _approval_pending_required=window.FoundationWindow._approval_pending_required,
+            _pending_request_from_truth_line=window.FoundationWindow._pending_request_from_truth_line,
+            _pending_risk_from_truth_line=window.FoundationWindow._pending_risk_from_truth_line,
+            _pending_boundary_from_truth_line=window.FoundationWindow._pending_boundary_from_truth_line,
+            _hide_approval_pending_card=lambda: window.FoundationWindow._hide_approval_pending_card(fake_window),
+        )
+        approval_reply = SimpleNamespace(
+            approval_state="Approval Required Before Action",
+            truth_line="Runtime Agent Routed | Scope: mutation_request | Risk: mutation_requested | Approval Required | Boundary: read_only_plan_until_operator_approval | Mutation Not Applied | Validation Not Run | Approval Required Before Action | Audit Visible",
+        )
+        read_only_reply = SimpleNamespace(approval_state="No Approval Requested", truth_line="Runtime Agent Routed")
+
+        window.FoundationWindow._apply_approval_pending_state(fake_window, approval_reply)
+
+        self.assertTrue(fake_window.approval_pending_card.visible)
+        self.assertEqual(fake_window.approval_risk_value.text, "Mutation requested.")
+        self.assertEqual(fake_window.approval_boundary_value.text, "No files changed yet.")
+
+        window.FoundationWindow._apply_approval_pending_state(fake_window, read_only_reply)
+
+        self.assertFalse(fake_window.approval_pending_card.visible)
+        self.assertEqual(fake_window.approval_request_value.text, window.APPROVAL_PENDING_IDLE)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ class RuntimePromptEnvelope:
     intent_class: str
     workflow_scope_line: str = "Scope: conversation | Risk: none | Approval Not Required | Boundary: read_only_runtime_response"
     workflow_runtime_instruction: str = "Workflow scope analysis unavailable. Treat this as read-only conversation."
+    project_context_instruction: str = "Project context unavailable. Do not invent project-specific expansions or meanings."
     mutation_allowed: bool = False
     execution_allowed: bool = False
     approval_required_for_action: bool = True
@@ -101,6 +102,7 @@ class RuntimeAgentRouter:
             workflow_runtime_instruction=str(
                 workflow_scope.runtime_instruction() if workflow_scope is not None and hasattr(workflow_scope, "runtime_instruction") else RuntimePromptEnvelope.workflow_runtime_instruction
             ),
+            project_context_instruction=self._project_context_instruction(prompt),
             mutation_allowed=bool(getattr(workflow_scope, "mutation_allowed", False)),
             execution_allowed=bool(getattr(workflow_scope, "runtime_execution_allowed", False)),
             approval_required_for_action=bool(getattr(workflow_scope, "approval_required", True)),
@@ -228,6 +230,7 @@ class RuntimeAgentRouter:
             else "This request is read-only; do not request approval for read-only discussion and do not claim validation, execution, mutation, deployment, or rollback."
         )
         return (
+            f"{envelope.project_context_instruction} "
             "AI-E governance envelope: answer the user's prompt as the selected runtime agent. "
             "AI-E owns all operational authority wording. "
             "You may reason, inspect conceptually, identify risks, and propose safe next steps. "
@@ -236,6 +239,16 @@ class RuntimeAgentRouter:
             f"Intent class: {envelope.intent_class}. "
             f"Mutation allowed: {envelope.mutation_allowed}. Execution allowed: {envelope.execution_allowed}.\n\n"
             f"User prompt: {envelope.user_prompt}"
+        )
+
+    @staticmethod
+    def _project_context_instruction(prompt: str) -> str:
+        if "babylon" not in prompt.lower():
+            return "Project context unavailable. Do not invent project-specific expansions or meanings."
+        return (
+            "Project context: BABYLON is the user's current game project. "
+            "Treat BABYLON as a project/game name, not an acronym. "
+            "Do not invent expansions. Preserve project-specific meaning when responding."
         )
 
     @staticmethod
@@ -256,9 +269,13 @@ class RuntimeAgentRouter:
     def _governed_response_text(response_text: str, envelope: RuntimePromptEnvelope, approval_state: str) -> str:
         cleaned_sentences: list[str] = []
         removed_authority_claim = False
+        corrected_project_context = False
         for sentence in RuntimeAgentRouter._split_response_sentences(response_text):
             if RuntimeAgentRouter._contains_operational_authority_claim(sentence):
                 removed_authority_claim = True
+                continue
+            if RuntimeAgentRouter._contains_project_context_error(sentence, envelope):
+                corrected_project_context = True
                 continue
             cleaned_sentences.append(sentence.strip())
 
@@ -270,9 +287,25 @@ class RuntimeAgentRouter:
             f"AI-E governance: {approval_state}; Mutation Not Applied; Validation Not Run; "
             f"Boundary: {envelope.workflow_scope_line}."
         )
+        if corrected_project_context:
+            governance_statement = "AI-E project context: BABYLON is the user's game project, not an acronym. " + governance_statement
         if removed_authority_claim:
             governance_statement = "AI-E governance normalized runtime authority wording. " + governance_statement
         return f"{cleaned}\n\n{governance_statement}"
+
+    @staticmethod
+    def _contains_project_context_error(sentence: str, envelope: RuntimePromptEnvelope) -> bool:
+        if "babylon" not in envelope.user_prompt.lower():
+            return False
+        normalized = sentence.lower()
+        return bool(
+            re.search(r"\bbabylon\b\s*(?:=|means|stands for|is short for|refers to)", normalized)
+            or "base application development environment" in normalized
+            or re.search(r"\bbabylon\b.*\bacronym\b", normalized)
+            or "no project context" in normalized
+            or "does not include a project context" in normalized
+            or "project context unavailable" in normalized
+        )
 
     @staticmethod
     def _split_response_sentences(response_text: str) -> tuple[str, ...]:
@@ -302,7 +335,7 @@ class RuntimeAgentRouter:
             r"\brolled back\b",
             r"\brollback\b",
             r"\bmutation applied\b",
-            r"\bchanges? (?:are|were|will be|have been|has been)\b",
+            r"\bchanges? (?:are|were|will be|have been|has been) (?:applied|made|completed|done|saved|written)\b",
             r"\bfile(?:s)? (?:were |was |are |is |have been |has been )?(?:changed|edited|modified|updated|deleted|created|written)\b",
             r"\b(?:changed|edited|modified|updated|deleted|created|wrote) (?:the )?file\b",
         )

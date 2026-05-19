@@ -20,6 +20,7 @@ APP_SUBTITLE = (
 )
 DEFAULT_TRUTH_LINE = "Workflow Not Started | Mutation Not Applied | Validation Not Run | Playtest Not Confirmed | Deploy Not Deployed"
 PROVIDER_VISIBILITY_IDLE = "Provider validation: Not run this session | Runtime model: unknown | Last checked: --:--:--"
+APPROVAL_PENDING_IDLE = "No scoped action pending."
 STARTUP_CONVERSATION_GREETING = (
     "AI-E: Ready. Tell me what you want to inspect, fix, or prepare. "
     "I will scope the request first and ask for approval before any bounded action."
@@ -148,6 +149,48 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self.conversation_processing_label = self._create_value_label("Idle - conversation is primary; infrastructure stays below.")
         self.conversation_processing_label.setStyleSheet("color: #475569;")
         layout.addWidget(self.conversation_processing_label)
+        layout.addWidget(self._build_approval_pending_card())
+        return group
+
+    def _build_approval_pending_card(self) -> QtWidgets.QGroupBox:
+        group = QtWidgets.QGroupBox("Scoped Action Pending")
+        group.setObjectName("approvalPendingCard")
+        group.setStyleSheet(
+            "QGroupBox { border: 1px solid #f59e0b; border-radius: 6px; margin-top: 10px; padding-top: 10px; background: #fffbeb; } "
+            "QGroupBox::title { color: #92400e; font-weight: 700; }"
+        )
+        layout = self._create_form_layout(group)
+
+        self.approval_request_value = self._create_value_label(APPROVAL_PENDING_IDLE)
+        self.approval_risk_value = self._create_value_label("-")
+        self.approval_boundary_value = self._create_value_label("-")
+
+        self.approve_plan_button = QtWidgets.QPushButton("Approve Plan")
+        self.cancel_plan_button = QtWidgets.QPushButton("Cancel")
+        self.view_scope_button = QtWidgets.QPushButton("View Scope")
+        self.approve_plan_button.clicked.connect(self._handle_approve_pending_plan)
+        self.cancel_plan_button.clicked.connect(self._hide_approval_pending_card)
+        self.view_scope_button.clicked.connect(self._handle_view_pending_scope)
+        self._configure_button(self.approve_plan_button)
+        self._configure_button(self.cancel_plan_button)
+        self._configure_button(self.view_scope_button)
+
+        actions_widget = QtWidgets.QWidget()
+        actions_layout = QtWidgets.QHBoxLayout(actions_widget)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(10)
+        actions_layout.addWidget(self.approve_plan_button)
+        actions_layout.addWidget(self.cancel_plan_button)
+        actions_layout.addWidget(self.view_scope_button)
+        actions_layout.addStretch(1)
+
+        layout.addRow("Request", self.approval_request_value)
+        layout.addRow("Risk", self.approval_risk_value)
+        layout.addRow("Boundary", self.approval_boundary_value)
+        layout.addRow("Actions", actions_widget)
+        group.setVisible(False)
+        self.approval_pending_card = group
+        self._pending_approval_scope_line = ""
         return group
 
     def _build_infrastructure_section(self) -> QtWidgets.QWidget:
@@ -855,17 +898,86 @@ class FoundationWindow(QtWidgets.QMainWindow):
         truth_line = str(getattr(reply, "truth_line", DEFAULT_TRUTH_LINE))
         route_state = str(getattr(reply, "route_state", "runtime_agent_unknown"))
         routed = bool(getattr(reply, "routed", False))
+        approval_state = str(getattr(reply, "approval_state", "No Approval Requested"))
 
         self._append_conversation_message(agent_label, response_text)
         self._append_conversation_message("Truth", truth_line)
+        self._apply_approval_pending_state(reply)
         self.conversation_input.setEnabled(True)
         self.conversation_send_button.setEnabled(True)
         if routed:
-            self.conversation_processing_label.setText("Ready - runtime agent response shown inside AI-E truth boundaries.")
+            if self._approval_pending_required(approval_state):
+                self.conversation_processing_label.setText("Scoped action pending - operator approval is required before mutation or execution.")
+            else:
+                self.conversation_processing_label.setText("Ready - runtime agent response shown inside AI-E truth boundaries.")
             self.statusBar().showMessage(f"Conversation routed: {route_state}.", 3000)
         else:
             self.conversation_processing_label.setText("Ready - no runtime agent was available; no action executed.")
             self.statusBar().showMessage("Conversation was not routed to a runtime agent.", 3000)
+
+    def _apply_approval_pending_state(self, reply: object) -> None:
+        approval_state = str(getattr(reply, "approval_state", "No Approval Requested"))
+        if not self._approval_pending_required(approval_state):
+            self._hide_approval_pending_card()
+            return
+
+        truth_line = str(getattr(reply, "truth_line", DEFAULT_TRUTH_LINE))
+        request = self._pending_request_from_truth_line(truth_line)
+        risk = self._pending_risk_from_truth_line(truth_line)
+        boundary = self._pending_boundary_from_truth_line(truth_line)
+        self._pending_approval_scope_line = truth_line
+        self.approval_request_value.setText(request)
+        self.approval_risk_value.setText(risk)
+        self.approval_boundary_value.setText(boundary)
+        self.approval_pending_card.setVisible(True)
+
+    def _hide_approval_pending_card(self) -> None:
+        if hasattr(self, "approval_pending_card"):
+            self.approval_pending_card.setVisible(False)
+        if hasattr(self, "approval_request_value"):
+            self.approval_request_value.setText(APPROVAL_PENDING_IDLE)
+            self.approval_risk_value.setText("-")
+            self.approval_boundary_value.setText("-")
+        self._pending_approval_scope_line = ""
+
+    def _handle_approve_pending_plan(self) -> None:
+        self._append_conversation_message("Approval", "Plan approval recorded for the visible scope. Mutation and execution remain unavailable until a bounded executor is connected.")
+        self.statusBar().showMessage("Plan approval recorded; no mutation executed.", 3000)
+
+    def _handle_view_pending_scope(self) -> None:
+        scope = self._pending_approval_scope_line or DEFAULT_TRUTH_LINE
+        self._append_conversation_message("Scope", scope)
+        self.statusBar().showMessage("Pending action scope shown in conversation.", 3000)
+
+    @staticmethod
+    def _approval_pending_required(approval_state: str) -> bool:
+        return "approval required" in approval_state.lower()
+
+    @staticmethod
+    def _pending_request_from_truth_line(truth_line: str) -> str:
+        if "Scope: mutation_request" in truth_line:
+            return "Mutation-capable request awaiting operator approval."
+        if "Scope: execution_request" in truth_line:
+            return "Runtime execution request awaiting operator approval."
+        return "Scoped action awaiting operator approval."
+
+    @staticmethod
+    def _pending_risk_from_truth_line(truth_line: str) -> str:
+        if "Risk: mutation_requested" in truth_line:
+            return "Mutation requested."
+        if "Risk: execution_requested" in truth_line:
+            return "Runtime execution requested."
+        if "Risk:" in truth_line:
+            return truth_line.split("Risk:", 1)[1].split("|", 1)[0].strip().replace("_", " ").capitalize() + "."
+        return "Approval required."
+
+    @staticmethod
+    def _pending_boundary_from_truth_line(truth_line: str) -> str:
+        if "Boundary: read_only_plan_until_operator_approval" in truth_line:
+            return "No files changed yet."
+        if "Boundary: planning_only_until_operator_approval" in truth_line:
+            return "No commands executed yet."
+        return "No mutation or execution has been applied."
 
     def _append_conversation_message(self, speaker: str, message: str) -> None:
         current_text = self.conversation_view.toPlainText().strip()

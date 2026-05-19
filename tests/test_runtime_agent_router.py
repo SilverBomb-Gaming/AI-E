@@ -211,6 +211,31 @@ class RuntimeAgentRouterTests(unittest.TestCase):
         self.assertIn("AI-E governance", reply.response_text)
         self.assertIn("Mutation Not Applied", reply.response_text)
 
+    def test_babylon_project_context_is_injected_and_acronym_expansion_is_removed(self) -> None:
+        adapter = AuthorityClaimingOllamaAdapter(
+            "BABYLON = Base Application Development Environment. This request has no project context. I can inspect BABYLON as your gameplay project."
+        )
+        router = RuntimeAgentRouter(
+            runtime_manager=FakeRuntimeManager(RuntimeStatus(ollama=OllamaInstallation(installed=True, path="ollama"))),
+            provider_adapters={"ollama": adapter},
+            get_config=FakeConfig,
+            get_secret_store=lambda: object(),
+            provider_timeout_seconds=lambda provider: 1.0,
+        )
+
+        scope = WorkflowScopeAnalyzer().analyze("Help me inspect my current BABYLON gameplay loop safely.")
+        reply = router.route_prompt("Help me inspect my current BABYLON gameplay loop safely.", workflow_scope=scope)
+
+        self.assertTrue(reply.routed)
+        self.assertIn("Project context: BABYLON is the user's current game project", adapter.last_prompt)
+        self.assertIn("Treat BABYLON as a project/game name, not an acronym", adapter.last_prompt)
+        self.assertIn("Scope: inspection", reply.truth_line)
+        self.assertIn("I can inspect BABYLON", reply.response_text)
+        self.assertNotIn("Base Application Development Environment", reply.response_text)
+        self.assertNotIn("BABYLON =", reply.response_text)
+        self.assertNotIn("no project context", reply.response_text.lower())
+        self.assertIn("BABYLON is the user's game project, not an acronym", reply.response_text)
+
     def test_mutation_request_truth_controls_approval_and_blocks_execution_claims(self) -> None:
         adapter = AuthorityClaimingOllamaAdapter(
             "I can outline the zombie health tuning. I executed the change and validation passed."
