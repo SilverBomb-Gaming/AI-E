@@ -45,6 +45,7 @@ class RuntimeAgentReply:
     validation_status: str = "Validation Not Run"
     approval_state: str = "No Approval Requested"
     audit_visibility: str = "Runtime route visible in conversation"
+    request_text: str = ""
 
 
 class RuntimeManagerLike(Protocol):
@@ -263,6 +264,7 @@ class RuntimeAgentRouter:
             response_text=governed_response,
             truth_line=f"Runtime Agent Routed | {envelope.workflow_scope_line} | Mutation Not Applied | Validation Not Run | {approval_state} | Audit Visible",
             approval_state=approval_state,
+            request_text=envelope.user_prompt,
         )
 
     @staticmethod

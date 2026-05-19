@@ -228,6 +228,10 @@ class CanonicalStartupFlowTests(unittest.TestCase):
         truth_line = "Runtime Agent Routed | Scope: mutation_request | Risk: mutation_requested | Approval Required | Boundary: read_only_plan_until_operator_approval | Mutation Not Applied | Validation Not Run | Approval Required Before Action | Audit Visible"
 
         self.assertEqual(window.APPROVAL_PENDING_IDLE, "No scoped action pending.")
+        self.assertIn("background: #111827", window.APPROVAL_CARD_STYLE)
+        self.assertIn("color: #f8fafc", window.APPROVAL_CARD_STYLE)
+        self.assertIn("border: 1px solid #f59e0b", window.APPROVAL_CARD_STYLE)
+        self.assertIn("QPushButton#approvePlanButton", window.APPROVAL_CARD_STYLE)
         self.assertTrue(window.FoundationWindow._approval_pending_required("Approval Required Before Action"))
         self.assertFalse(window.FoundationWindow._approval_pending_required("No Approval Requested"))
         self.assertEqual(
@@ -268,6 +272,7 @@ class CanonicalStartupFlowTests(unittest.TestCase):
         )
         approval_reply = SimpleNamespace(
             approval_state="Approval Required Before Action",
+            request_text="Increase zombie health after round 3.",
             truth_line="Runtime Agent Routed | Scope: mutation_request | Risk: mutation_requested | Approval Required | Boundary: read_only_plan_until_operator_approval | Mutation Not Applied | Validation Not Run | Approval Required Before Action | Audit Visible",
         )
         read_only_reply = SimpleNamespace(approval_state="No Approval Requested", truth_line="Runtime Agent Routed")
@@ -275,6 +280,7 @@ class CanonicalStartupFlowTests(unittest.TestCase):
         window.FoundationWindow._apply_approval_pending_state(fake_window, approval_reply)
 
         self.assertTrue(fake_window.approval_pending_card.visible)
+        self.assertEqual(fake_window.approval_request_value.text, "Increase zombie health after round 3.")
         self.assertEqual(fake_window.approval_risk_value.text, "Mutation requested.")
         self.assertEqual(fake_window.approval_boundary_value.text, "No files changed yet.")
 

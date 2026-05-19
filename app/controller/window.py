@@ -21,6 +21,55 @@ APP_SUBTITLE = (
 DEFAULT_TRUTH_LINE = "Workflow Not Started | Mutation Not Applied | Validation Not Run | Playtest Not Confirmed | Deploy Not Deployed"
 PROVIDER_VISIBILITY_IDLE = "Provider validation: Not run this session | Runtime model: unknown | Last checked: --:--:--"
 APPROVAL_PENDING_IDLE = "No scoped action pending."
+APPROVAL_CARD_STYLE = """
+QGroupBox#approvalPendingCard {
+    border: 1px solid #f59e0b;
+    border-radius: 6px;
+    margin-top: 10px;
+    padding-top: 12px;
+    background: #111827;
+    color: #f8fafc;
+}
+QGroupBox#approvalPendingCard::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+    color: #fbbf24;
+    font-weight: 700;
+}
+QGroupBox#approvalPendingCard QLabel {
+    color: #e5e7eb;
+    font-weight: 600;
+}
+QGroupBox#approvalPendingCard QPushButton {
+    border: 1px solid #475569;
+    border-radius: 5px;
+    padding: 7px 10px;
+    background: #1f2937;
+    color: #f8fafc;
+    font-weight: 700;
+}
+QGroupBox#approvalPendingCard QPushButton:hover {
+    background: #334155;
+    border-color: #94a3b8;
+}
+QGroupBox#approvalPendingCard QPushButton#approvePlanButton {
+    background: #f59e0b;
+    border-color: #fbbf24;
+    color: #111827;
+}
+QGroupBox#approvalPendingCard QPushButton#approvePlanButton:hover {
+    background: #fbbf24;
+}
+QGroupBox#approvalPendingCard QPushButton#cancelPlanButton {
+    background: #7f1d1d;
+    border-color: #f87171;
+    color: #fff7ed;
+}
+QGroupBox#approvalPendingCard QPushButton#cancelPlanButton:hover {
+    background: #991b1b;
+}
+"""
 STARTUP_CONVERSATION_GREETING = (
     "AI-E: Ready. Tell me what you want to inspect, fix, or prepare. "
     "I will scope the request first and ask for approval before any bounded action."
@@ -155,10 +204,7 @@ class FoundationWindow(QtWidgets.QMainWindow):
     def _build_approval_pending_card(self) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox("Scoped Action Pending")
         group.setObjectName("approvalPendingCard")
-        group.setStyleSheet(
-            "QGroupBox { border: 1px solid #f59e0b; border-radius: 6px; margin-top: 10px; padding-top: 10px; background: #fffbeb; } "
-            "QGroupBox::title { color: #92400e; font-weight: 700; }"
-        )
+        group.setStyleSheet(APPROVAL_CARD_STYLE)
         layout = self._create_form_layout(group)
 
         self.approval_request_value = self._create_value_label(APPROVAL_PENDING_IDLE)
@@ -168,6 +214,9 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self.approve_plan_button = QtWidgets.QPushButton("Approve Plan")
         self.cancel_plan_button = QtWidgets.QPushButton("Cancel")
         self.view_scope_button = QtWidgets.QPushButton("View Scope")
+        self.approve_plan_button.setObjectName("approvePlanButton")
+        self.cancel_plan_button.setObjectName("cancelPlanButton")
+        self.view_scope_button.setObjectName("viewScopeButton")
         self.approve_plan_button.clicked.connect(self._handle_approve_pending_plan)
         self.cancel_plan_button.clicked.connect(self._hide_approval_pending_card)
         self.view_scope_button.clicked.connect(self._handle_view_pending_scope)
@@ -922,7 +971,7 @@ class FoundationWindow(QtWidgets.QMainWindow):
             return
 
         truth_line = str(getattr(reply, "truth_line", DEFAULT_TRUTH_LINE))
-        request = self._pending_request_from_truth_line(truth_line)
+        request = str(getattr(reply, "request_text", "")).strip() or self._pending_request_from_truth_line(truth_line)
         risk = self._pending_risk_from_truth_line(truth_line)
         boundary = self._pending_boundary_from_truth_line(truth_line)
         self._pending_approval_scope_line = truth_line

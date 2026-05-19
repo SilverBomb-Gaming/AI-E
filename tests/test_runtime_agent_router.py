@@ -185,6 +185,7 @@ class RuntimeAgentRouterTests(unittest.TestCase):
         self.assertIn("Scope: execution_request", reply.truth_line)
         self.assertIn("Approval Required Before Action", reply.truth_line)
         self.assertEqual(reply.approval_state, "Approval Required Before Action")
+        self.assertEqual(reply.request_text, "Patch the movement script and run tests.")
 
     def test_read_only_runtime_response_cannot_contradict_approval_truth(self) -> None:
         adapter = AuthorityClaimingOllamaAdapter(
