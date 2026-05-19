@@ -109,6 +109,22 @@ class FailingReadyOllamaAdapter:
         return ProviderReply(provider="ollama", ok=False, text="", message="Generation failed.", model="validated-model")
 
 
+class AuthorityClaimingOllamaAdapter(ReadyOllamaAdapter):
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def ask(self, **kwargs):
+        prompt = str(kwargs.get("prompt") or "")
+        self.last_prompt = prompt
+        return ProviderReply(
+            provider="ollama",
+            ok=True,
+            text=self.text,
+            message="ok",
+            model="local-model",
+        )
+
+
 class UnreadyOllamaAdapter:
     def validate(self, **kwargs):
         return ProviderStatus(
@@ -169,6 +185,77 @@ class RuntimeAgentRouterTests(unittest.TestCase):
         self.assertIn("Scope: execution_request", reply.truth_line)
         self.assertIn("Approval Required Before Action", reply.truth_line)
         self.assertEqual(reply.approval_state, "Approval Required Before Action")
+
+    def test_read_only_runtime_response_cannot_contradict_approval_truth(self) -> None:
+        adapter = AuthorityClaimingOllamaAdapter(
+            "I can help inspect the gameplay loop safely. Approval is required before execution. No files were changed."
+        )
+        router = RuntimeAgentRouter(
+            runtime_manager=FakeRuntimeManager(RuntimeStatus(ollama=OllamaInstallation(installed=True, path="ollama"))),
+            provider_adapters={"ollama": adapter},
+            get_config=FakeConfig,
+            get_secret_store=lambda: object(),
+            provider_timeout_seconds=lambda provider: 1.0,
+        )
+
+        scope = WorkflowScopeAnalyzer().analyze("Help me inspect my current BABYLON gameplay loop safely.")
+        reply = router.route_prompt("Help me inspect my current BABYLON gameplay loop safely.", workflow_scope=scope)
+
+        self.assertTrue(reply.routed)
+        self.assertIn("Runtime Agent Routed", reply.truth_line)
+        self.assertIn("Approval Not Required", reply.truth_line)
+        self.assertIn("No Approval Requested", reply.truth_line)
+        self.assertIn("I can help inspect", reply.response_text)
+        self.assertNotIn("Approval is required", reply.response_text)
+        self.assertNotIn("files were changed", reply.response_text.lower())
+        self.assertIn("AI-E governance", reply.response_text)
+        self.assertIn("Mutation Not Applied", reply.response_text)
+
+    def test_mutation_request_truth_controls_approval_and_blocks_execution_claims(self) -> None:
+        adapter = AuthorityClaimingOllamaAdapter(
+            "I can outline the zombie health tuning. I executed the change and validation passed."
+        )
+        router = RuntimeAgentRouter(
+            runtime_manager=FakeRuntimeManager(RuntimeStatus(ollama=OllamaInstallation(installed=True, path="ollama"))),
+            provider_adapters={"ollama": adapter},
+            get_config=FakeConfig,
+            get_secret_store=lambda: object(),
+            provider_timeout_seconds=lambda provider: 1.0,
+        )
+
+        scope = WorkflowScopeAnalyzer().analyze("Increase zombie health after round 3.")
+        reply = router.route_prompt("Increase zombie health after round 3.", workflow_scope=scope)
+
+        self.assertTrue(reply.routed)
+        self.assertIn("Scope: mutation_request", reply.truth_line)
+        self.assertIn("Risk: mutation_requested", reply.truth_line)
+        self.assertIn("Approval Required", reply.truth_line)
+        self.assertIn("Mutation Not Applied", reply.truth_line)
+        self.assertIn("Validation Not Run", reply.truth_line)
+        self.assertIn("I can outline", reply.response_text)
+        self.assertNotIn("executed", reply.response_text.lower())
+        self.assertNotIn("validation passed", reply.response_text.lower())
+
+    def test_validation_claim_guard_keeps_validation_state_evidence_backed(self) -> None:
+        adapter = AuthorityClaimingOllamaAdapter(
+            "I validated the gameplay loop and tests passed. I can explain what evidence would be needed next."
+        )
+        router = RuntimeAgentRouter(
+            runtime_manager=FakeRuntimeManager(RuntimeStatus(ollama=OllamaInstallation(installed=True, path="ollama"))),
+            provider_adapters={"ollama": adapter},
+            get_config=FakeConfig,
+            get_secret_store=lambda: object(),
+            provider_timeout_seconds=lambda provider: 1.0,
+        )
+
+        scope = WorkflowScopeAnalyzer().analyze("Did you validate the gameplay loop?")
+        reply = router.route_prompt("Did you validate the gameplay loop?", workflow_scope=scope)
+
+        self.assertTrue(reply.routed)
+        self.assertIn("Validation Not Run", reply.truth_line)
+        self.assertIn("Validation Not Run", reply.response_text)
+        self.assertNotIn("I validated", reply.response_text)
+        self.assertNotIn("tests passed", reply.response_text.lower())
 
     def test_validated_provider_model_overrides_stale_config_for_routing(self) -> None:
         adapter = ModelSensitiveOllamaAdapter()

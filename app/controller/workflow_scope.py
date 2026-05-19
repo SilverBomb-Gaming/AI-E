@@ -69,9 +69,17 @@ class WorkflowScopeAnalyzer:
         "edit",
         "modify",
         "update",
+        "increase",
+        "decrease",
+        "reduce",
+        "raise",
+        "lower",
+        "set",
+        "tune",
+        "adjust",
         "remove",
     )
-    _DIAGNOSTIC_TERMS = ("diagnose", "health", "status", "readiness", "logs", "error", "failure")
+    _DIAGNOSTIC_TERMS = ("diagnose", "health", "status", "readiness", "logs", "error", "failure", "validate", "validated", "validation")
     _INSPECTION_TERMS = ("inspect", "review", "analyze", "explain", "why", "understand", "summarize")
     _PLANNING_TERMS = ("plan", "prepare", "scope", "design", "proposal", "next step")
 

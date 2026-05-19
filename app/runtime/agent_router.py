@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Callable, Literal, Protocol
 
 from ..providers import ProviderReply, ProviderStatus
@@ -221,10 +222,16 @@ class RuntimeAgentRouter:
 
     @staticmethod
     def _runtime_prompt(envelope: RuntimePromptEnvelope) -> str:
+        scope_instruction = (
+            "This request is planning-only until AI-E operator approval; do not claim approval, execution, mutation, validation, deployment, or rollback."
+            if envelope.approval_required_for_action
+            else "This request is read-only; do not request approval for read-only discussion and do not claim validation, execution, mutation, deployment, or rollback."
+        )
         return (
             "AI-E governance envelope: answer the user's prompt as the selected runtime agent. "
-            "Do not claim file mutation, validation, playtest, deployment, or command execution. "
-            "If action is needed, describe the next bounded step and say approval is required before execution. "
+            "AI-E owns all operational authority wording. "
+            "You may reason, inspect conceptually, identify risks, and propose safe next steps. "
+            f"{scope_instruction} "
             f"{envelope.workflow_runtime_instruction} "
             f"Intent class: {envelope.intent_class}. "
             f"Mutation allowed: {envelope.mutation_allowed}. Execution allowed: {envelope.execution_allowed}.\n\n"
@@ -234,15 +241,72 @@ class RuntimeAgentRouter:
     @staticmethod
     def _routed_reply(agent_id: RuntimeAgentKind, agent_label: str, response_text: str, envelope: RuntimePromptEnvelope) -> RuntimeAgentReply:
         approval_state = "Approval Required Before Action" if envelope.approval_required_for_action else "No Approval Requested"
+        governed_response = RuntimeAgentRouter._governed_response_text(response_text, envelope, approval_state)
         return RuntimeAgentReply(
             agent_id=agent_id,
             agent_label=agent_label,
             routed=True,
             route_state="runtime_agent_response",
-            response_text=response_text,
+            response_text=governed_response,
             truth_line=f"Runtime Agent Routed | {envelope.workflow_scope_line} | Mutation Not Applied | Validation Not Run | {approval_state} | Audit Visible",
             approval_state=approval_state,
         )
+
+    @staticmethod
+    def _governed_response_text(response_text: str, envelope: RuntimePromptEnvelope, approval_state: str) -> str:
+        cleaned_sentences: list[str] = []
+        removed_authority_claim = False
+        for sentence in RuntimeAgentRouter._split_response_sentences(response_text):
+            if RuntimeAgentRouter._contains_operational_authority_claim(sentence):
+                removed_authority_claim = True
+                continue
+            cleaned_sentences.append(sentence.strip())
+
+        cleaned = " ".join(sentence for sentence in cleaned_sentences if sentence).strip()
+        if not cleaned:
+            cleaned = "I can help reason about the request safely within AI-E's current workflow boundary."
+
+        governance_statement = (
+            f"AI-E governance: {approval_state}; Mutation Not Applied; Validation Not Run; "
+            f"Boundary: {envelope.workflow_scope_line}."
+        )
+        if removed_authority_claim:
+            governance_statement = "AI-E governance normalized runtime authority wording. " + governance_statement
+        return f"{cleaned}\n\n{governance_statement}"
+
+    @staticmethod
+    def _split_response_sentences(response_text: str) -> tuple[str, ...]:
+        normalized = " ".join(response_text.split())
+        if not normalized:
+            return ()
+        return tuple(part.strip() for part in re.split(r"(?<=[.!?])\s+", normalized) if part.strip())
+
+    @staticmethod
+    def _contains_operational_authority_claim(sentence: str) -> bool:
+        normalized = sentence.lower()
+        authority_patterns = (
+            r"\bapproval\s+(?:is|was|will be|would be|required|needed|not required|requested)\b",
+            r"\bapproval\b.*\b(?:required|needed|requested|granted|denied)\b",
+            r"\b(?:require|requires|required|need|needs|needed)\s+approval\b",
+            r"\bapproval\b.*\bexecut(?:e|ed|ing|ion)\b",
+            r"\bapproved\b",
+            r"\bauthori[sz](?:e|ed|ation)\b",
+            r"\bpermission\b",
+            r"\bexecut(?:e|ed|ing|ion)\b",
+            r"\bran\b",
+            r"\brun\b",
+            r"\btest(?:ed|s)? passed\b",
+            r"\bplaytest(?:ed)?\b",
+            r"\bvalidat(?:e|ed|ion)\b",
+            r"\bdeployed?\b",
+            r"\brolled back\b",
+            r"\brollback\b",
+            r"\bmutation applied\b",
+            r"\bchanges? (?:are|were|will be|have been|has been)\b",
+            r"\bfile(?:s)? (?:were |was |are |is |have been |has been )?(?:changed|edited|modified|updated|deleted|created|written)\b",
+            r"\b(?:changed|edited|modified|updated|deleted|created|wrote) (?:the )?file\b",
+        )
+        return any(re.search(pattern, normalized) for pattern in authority_patterns)
 
     @staticmethod
     def _unrouted_reply(message: str) -> RuntimeAgentReply:

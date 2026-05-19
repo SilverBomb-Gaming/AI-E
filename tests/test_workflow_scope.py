@@ -42,6 +42,16 @@ class WorkflowScopeAnalyzerTests(unittest.TestCase):
         self.assertFalse(scope.mutation_allowed)
         self.assertTrue(scope.validation_required)
 
+    def test_validation_question_is_read_only_diagnostics_without_false_validation(self) -> None:
+        scope = self.analyzer.analyze("Did you validate the gameplay loop?")
+
+        self.assertEqual(scope.workflow_kind, "diagnostics")
+        self.assertEqual(scope.intent_class, "read_only_diagnostics")
+        self.assertEqual(scope.mutation_risk, "read_only")
+        self.assertFalse(scope.approval_required)
+        self.assertFalse(scope.validation_required)
+        self.assertIn("Boundary: read_only_runtime_response", scope.truth_scope_line)
+
 
 if __name__ == "__main__":
     unittest.main()
