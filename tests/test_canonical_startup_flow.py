@@ -43,10 +43,51 @@ class CanonicalStartupFlowTests(unittest.TestCase):
 
         self.assertIn("Ready", window.STARTUP_CONVERSATION_GREETING)
         self.assertIn("approval before any bounded action", window.STARTUP_CONVERSATION_GREETING)
+        self.assertIn("Provider validation: Not run this session", window.PROVIDER_VISIBILITY_IDLE)
         self.assertEqual(
             window.DEFAULT_TRUTH_LINE,
             "Workflow Not Started | Mutation Not Applied | Validation Not Run | Playtest Not Confirmed | Deploy Not Deployed",
         )
+
+    def test_provider_validation_loading_state_is_visible(self):
+        window = self._import_window_module()
+
+        label = window.FoundationWindow._provider_validation_loading_label("ollama", "qwen2.5:0.5b")
+
+        self.assertIn("Provider validation: Validating Ollama / qwen2.5:0.5b runtime", label)
+        self.assertIn("Last checked:", label)
+
+    def test_provider_validation_success_state_is_visible(self):
+        window = self._import_window_module()
+        snapshot = mock.MagicMock(
+            selected_provider="ollama",
+            provider_model="qwen2.5:0.5b",
+            provider_status="valid",
+            provider_ready=True,
+            provider_message="Ollama is reachable and preferred model is available.",
+        )
+
+        label = window.FoundationWindow._provider_validation_result_label(snapshot)
+
+        self.assertIn("Provider validation: Provider Validated", label)
+        self.assertIn("Runtime Ready: Ollama / qwen2.5:0.5b", label)
+        self.assertIn("Last checked:", label)
+
+    def test_provider_validation_failure_state_is_visible(self):
+        window = self._import_window_module()
+        snapshot = mock.MagicMock(
+            selected_provider="ollama",
+            provider_model="missing-model",
+            provider_status="invalid",
+            provider_ready=False,
+            provider_message="Preferred model not found locally.",
+        )
+
+        label = window.FoundationWindow._provider_validation_result_label(snapshot)
+
+        self.assertIn("Provider validation: Validation Failed", label)
+        self.assertIn("Preferred model not found locally.", label)
+        self.assertIn("Last checked:", label)
 
     def test_runtime_readiness_labels_are_compact_and_plugin_oriented(self):
         window = self._import_window_module()
@@ -178,6 +219,7 @@ class CanonicalStartupFlowTests(unittest.TestCase):
         self.assertFalse(hasattr(window.FoundationWindow, "_conversation_response_for_prompt"))
         self.assertTrue(hasattr(window.FoundationWindow, "_invoke_conversation_route"))
         self.assertTrue(hasattr(window.FoundationWindow, "_apply_conversation_reply"))
+        self.assertTrue(hasattr(window.FoundationWindow, "_apply_provider_validation_snapshot"))
 
 
 if __name__ == "__main__":

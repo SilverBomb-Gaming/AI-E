@@ -1,6 +1,7 @@
 """Minimal PySide6 window for OpenClaw runtime control."""
 from __future__ import annotations
 
+from datetime import datetime
 import sys
 import threading
 import traceback
@@ -18,6 +19,7 @@ APP_SUBTITLE = (
     "Runtime plugins stay optional; AI-E keeps approvals, scope, and operational truth visible."
 )
 DEFAULT_TRUTH_LINE = "Workflow Not Started | Mutation Not Applied | Validation Not Run | Playtest Not Confirmed | Deploy Not Deployed"
+PROVIDER_VISIBILITY_IDLE = "Provider validation: Not run this session | Runtime model: unknown | Last checked: --:--:--"
 STARTUP_CONVERSATION_GREETING = (
     "AI-E: Ready. Tell me what you want to inspect, fix, or prepare. "
     "I will scope the request first and ask for approval before any bounded action."
@@ -36,6 +38,7 @@ INFRASTRUCTURE_COMPRESSED_PANELS = (
 
 class _Bridge(QtCore.QObject):
     snapshot_ready = QtCore.Signal(object)
+    provider_validation_ready = QtCore.Signal(object)
     conversation_ready = QtCore.Signal(object)
     failure = QtCore.Signal(str)
 
@@ -48,11 +51,14 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self._service = service or ControllerService()
         self._bridge = _Bridge()
         self._bridge.snapshot_ready.connect(self._apply_snapshot)
+        self._bridge.provider_validation_ready.connect(self._apply_provider_validation_snapshot)
         self._bridge.conversation_ready.connect(self._apply_conversation_reply)
         self._bridge.failure.connect(self._handle_background_failure)
         self._refresh_form_on_next_snapshot = True
         self._clear_openai_key_on_next_snapshot = False
         self._clear_telegram_token_on_next_snapshot = False
+        self._provider_validation_pending = False
+        self._last_provider_visibility_label = PROVIDER_VISIBILITY_IDLE
         self._build_ui()
         self._poll_timer = QtCore.QTimer(self)
         self._poll_timer.setInterval(1500)
@@ -91,6 +97,15 @@ class FoundationWindow(QtWidgets.QMainWindow):
             "background: #f8fafc; color: #0f172a; font-weight: 600;"
         )
         layout.addWidget(self.runtime_readiness_strip)
+
+        self.provider_validation_strip = QtWidgets.QLabel(PROVIDER_VISIBILITY_IDLE)
+        self.provider_validation_strip.setObjectName("providerValidationStrip")
+        self.provider_validation_strip.setWordWrap(True)
+        self.provider_validation_strip.setStyleSheet(
+            "padding: 10px 12px; border: 1px solid #bae6fd; border-radius: 6px; "
+            "background: #f0f9ff; color: #075985; font-weight: 600;"
+        )
+        layout.addWidget(self.provider_validation_strip)
 
         layout.addWidget(self._build_conversation_panel(), stretch=1)
         layout.addWidget(self._build_infrastructure_section())
@@ -547,6 +562,14 @@ class FoundationWindow(QtWidgets.QMainWindow):
             return
         self._bridge.snapshot_ready.emit(snapshot)
 
+    def _invoke_provider_validation(self, action: Callable[[], ControllerSnapshot]) -> None:
+        try:
+            snapshot = action()
+        except Exception:  # noqa: BLE001
+            self._bridge.failure.emit(traceback.format_exc())
+            return
+        self._bridge.provider_validation_ready.emit(snapshot)
+
     def _poll_status(self) -> None:
         self._apply_snapshot(self._service.snapshot())
 
@@ -554,6 +577,8 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self.runtime_state_value.setText(snapshot.runtime_state)
         self.status_message_value.setText(snapshot.status_message)
         self.runtime_readiness_strip.setText(self._runtime_plugin_readiness_label(snapshot))
+        if not self._provider_validation_pending:
+            self.provider_validation_strip.setText(self._last_provider_visibility_label)
         self.readiness_state_value.setText(self._readiness_label(snapshot.readiness_state))
         self.readiness_message_value.setText(snapshot.readiness_message)
         self.current_mode_value.setText(snapshot.mode)
@@ -634,8 +659,22 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self._set_controls_enabled(True)
         self._refresh_buttons(snapshot)
 
+    def _apply_provider_validation_snapshot(self, snapshot: ControllerSnapshot) -> None:
+        self._provider_validation_pending = False
+        self._apply_snapshot(snapshot)
+        result = self._provider_validation_result_label(snapshot)
+        self._last_provider_visibility_label = result
+        self.provider_validation_strip.setText(result)
+        self._append_conversation_message("Runtime Visibility", result)
+        self.statusBar().showMessage(result, 5000)
+
     def _handle_background_failure(self, details: str) -> None:
         self._set_controls_enabled(True)
+        if self._provider_validation_pending:
+            failure_label = f"Provider validation: Validation Failed | Background action failed. See runtime logs. | Last checked: {self._current_time_label()}"
+            self._last_provider_visibility_label = failure_label
+            self.provider_validation_strip.setText(failure_label)
+        self._provider_validation_pending = False
         if hasattr(self, "conversation_input"):
             self.conversation_input.setEnabled(True)
         if hasattr(self, "conversation_send_button"):
@@ -709,13 +748,26 @@ class FoundationWindow(QtWidgets.QMainWindow):
         preferred_model = self.ollama_model_input.currentText().strip()
         transient_key = self.openai_key_input.text().strip() if provider == "openai" else ""
         self._refresh_form_on_next_snapshot = True
-        self._run_background(
-            lambda: self._service.validate_provider(
-                provider=provider,
-                preferred_ollama_model=preferred_model,
-                transient_openai_key=transient_key,
-            )
+        self._provider_validation_pending = True
+        loading = self._provider_validation_loading_label(provider, preferred_model)
+        self._last_provider_visibility_label = loading
+        self.provider_validation_strip.setText(loading)
+        self.conversation_processing_label.setText(loading)
+        self.statusBar().showMessage(loading, 3000)
+        self._append_conversation_message("Runtime Visibility", loading)
+        self._set_controls_enabled(False)
+        thread = threading.Thread(
+            target=self._invoke_provider_validation,
+            args=(
+                lambda: self._service.validate_provider(
+                    provider=provider,
+                    preferred_ollama_model=preferred_model,
+                    transient_openai_key=transient_key,
+                ),
+            ),
+            daemon=True,
         )
+        thread.start()
 
     def _handle_save_settings(self) -> None:
         selected_mode = self._selected_mode()
@@ -899,6 +951,32 @@ class FoundationWindow(QtWidgets.QMainWindow):
     @staticmethod
     def _readiness_label(state: str) -> str:
         return {"ready": "Ready", "degraded": "Degraded", "not_ready": "Not Ready"}.get(state, state)
+
+    @classmethod
+    def _provider_validation_loading_label(cls, provider: ProviderType, preferred_model: str) -> str:
+        provider_label = cls._provider_label(provider, preferred_model)
+        return f"Provider validation: Validating {provider_label} runtime... | Last checked: {cls._current_time_label()}"
+
+    @classmethod
+    def _provider_validation_result_label(cls, snapshot: ControllerSnapshot) -> str:
+        provider_label = cls._provider_label(snapshot.selected_provider, snapshot.provider_model)
+        status = snapshot.provider_status
+        checked_at = cls._current_time_label()
+        if snapshot.provider_ready:
+            return f"Provider validation: Provider Validated | Runtime Ready: {provider_label} | Last checked: {checked_at}"
+        if status == "invalid":
+            return f"Provider validation: Validation Failed | {snapshot.provider_message} | Last checked: {checked_at}"
+        if status == "partial":
+            return f"Provider validation: Partially Available | {snapshot.provider_message} | Last checked: {checked_at}"
+        return f"Provider validation: {cls._validation_status_label(status)} | {snapshot.provider_message} | Last checked: {checked_at}"
+
+    @staticmethod
+    def _validation_status_label(status: str) -> str:
+        return {"valid": "Provider Validated", "invalid": "Validation Failed", "partial": "Partially Available", "unknown": "Not Validated"}.get(status, status)
+
+    @staticmethod
+    def _current_time_label() -> str:
+        return datetime.now().strftime("%H:%M:%S")
 
     @staticmethod
     def _runtime_plugin_readiness_label(snapshot: ControllerSnapshot) -> str:
