@@ -46,6 +46,8 @@ class RuntimeAgentReply:
     approval_state: str = "No Approval Requested"
     audit_visibility: str = "Runtime route visible in conversation"
     request_text: str = ""
+    execution_plan: object | None = None
+    execution_receipt: object | None = None
 
 
 class RuntimeManagerLike(Protocol):

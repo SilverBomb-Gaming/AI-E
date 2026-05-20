@@ -16,15 +16,15 @@ const bodyFont = IBM_Plex_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "AI-E | Paste your Unity issue. Get a step-by-step fix plan.",
+  title: "AI-E | Governed AI Operations For Serious Builders",
   description:
-    "AI-E turns Unity bugs and blockers into a structured analysis: what happened, what matters, and what to do next.",
+    "AI-E is a local-first governed operational environment for execution previews, approval workflows, runtime transparency, and audit-visible AI work.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${headingFont.variable} ${bodyFont.variable} min-h-screen bg-mesh text-ink antialiased`}>
+      <body className={`${headingFont.variable} ${bodyFont.variable} min-h-screen bg-site text-ink antialiased`}>
         {children}
       </body>
     </html>

@@ -240,6 +240,26 @@ class CanonicalStartupFlowTests(unittest.TestCase):
         )
         self.assertEqual(window.FoundationWindow._pending_risk_from_truth_line(truth_line), "Mutation requested.")
         self.assertEqual(window.FoundationWindow._pending_boundary_from_truth_line(truth_line), "No files changed yet.")
+        self.assertEqual(window.FoundationWindow._join_preview_values(("a", "b"), fallback="none"), "a; b")
+        self.assertEqual(window.FoundationWindow._join_preview_values((), fallback="none"), "none")
+
+    def test_execution_receipt_formatter_preserves_truth_boundary(self):
+        window = self._import_window_module()
+        receipt = SimpleNamespace(
+            receipt_id="REC-123",
+            linked_plan_id="PLAN-123",
+            mutation_applied=False,
+            validation_result="not_run_no_bounded_executor",
+            rollback_available=False,
+            execution_summary="Operator approved, but no bounded executor is connected. No files changed.",
+        )
+
+        formatted = window.FoundationWindow._format_execution_receipt(receipt)
+
+        self.assertIn("REC-123 linked to PLAN-123", formatted)
+        self.assertIn("Mutation Not Applied", formatted)
+        self.assertIn("Validation: not_run_no_bounded_executor", formatted)
+        self.assertIn("Rollback Unavailable", formatted)
 
     def test_approval_pending_card_visibility_follows_reply_governance(self):
         window = self._import_window_module()

@@ -74,6 +74,8 @@ from .evaluation_session_models import EvaluationSessionRecord
 from .evaluation_session_store import EvaluationSessionStore
 from .execution_runner import ExecutionRunner, ExecutionRunnerError
 from .execution_models import CapabilityExecutionResult, LocalCommandExecutionRequest
+from .execution_plan import ExecutionPlan, ExecutionReceipt
+from .execution_receipt_store import ExecutionReceiptStore
 from .file_mutator import FileMutator
 from .file_reader import FileReadSnapshot, FileReader, FileReaderError
 from .intent_formatter import IntentFormatter
@@ -424,6 +426,8 @@ class ControllerService:
         )
         self._workflow_executor = WorkflowExecutor(self, self._capability_executor)
         self._workflow_scope_analyzer = WorkflowScopeAnalyzer()
+        self._pending_execution_plans: dict[str, ExecutionPlan] = {}
+        self._execution_receipt_store = ExecutionReceiptStore(root_path=self._config_store.path.parent / "execution_receipts")
         self._audit_store = AuditStore(max_records=_AUDIT_LOG_MAX_RECORDS)
         self._data_capture = DataCapture()
         self._data_record_store = DataRecordStore(root_path=self._config_store.path.parent / "data_records")
@@ -625,11 +629,104 @@ class ControllerService:
     def route_conversation_prompt(self, prompt: str) -> RuntimeAgentReply:
         workflow_scope = self._workflow_scope_analyzer.analyze(prompt)
         reply = self._runtime_agent_router.route_prompt(prompt, workflow_scope=workflow_scope)
+        if workflow_scope.approval_required:
+            plan = self._build_execution_plan(workflow_scope=workflow_scope, reply=reply)
+            self._pending_execution_plans[plan.plan_id] = plan
+            reply = replace(reply, execution_plan=plan)
         if reply.routed:
             self._last_message = f"Conversation routed to {reply.agent_label}."
         else:
             self._last_message = reply.response_text
         return reply
+
+    def approve_execution_plan(self, plan_id: str) -> ExecutionReceipt:
+        normalized_plan_id = plan_id.strip()
+        plan = self._pending_execution_plans.get(normalized_plan_id)
+        if plan is None:
+            raise ValueError(f"Execution plan {normalized_plan_id or '<empty>'} is not pending approval.")
+
+        started_at = self._now_iso()
+        finished_at = self._now_iso()
+        receipt = ExecutionReceipt(
+            receipt_id=self._execution_receipt_store.generate_receipt_id(),
+            linked_plan_id=plan.plan_id,
+            runtime_used=plan.runtime_target,
+            execution_started=started_at,
+            execution_finished=finished_at,
+            files_changed=(),
+            commands_executed=(),
+            validation_result="not_run_no_bounded_executor",
+            rollback_available=False,
+            mutation_applied=False,
+            operator_approved=True,
+            execution_summary=(
+                "Operator approved the execution plan, but no bounded executor is connected for this conversation path. "
+                "No files were changed, no commands were run, and rollback is unavailable because no mutation occurred."
+            ),
+            audit_visible=True,
+        )
+        stored = self._execution_receipt_store.append(receipt)
+        self._pending_execution_plans.pop(plan.plan_id, None)
+        self._last_message = f"Execution receipt stored: {stored.receipt_id}; no mutation applied."
+        return stored
+
+    def _build_execution_plan(self, *, workflow_scope: object, reply: RuntimeAgentReply) -> ExecutionPlan:
+        workflow_kind = str(getattr(workflow_scope, "workflow_kind", "conversation"))
+        mutation_risk = str(getattr(workflow_scope, "mutation_risk", "none"))
+        plan_id = f"PLAN-{secrets.token_hex(5).upper()}"
+        requested_actions = self._requested_actions_for_scope(workflow_scope)
+        predicted_commands = ("bounded executor dispatch after operator approval",) if workflow_kind == "execution_request" else ()
+        return ExecutionPlan(
+            plan_id=plan_id,
+            workflow_kind=workflow_kind,
+            scope=str(getattr(workflow_scope, "truth_scope_line", "Scope unavailable")),
+            risk_level=self._execution_plan_risk_level(mutation_risk),
+            runtime_target=reply.agent_label if reply.routed else "No runtime agent routed",
+            requested_actions=requested_actions,
+            predicted_files=self._predicted_files_for_scope(workflow_scope),
+            predicted_commands=predicted_commands,
+            requires_approval=bool(getattr(workflow_scope, "approval_required", True)),
+            dry_run_available=True,
+            rollback_possible=workflow_kind in {"mutation_request", "execution_request"},
+            estimated_impact=self._estimated_impact_for_scope(workflow_scope),
+            generated_at=self._now_iso(),
+        )
+
+    @staticmethod
+    def _requested_actions_for_scope(workflow_scope: object) -> tuple[str, ...]:
+        prompt = str(getattr(workflow_scope, "original_prompt", "")).strip()
+        workflow_kind = str(getattr(workflow_scope, "workflow_kind", "conversation"))
+        if workflow_kind == "execution_request":
+            return (prompt or "Prepare bounded runtime execution after approval.",)
+        if workflow_kind == "mutation_request":
+            return (prompt or "Prepare bounded mutation after approval.",)
+        return (prompt or "Read-only response.",)
+
+    @staticmethod
+    def _predicted_files_for_scope(workflow_scope: object) -> tuple[str, ...]:
+        workflow_kind = str(getattr(workflow_scope, "workflow_kind", "conversation"))
+        if workflow_kind in {"mutation_request", "execution_request"}:
+            return ("Unknown until bounded executor resolves target files",)
+        return ()
+
+    @staticmethod
+    def _execution_plan_risk_level(mutation_risk: str) -> str:
+        if mutation_risk == "execution_requested":
+            return "high"
+        if mutation_risk == "mutation_requested":
+            return "medium"
+        if mutation_risk == "read_only":
+            return "low"
+        return "none"
+
+    @staticmethod
+    def _estimated_impact_for_scope(workflow_scope: object) -> str:
+        workflow_kind = str(getattr(workflow_scope, "workflow_kind", "conversation"))
+        if workflow_kind == "execution_request":
+            return "Potential command execution after approval; exact impact must be confirmed by bounded executor before mutation."
+        if workflow_kind == "mutation_request":
+            return "Potential file mutation after approval; no mutation occurs during preview."
+        return "Read-only conversation; no runtime mutation expected."
 
     def snapshot(self) -> ControllerSnapshot:
         self._cleanup_expired_confirmations()

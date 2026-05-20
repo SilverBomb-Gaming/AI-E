@@ -199,19 +199,26 @@ class FoundationWindow(QtWidgets.QMainWindow):
         self.conversation_processing_label.setStyleSheet("color: #475569;")
         layout.addWidget(self.conversation_processing_label)
         layout.addWidget(self._build_approval_pending_card())
+        layout.addWidget(self._build_execution_receipt_card())
         return group
 
     def _build_approval_pending_card(self) -> QtWidgets.QGroupBox:
-        group = QtWidgets.QGroupBox("Scoped Action Pending")
+        group = QtWidgets.QGroupBox("Execution Preview")
         group.setObjectName("approvalPendingCard")
         group.setStyleSheet(APPROVAL_CARD_STYLE)
         layout = self._create_form_layout(group)
 
         self.approval_request_value = self._create_value_label(APPROVAL_PENDING_IDLE)
+        self.execution_plan_id_value = self._create_value_label("-")
+        self.execution_actions_value = self._create_value_label("-")
+        self.execution_files_value = self._create_value_label("-")
+        self.execution_commands_value = self._create_value_label("-")
+        self.execution_runtime_value = self._create_value_label("-")
         self.approval_risk_value = self._create_value_label("-")
         self.approval_boundary_value = self._create_value_label("-")
+        self.execution_rollback_value = self._create_value_label("-")
 
-        self.approve_plan_button = QtWidgets.QPushButton("Approve Plan")
+        self.approve_plan_button = QtWidgets.QPushButton("Approve Execution")
         self.cancel_plan_button = QtWidgets.QPushButton("Cancel")
         self.view_scope_button = QtWidgets.QPushButton("View Scope")
         self.approve_plan_button.setObjectName("approvePlanButton")
@@ -233,13 +240,34 @@ class FoundationWindow(QtWidgets.QMainWindow):
         actions_layout.addWidget(self.view_scope_button)
         actions_layout.addStretch(1)
 
+        layout.addRow("Plan", self.execution_plan_id_value)
         layout.addRow("Request", self.approval_request_value)
+        layout.addRow("Proposed Mutations", self.execution_actions_value)
+        layout.addRow("Affected Files", self.execution_files_value)
+        layout.addRow("Commands", self.execution_commands_value)
+        layout.addRow("Runtime Boundary", self.execution_runtime_value)
         layout.addRow("Risk", self.approval_risk_value)
         layout.addRow("Boundary", self.approval_boundary_value)
+        layout.addRow("Rollback", self.execution_rollback_value)
         layout.addRow("Actions", actions_widget)
         group.setVisible(False)
         self.approval_pending_card = group
         self._pending_approval_scope_line = ""
+        self._pending_execution_plan_id = ""
+        return group
+
+    def _build_execution_receipt_card(self) -> QtWidgets.QGroupBox:
+        group = QtWidgets.QGroupBox("Execution Receipt")
+        group.setObjectName("executionReceiptCard")
+        group.setStyleSheet(
+            "QGroupBox#executionReceiptCard { border: 1px solid #94a3b8; border-radius: 6px; margin-top: 10px; padding-top: 12px; background: #f8fafc; }"
+            "QGroupBox#executionReceiptCard::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #334155; font-weight: 700; }"
+        )
+        layout = self._create_form_layout(group)
+        self.execution_receipt_value = self._create_value_label("No execution receipt yet.")
+        layout.addRow("Receipt", self.execution_receipt_value)
+        group.setVisible(False)
+        self.execution_receipt_card = group
         return group
 
     def _build_infrastructure_section(self) -> QtWidgets.QWidget:
@@ -974,10 +1002,19 @@ class FoundationWindow(QtWidgets.QMainWindow):
         request = str(getattr(reply, "request_text", "")).strip() or self._pending_request_from_truth_line(truth_line)
         risk = self._pending_risk_from_truth_line(truth_line)
         boundary = self._pending_boundary_from_truth_line(truth_line)
+        plan = getattr(reply, "execution_plan", None)
         self._pending_approval_scope_line = truth_line
+        self._pending_execution_plan_id = str(getattr(plan, "plan_id", "")).strip()
         self.approval_request_value.setText(request)
         self.approval_risk_value.setText(risk)
         self.approval_boundary_value.setText(boundary)
+        if hasattr(self, "execution_plan_id_value"):
+            self.execution_plan_id_value.setText(self._pending_execution_plan_id or "-")
+            self.execution_actions_value.setText(self._join_preview_values(getattr(plan, "requested_actions", ()), fallback="No mutation proposed."))
+            self.execution_files_value.setText(self._join_preview_values(getattr(plan, "predicted_files", ()), fallback="No files predicted."))
+            self.execution_commands_value.setText(self._join_preview_values(getattr(plan, "predicted_commands", ()), fallback="No commands would run in preview."))
+            self.execution_runtime_value.setText(str(getattr(plan, "runtime_target", "AI-E governance boundary")).strip() or "AI-E governance boundary")
+            self.execution_rollback_value.setText("Possible after mutation evidence." if bool(getattr(plan, "rollback_possible", False)) else "Not available before mutation.")
         self.approval_pending_card.setVisible(True)
 
     def _hide_approval_pending_card(self) -> None:
@@ -987,11 +1024,35 @@ class FoundationWindow(QtWidgets.QMainWindow):
             self.approval_request_value.setText(APPROVAL_PENDING_IDLE)
             self.approval_risk_value.setText("-")
             self.approval_boundary_value.setText("-")
+        if hasattr(self, "execution_plan_id_value"):
+            self.execution_plan_id_value.setText("-")
+            self.execution_actions_value.setText("-")
+            self.execution_files_value.setText("-")
+            self.execution_commands_value.setText("-")
+            self.execution_runtime_value.setText("-")
+            self.execution_rollback_value.setText("-")
         self._pending_approval_scope_line = ""
+        self._pending_execution_plan_id = ""
 
     def _handle_approve_pending_plan(self) -> None:
-        self._append_conversation_message("Approval", "Plan approval recorded for the visible scope. Mutation and execution remain unavailable until a bounded executor is connected.")
-        self.statusBar().showMessage("Plan approval recorded; no mutation executed.", 3000)
+        plan_id = getattr(self, "_pending_execution_plan_id", "")
+        if not plan_id:
+            self._append_conversation_message("Approval", "No execution plan is pending. No mutation or command execution occurred.")
+            self.statusBar().showMessage("No execution plan pending.", 3000)
+            return
+        try:
+            receipt = self._service.approve_execution_plan(plan_id)
+        except Exception as exc:  # noqa: BLE001
+            self._append_conversation_message("Execution Receipt", f"Approval could not be recorded: {exc}. Mutation Not Applied; Validation Not Run.")
+            self.statusBar().showMessage("Execution approval failed; no mutation executed.", 3000)
+            return
+        receipt_summary = self._format_execution_receipt(receipt)
+        self._append_conversation_message("Execution Receipt", receipt_summary)
+        if hasattr(self, "execution_receipt_card"):
+            self.execution_receipt_value.setText(receipt_summary)
+            self.execution_receipt_card.setVisible(True)
+        self._hide_approval_pending_card()
+        self.statusBar().showMessage("Execution receipt stored; no mutation executed.", 3000)
 
     def _handle_view_pending_scope(self) -> None:
         scope = self._pending_approval_scope_line or DEFAULT_TRUTH_LINE
@@ -1027,6 +1088,25 @@ class FoundationWindow(QtWidgets.QMainWindow):
         if "Boundary: planning_only_until_operator_approval" in truth_line:
             return "No commands executed yet."
         return "No mutation or execution has been applied."
+
+    @staticmethod
+    def _join_preview_values(values: object, *, fallback: str) -> str:
+        try:
+            items = tuple(str(item).strip() for item in values if str(item).strip())  # type: ignore[union-attr]
+        except TypeError:
+            text = str(values).strip()
+            items = (text,) if text else ()
+        return "; ".join(items) if items else fallback
+
+    @staticmethod
+    def _format_execution_receipt(receipt: object) -> str:
+        receipt_id = str(getattr(receipt, "receipt_id", "-")).strip() or "-"
+        plan_id = str(getattr(receipt, "linked_plan_id", "-")).strip() or "-"
+        mutation = "Mutation Applied" if bool(getattr(receipt, "mutation_applied", False)) else "Mutation Not Applied"
+        validation = str(getattr(receipt, "validation_result", "Validation Not Run")).strip() or "Validation Not Run"
+        rollback = "Rollback Available" if bool(getattr(receipt, "rollback_available", False)) else "Rollback Unavailable"
+        summary = str(getattr(receipt, "execution_summary", "No execution summary recorded.")).strip()
+        return f"{receipt_id} linked to {plan_id} | {mutation} | Validation: {validation} | {rollback} | {summary}"
 
     def _append_conversation_message(self, speaker: str, message: str) -> None:
         current_text = self.conversation_view.toPlainText().strip()

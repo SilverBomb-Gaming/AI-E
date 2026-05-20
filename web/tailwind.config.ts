@@ -16,12 +16,13 @@ const config: Config = {
         ember: "var(--color-ember)",
         ocean: "var(--color-ocean)",
         slate: "var(--color-slate)",
+        field: "var(--color-field)",
       },
       boxShadow: {
-        float: "0 24px 80px rgba(18, 36, 36, 0.12)",
+        float: "0 18px 48px rgba(18, 36, 36, 0.1)",
       },
       backgroundImage: {
-        mesh: "radial-gradient(circle at top left, rgba(255, 122, 89, 0.22), transparent 34%), radial-gradient(circle at 85% 20%, rgba(24, 92, 140, 0.24), transparent 28%), linear-gradient(135deg, rgba(255, 246, 232, 0.94), rgba(238, 247, 246, 0.96))",
+        site: "linear-gradient(180deg, #f7f4ec 0%, #f3f7f4 42%, #ffffff 100%)",
       },
     },
   },
