@@ -120,6 +120,11 @@ import {
   resolvePreferredAnimeCreatorProfileId,
   type AnimeCreatorWorkflowState,
 } from "./animeCreatorWorkflow";
+import {
+  ExecutionDiffPreviewModal,
+  buildExecutionDiffPreviewPlan,
+  type ExecutionDiffPreviewAction,
+} from "@/frontend/ui/execution-preview";
 
 const DEFAULT_FORM: GovernedPreviewFormInput = {
   prompt: "",
@@ -567,6 +572,7 @@ function AnimeWorkflowExecutionHub({
   onGenerateGif,
   onRunMotionPreview,
   onExportReport,
+  onOpenDiffPreview,
 }: {
   workflow: AnimeCreatorWorkflowState;
   executionLocked: boolean;
@@ -577,6 +583,7 @@ function AnimeWorkflowExecutionHub({
   onGenerateGif: () => void;
   onRunMotionPreview: () => void;
   onExportReport: () => void;
+  onOpenDiffPreview: () => void;
 }) {
   const generationDisabled = executionLocked || !governanceApproved || !characterApproved || !workflow.profileResolution.resolvedProfileId;
 
@@ -590,7 +597,8 @@ function AnimeWorkflowExecutionHub({
         </div>
         <StatusPill label={`active-render-path-${workflow.activeRenderPath.toLowerCase().replaceAll("_", "-")}`} tone={workflow.activeRenderPath === "CHARACTER_FIRST_RENDERER" ? "ok" : "warn"} />
       </div>
-      <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+      <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-6">
+        <button type="button" onClick={onOpenDiffPreview} className="rounded-[0.75rem] border border-ink/10 bg-white px-4 py-3 text-sm font-semibold text-ink transition hover:-translate-y-0.5">Preview Execution Diff</button>
         <button type="button" onClick={onGenerateCharacter} disabled={generationDisabled} className="rounded-[0.75rem] border border-ocean/20 bg-ocean px-4 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50">Generate Character Frame Set</button>
         <button type="button" onClick={onGenerateGif} disabled={generationDisabled || !gifPackagingRequested} className="rounded-[0.75rem] border border-ocean/20 bg-ocean px-4 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50">Generate Anime GIF Preview</button>
         <button type="button" onClick={onRunMotionPreview} disabled={executionLocked} className="rounded-[0.75rem] border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50">Run Motion Preview</button>
@@ -1259,6 +1267,7 @@ export function PreviewGenerationClient() {
   const [finalScaffoldFallbackInactive, setFinalScaffoldFallbackInactive] = useState<boolean>(false);
   const [finalDiagnosticsClear, setFinalDiagnosticsClear] = useState<boolean>(false);
   const [forceCharacterControlsOpen, setForceCharacterControlsOpen] = useState<boolean>(false);
+  const [executionDiffPreviewOpen, setExecutionDiffPreviewOpen] = useState<boolean>(false);
   const activeGuidedStepRef = useRef<HTMLButtonElement>(null);
   const executionLockRef = useRef<boolean>(false);
   const [isPending, startTransition] = useTransition();
@@ -2401,6 +2410,16 @@ export function PreviewGenerationClient() {
     truthChecksPassed,
     finalVerdictReady: finalOperatorVerdict === "PASS",
   });
+  const executionDiffPreviewAction: ExecutionDiffPreviewAction = governedExecutionState.activeAction
+    ?? (animeCreatorModeActive ? "anime-character-render" : motionPreviewReady ? "preview" : "micro-sequence");
+  const executionDiffPreviewPlan = buildExecutionDiffPreviewPlan({
+    form,
+    action: executionDiffPreviewAction,
+    activeRequestId: governedExecutionState.activeRequestId,
+    exportedArtifactPaths: governedExecutionState.exportedArtifactPaths,
+    sandboxPath: governedExecutionState.sandboxPath,
+    animeProfileLabel: selectedAnimeCharacterProfile?.label ?? animeCreatorWorkflow.profileResolution.resolvedProfileLabel,
+  });
 
   function guidedSectionProps(sectionId: GuidedWorkflowSectionId) {
     const anchoredStep = activeGuidedTarget.workflowSectionId === sectionId
@@ -2460,6 +2479,18 @@ export function PreviewGenerationClient() {
   function handleExportRunReportPdf() {
     setMessage("Preparing operator run report PDF export. Choose Save as PDF in the print dialog.");
     window.requestAnimationFrame(() => window.print());
+  }
+
+  function handleApproveExecutionDiffPreview() {
+    setForm((current) => ({ ...current, governance_approval: true }));
+    setMessage("Execution diff preview approved locally. Use the governed runtime control to start any actual execution.");
+    setExecutionDiffPreviewOpen(false);
+  }
+
+  function handleRejectExecutionDiffPreview() {
+    setForm((current) => ({ ...current, governance_approval: false }));
+    setMessage("Execution diff preview rejected locally. No execution was started.");
+    setExecutionDiffPreviewOpen(false);
   }
 
   return (
@@ -2639,6 +2670,14 @@ export function PreviewGenerationClient() {
         previewCards={previewGalleryCards}
         microSequenceCards={microSequenceGalleryCards}
       />
+      <ExecutionDiffPreviewModal
+        open={executionDiffPreviewOpen}
+        plan={executionDiffPreviewPlan}
+        approvalGranted={form.governance_approval}
+        onClose={() => setExecutionDiffPreviewOpen(false)}
+        onApprove={handleApproveExecutionDiffPreview}
+        onReject={handleRejectExecutionDiffPreview}
+      />
       <section className="relative z-10 mx-auto max-w-6xl px-6 py-12 lg:px-10">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -2649,6 +2688,13 @@ export function PreviewGenerationClient() {
             </p>
           </div>
           <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setExecutionDiffPreviewOpen(true)}
+              className="rounded-full border border-ink/10 bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:-translate-y-0.5"
+            >
+              Preview Execution Diff
+            </button>
             <button
               type="button"
               onClick={handleExportRunReportPdf}
@@ -2720,6 +2766,7 @@ export function PreviewGenerationClient() {
               }}
               onRunMotionPreview={handleGenerate}
               onExportReport={handleExportRunReportPdf}
+              onOpenDiffPreview={() => setExecutionDiffPreviewOpen(true)}
             />
             <div className="mb-6 grid gap-6 lg:grid-cols-2">
               <AudioGenerationStatusPanel />
