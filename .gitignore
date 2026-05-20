@@ -8,6 +8,17 @@ __pycache__/
 .venv/
 .venv*/
 
+# Node dependencies and local package residues
+node_modules/
+**/node_modules/
+/package-lock.json
+
+# Next/build outputs
+.next/
+**/.next/
+out/
+**/out/
+
 # Test caches and local sandboxes
 .pytest_cache/
 .pytest-*/
@@ -37,7 +48,45 @@ cache_*/
 
 # General local temp files
 .tmp/
+tmp/
+temp/
 temp_*
+validate_*.ps1
+validation_output.txt
+results.txt
+
+# Local note/vault workspace residue
+Second Brain/.obsidian/
+Second Brain/Clippings/
+Second Brain/*.canvas
+
+# AI-E local execution residue and backups
+**/.aie-state/
+**/*.aie-backup*
+*.bak
+
+# Unity generated folders and project-local IDE files
+**/[Ll]ibrary/
+**/[Tt]emp/
+**/[Oo]bj/
+**/[Bb]uild/
+**/[Bb]uilds/
+**/[Ll]ogs/
+**/[Uu]ser[Ss]ettings/
+**/.vs/
+**/*.csproj
+**/*.sln
+**/*.user
+**/*.pidb
+**/*.booproj
+
+# Local model/cache binaries
+*.gguf
+*.safetensors
+*.bin
+*.onnx
+*.pt
+*.pth
 
 # Planned orchestrator lane runtime artifacts
 orchestrator_lane/runs/
