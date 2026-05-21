@@ -1,5 +1,5 @@
-import { PreviewGenerationClient } from "./PreviewGenerationClient";
+import { GovernedExecutionPreviewClient } from "./GovernedExecutionPreviewClient";
 
 export default function GovernedPreviewGenerationPage() {
-  return <PreviewGenerationClient />;
+  return <GovernedExecutionPreviewClient />;
 }

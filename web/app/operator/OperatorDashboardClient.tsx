@@ -772,6 +772,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const [reviewQueueEnabled, setReviewQueueEnabled] = useState(true);
   const [chatInput, setChatInput] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     setProviderResult(initialProviderResult);
@@ -1012,6 +1013,75 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             </div>
           </div>
         </SectionCard>
+
+        <SectionCard eyebrow="Operator Summary" title="Approvals, Blockers & Next Action">
+          <div className="space-y-5">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-slate">Approvals Required ({dashboardState?.approvals_required.length ?? 0})</p>
+              <div className="mt-3 space-y-2">
+                {dashboardState?.approvals_required.length ? dashboardState.approvals_required.map((approval) => (
+                  <div key={`${approval.goal_id ?? "global"}-${approval.reason}`} className="flex flex-wrap items-center justify-between gap-3 rounded-[1.25rem] border border-amber-200 bg-amber-50/70 px-4 py-3">
+                    <div>
+                      <p className="text-sm font-semibold text-ink">{approval.goal_id ?? "Global approval refresh"}</p>
+                      <p className="mt-1 text-xs text-slate">{approval.reason}</p>
+                    </div>
+                    <ActionButton label="Approve" onClick={() => handleAction({ type: "approve_goal", goal_id: approval.goal_id })} disabled={isPending} tone="accent" />
+                  </div>
+                )) : <p className="text-sm leading-7 body-muted">No approvals are currently pending.</p>}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-slate">Blocked Goals ({dashboardState?.blocked_goals.length ?? 0})</p>
+              <div className="mt-3 space-y-2">
+                {dashboardState?.blocked_goals.length ? dashboardState.blocked_goals.slice(0, 3).map((goal) => (
+                  <div key={goal.goal_id} className="rounded-[1.25rem] border border-coral/15 bg-coral/5 px-4 py-3">
+                    <p className="text-sm font-semibold text-ink">{goal.description}</p>
+                    <p className="mt-1 text-xs text-slate">{goal.explanation}</p>
+                  </div>
+                )) : <p className="text-sm leading-7 body-muted">No blocked goals.</p>}
+              </div>
+            </div>
+
+            {studioOperations?.recommended_operator_actions[0] ? (
+              <div className="rounded-[1.25rem] border border-ocean/20 bg-ocean/5 px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Next Recommended Action</p>
+                <p className="mt-2 text-sm font-semibold text-ink">{studioOperations.recommended_operator_actions[0].action.replace(/_/g, " ")}</p>
+                <p className="mt-1 text-xs text-slate">{studioOperations.recommended_operator_actions[0].reason}</p>
+              </div>
+            ) : null}
+
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-slate">Recent Activity</p>
+              <div className="mt-3 space-y-2">
+                {dashboardState?.runtime_observability?.event_log.length ? dashboardState.runtime_observability.event_log.slice(-3).reverse().map((event) => (
+                  <article key={event.event_id} className="rounded-[1.25rem] border border-ink/10 bg-white/80 px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusBadge status={event.status} />
+                      <p className="text-xs text-slate">{event.timestamp}</p>
+                    </div>
+                    <p className="mt-2 text-sm leading-7 body-muted">{describeRuntimeEvent(event)}</p>
+                  </article>
+                )) : <p className="text-sm leading-7 body-muted">No recent runtime activity recorded.</p>}
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+
+        <div className="flex items-center justify-between gap-4 rounded-[1.5rem] border border-ink/10 bg-white/60 px-6 py-4">
+          <div>
+            <p className="text-sm font-semibold text-ink">Advanced / Legacy Sections</p>
+            <p className="mt-1 text-xs text-slate">
+              {showAdvanced
+                ? "Showing all sections: Governed Operations Preview, Studio, Meta-Intelligence, Strategy, Chat, session controls, execution chains, and full runtime timeline."
+                : "Studio, Meta-Intelligence, Strategy, Chat, session controls, execution chains, and all legacy sections are hidden. Toggle to expand."}
+            </p>
+          </div>
+          <ActionButton label={showAdvanced ? "Hide Advanced" : "Show Advanced / Legacy"} onClick={() => { setShowAdvanced(!showAdvanced); }} disabled={false} />
+        </div>
+
+        {showAdvanced ? (
+          <>
 
         <SectionCard eyebrow="Governed Preview" title="Governed Operations">
           <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -1919,6 +1989,8 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             )) : <p className="text-sm leading-7 body-muted">No runtime events have been recorded yet.</p>}
           </div>
         </SectionCard>
+          </>
+        ) : null}
       </div>
     </main>
   );
