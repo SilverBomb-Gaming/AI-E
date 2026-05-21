@@ -1,3 +1,31 @@
+// =====================
+// AI-E GOVERNED DISPATCH CONTRACTS (EXEC-0051-A) — APPROVAL
+// =====================
+
+/**
+ * APPROVAL CONTRACT (see sandboxedRuntimeDispatch.ts for full contract)
+ * Defines who can authorize execution, how approval is persisted, and how it is verified before dispatch.
+ */
+export interface GovernedExecutionApproval {
+  authorityToken: string;
+  approvedBy: string; // operator id or username
+  approvedAt: string; // ISO timestamp
+  proposalId: string;
+  operationRequest: string;
+}
+
+export type ApprovalAuthorityToken = string;
+
+export interface ApprovalVerificationResult {
+  valid: boolean;
+  reason?: string;
+  checkedAt: string;
+  authorityToken: string;
+}
+
+// =====================
+// END AI-E GOVERNED DISPATCH CONTRACTS (EXEC-0051-A)
+// =====================
 import {
   createGoalQueue,
   createGoalRecordFromSession,

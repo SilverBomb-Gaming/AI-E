@@ -1,3 +1,139 @@
+// =====================
+// AI-E GOVERNED DISPATCH CONTRACTS (EXEC-0051-A)
+// =====================
+
+/**
+ * APPROVAL CONTRACT
+ * Defines who can authorize execution, how approval is persisted, and how it is verified before dispatch.
+ */
+export interface GovernedExecutionApproval {
+  authorityToken: ApprovalAuthorityToken;
+  approvedBy: string; // operator id or username
+  approvedAt: string; // ISO timestamp
+  proposalId: string;
+  operationRequest: string;
+}
+
+export type ApprovalAuthorityToken = string & { readonly __approval: unique symbol };
+
+export interface ApprovalVerificationResult {
+  valid: boolean;
+  reason?: string;
+  checkedAt: string;
+  authorityToken: ApprovalAuthorityToken;
+}
+
+/**
+ * SANDBOX MUTATION CONTRACT
+ * Defines what paths may mutate, how allowed paths are validated, and how sandbox boundaries are enforced.
+ */
+export interface GovernedSandboxMutationScope {
+  allowedPaths: AllowedMutationPath[];
+  forbiddenPaths: string[];
+  enforceBoundaries: boolean;
+}
+
+export interface AllowedMutationPath {
+  sandboxRelativePath: string;
+  description?: string;
+}
+
+export interface SandboxMutationValidationResult {
+  valid: boolean;
+  attemptedPath: string;
+  reason?: string;
+  checkedAt: string;
+}
+
+/**
+ * RUNTIME INVOCATION CONTRACT
+ * Defines runtime invocation boundaries, timeout, stdout/stderr capture, and lifecycle transitions.
+ */
+export interface GovernedRuntimeDispatchContract {
+  dispatchId: string;
+  runtime: string;
+  operationRequest: string;
+  approval: GovernedExecutionApproval;
+  mutationScope: GovernedSandboxMutationScope;
+  invocationBoundary: RuntimeInvocationBoundary;
+  lifecycle: DispatchLifecycleRecord[];
+}
+
+export interface RuntimeInvocationBoundary {
+  timeoutMs: number;
+  maxStdoutBytes: number;
+  maxStderrBytes: number;
+  allowShell: false;
+  allowNetwork: false;
+  allowProductionMutation: false;
+}
+
+export interface RuntimeDispatchResult {
+  dispatchId: string;
+  startedAt: string;
+  completedAt: string;
+  outcome: GovernedDispatchOutcome;
+  stdout: string;
+  stderr: string[];
+  error?: string;
+}
+
+export interface DispatchLifecycleRecord {
+  state: 'awaiting_approval' | 'dispatching' | 'executing' | 'completed' | 'failed';
+  timestamp: string;
+  message?: string;
+}
+
+/**
+ * ROLLBACK CONTRACT
+ * Defines rollback guarantees, snapshot lifecycle, and rollback metadata.
+ */
+export interface GovernedRollbackContract {
+  rollbackReady: boolean;
+  beforeSnapshotId: string;
+  afterSnapshotId: string;
+  rollbackMetadata: RollbackMetadata;
+  verification: RollbackVerificationResult;
+}
+
+export interface RollbackMetadata {
+  changedFiles: string[];
+  diffSummary: string;
+  createdAt: string;
+}
+
+export interface RollbackVerificationResult {
+  valid: boolean;
+  reason?: string;
+  checkedAt: string;
+}
+
+/**
+ * RECEIPT CONTRACT
+ * Defines what must be recorded atomically, mutation evidence, and lifecycle visibility.
+ */
+export interface GovernedDispatchReceiptContract {
+  receiptId: string;
+  dispatchId: string;
+  issuedAt: string;
+  issuedBy: string;
+  evidence: DispatchEvidenceRecord;
+  lifecycle: DispatchLifecycleRecord[];
+  atomic: boolean;
+}
+
+export interface DispatchEvidenceRecord {
+  changedFiles: string[];
+  diffEntries: GovernedDispatchDiffEntry[];
+  beforeSnapshotId: string;
+  afterSnapshotId: string;
+  mutationScope: GovernedSandboxMutationScope;
+  approval: GovernedExecutionApproval;
+}
+
+// =====================
+// END AI-E GOVERNED DISPATCH CONTRACTS (EXEC-0051-A)
+// =====================
 // EXEC-0051 — First Governed Sandboxed Runtime Dispatch
 //
 // This module orchestrates one real, bounded, sandbox-scoped file mutation through
@@ -8,7 +144,7 @@
 // bounded by resolveGovernedSandboxPath, and never touches the production workspace.
 
 import { lstat, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import path from "node:path";
+import * as path from "node:path";
 
 import {
   buildGovernedSandboxScaffold,
@@ -130,10 +266,13 @@ function computeDiff(
 ): GovernedDispatchDiffEntry[] {
   const beforeMap = new Map(before.map((e) => [e.sandboxRelativePath, e]));
   const afterMap = new Map(after.map((e) => [e.sandboxRelativePath, e]));
-  const allPaths = new Set([...beforeMap.keys(), ...afterMap.keys()]);
+  const allPaths = new Set([
+    ...Array.from(beforeMap.keys()),
+    ...Array.from(afterMap.keys()),
+  ]);
   const entries: GovernedDispatchDiffEntry[] = [];
 
-  for (const p of allPaths) {
+  for (const p of Array.from(allPaths)) {
     const b = beforeMap.get(p);
     const a = afterMap.get(p);
     if (!b && a) {

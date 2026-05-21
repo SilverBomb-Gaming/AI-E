@@ -1,3 +1,49 @@
+// =====================
+// AI-E GOVERNED DISPATCH CONTRACTS (EXEC-0051-A) — RUNTIME INVOCATION
+// =====================
+
+/**
+ * RUNTIME INVOCATION CONTRACT (see sandboxedRuntimeDispatch.ts for full contract)
+ * Defines runtime invocation boundaries, timeout, stdout/stderr capture, and lifecycle transitions.
+ */
+export interface GovernedRuntimeDispatchContract {
+  dispatchId: string;
+  runtime: string;
+  operationRequest: string;
+  approval: unknown;
+  mutationScope: unknown;
+  invocationBoundary: RuntimeInvocationBoundary;
+  lifecycle: DispatchLifecycleRecord[];
+}
+
+export interface RuntimeInvocationBoundary {
+  timeoutMs: number;
+  maxStdoutBytes: number;
+  maxStderrBytes: number;
+  allowShell: false;
+  allowNetwork: false;
+  allowProductionMutation: false;
+}
+
+export interface RuntimeDispatchResult {
+  dispatchId: string;
+  startedAt: string;
+  completedAt: string;
+  outcome: string;
+  stdout: string;
+  stderr: string[];
+  error?: string;
+}
+
+export interface DispatchLifecycleRecord {
+  state: 'awaiting_approval' | 'dispatching' | 'executing' | 'completed' | 'failed';
+  timestamp: string;
+  message?: string;
+}
+
+// =====================
+// END AI-E GOVERNED DISPATCH CONTRACTS (EXEC-0051-A)
+// =====================
 export type DispatchMessageType =
   | "task-dispatch-request"
   | "task-dispatch-ack"

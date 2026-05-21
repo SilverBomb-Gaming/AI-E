@@ -1,5 +1,34 @@
+// =====================
+// AI-E GOVERNED DISPATCH CONTRACTS (EXEC-0051-A) — SANDBOX MUTATION
+// =====================
+
+/**
+ * SANDBOX MUTATION CONTRACT (see sandboxedRuntimeDispatch.ts for full contract)
+ * Defines what paths may mutate, how allowed paths are validated, and how sandbox boundaries are enforced.
+ */
+export interface GovernedSandboxMutationScope {
+  allowedPaths: AllowedMutationPath[];
+  forbiddenPaths: string[];
+  enforceBoundaries: boolean;
+}
+
+export interface AllowedMutationPath {
+  sandboxRelativePath: string;
+  description?: string;
+}
+
+export interface SandboxMutationValidationResult {
+  valid: boolean;
+  attemptedPath: string;
+  reason?: string;
+  checkedAt: string;
+}
+
+// =====================
+// END AI-E GOVERNED DISPATCH CONTRACTS (EXEC-0051-A)
+// =====================
 import { mkdir } from "node:fs/promises";
-import path from "node:path";
+import * as path from "node:path";
 
 export type GovernedSandboxDirectoryKind =
   | "governed-root"

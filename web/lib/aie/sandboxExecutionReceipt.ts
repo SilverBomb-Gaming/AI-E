@@ -1,5 +1,65 @@
+// =====================
+// AI-E GOVERNED DISPATCH CONTRACTS (EXEC-0051-A) — ROLLBACK & RECEIPT
+// =====================
+
+/**
+ * ROLLBACK CONTRACT (see sandboxedRuntimeDispatch.ts for full contract)
+ * Defines rollback guarantees, snapshot lifecycle, and rollback metadata.
+ */
+export interface GovernedRollbackContract {
+  rollbackReady: boolean;
+  beforeSnapshotId: string;
+  afterSnapshotId: string;
+  rollbackMetadata: RollbackMetadata;
+  verification: RollbackVerificationResult;
+}
+
+export interface RollbackMetadata {
+  changedFiles: string[];
+  diffSummary: string;
+  createdAt: string;
+}
+
+export interface RollbackVerificationResult {
+  valid: boolean;
+  reason?: string;
+  checkedAt: string;
+}
+
+/**
+ * RECEIPT CONTRACT (see sandboxedRuntimeDispatch.ts for full contract)
+ * Defines what must be recorded atomically, mutation evidence, and lifecycle visibility.
+ */
+export interface GovernedDispatchReceiptContract {
+  receiptId: string;
+  dispatchId: string;
+  issuedAt: string;
+  issuedBy: string;
+  evidence: DispatchEvidenceRecord;
+  lifecycle: DispatchLifecycleRecord[];
+  atomic: boolean;
+}
+
+export interface DispatchEvidenceRecord {
+  changedFiles: string[];
+  diffEntries: unknown[];
+  beforeSnapshotId: string;
+  afterSnapshotId: string;
+  mutationScope: unknown;
+  approval: unknown;
+}
+
+export interface DispatchLifecycleRecord {
+  state: 'awaiting_approval' | 'dispatching' | 'executing' | 'completed' | 'failed';
+  timestamp: string;
+  message?: string;
+}
+
+// =====================
+// END AI-E GOVERNED DISPATCH CONTRACTS (EXEC-0051-A)
+// =====================
 import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
+import * as path from "node:path";
 
 import {
   buildGovernedSandboxScaffold,
