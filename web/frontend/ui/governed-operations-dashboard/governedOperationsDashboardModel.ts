@@ -6,6 +6,7 @@ import type {
   GovernedRuntimeType,
 } from "@/lib/aie/governedOperationLane";
 import {
+  GOVERNED_OPERATION_LANE_VERSION,
   snapshotGovernedOperationQueue,
 } from "@/lib/aie/governedOperationLane";
 
@@ -183,5 +184,96 @@ export function buildGovernedOperationsDashboardViewModel(
     governanceNote:
       "AI-E is the governance and coordination layer. No runtime has been invoked. " +
       "All lanes remain in dry-run governance state pending explicit human operator approval.",
+  };
+}
+
+export function createSeededGovernedOperationsDashboardViewModel(): GovernedOperationsDashboardViewModel {
+  const now = "2026-05-21T00:00:00.000Z";
+
+  const seededLanes: GovernedLaneCardViewModel[] = [
+    {
+      laneId: "lane-claude-code-review-001",
+      runtime: RUNTIME_TYPE_DISPLAY.claude_code,
+      laneState: LANE_STATE_DISPLAY.approval_pending,
+      approvalState: APPROVAL_DISPLAY.pending,
+      verificationState: VERIFICATION_DISPLAY.not_run,
+      sandboxId: "sandbox-cc-review-001",
+      operationCount: 2,
+      dependencyCount: 0,
+      unresolvedDependencyCount: 0,
+      transitionCount: 2,
+      executionAllowed: false,
+      dryRun: true,
+      capabilities: ["command_validation", "patch_preview", "git_readonly"],
+      safetyBadges: ["execution-blocked", "dry-run-enforced", "lane-isolated", "human-authority", "approval-required"],
+      lastTransitionReason: "Governance validation passed. Awaiting operator approval before any execution.",
+      lastTransitionAt: now,
+    },
+    {
+      laneId: "lane-codex-testing-001",
+      runtime: RUNTIME_TYPE_DISPLAY.codex,
+      laneState: LANE_STATE_DISPLAY.ready,
+      approvalState: APPROVAL_DISPLAY.approved,
+      verificationState: VERIFICATION_DISPLAY.not_run,
+      sandboxId: "sandbox-codex-test-001",
+      operationCount: 4,
+      dependencyCount: 1,
+      unresolvedDependencyCount: 0,
+      transitionCount: 3,
+      executionAllowed: false,
+      dryRun: true,
+      capabilities: ["test_execution", "lint_execution", "build_execution"],
+      safetyBadges: ["execution-blocked", "dry-run-enforced", "lane-isolated", "human-authority", "dependencies-tracked"],
+      lastTransitionReason: "Operator approved. Execution boundary has not been crossed.",
+      lastTransitionAt: now,
+    },
+    {
+      laneId: "lane-openclaw-blocked-001",
+      runtime: RUNTIME_TYPE_DISPLAY.openclaw,
+      laneState: LANE_STATE_DISPLAY.blocked,
+      approvalState: APPROVAL_DISPLAY.not_required,
+      verificationState: VERIFICATION_DISPLAY.blocked,
+      sandboxId: "sandbox-oc-blocked-001",
+      operationCount: 1,
+      dependencyCount: 1,
+      unresolvedDependencyCount: 1,
+      transitionCount: 2,
+      executionAllowed: false,
+      dryRun: true,
+      capabilities: ["command_validation", "file_inspection"],
+      safetyBadges: ["execution-blocked", "dry-run-enforced", "lane-isolated", "human-authority", "dependencies-tracked"],
+      lastTransitionReason: "Blocked by unresolved dependency. Waiting for codex-testing lane.",
+      lastTransitionAt: now,
+    },
+  ];
+
+  return {
+    queueId: "queue-seeded-demo-001",
+    totalLanes: 3,
+    lanes: seededLanes,
+    summary: {
+      snapshotVersion: GOVERNED_OPERATION_LANE_VERSION,
+      queueId: "queue-seeded-demo-001",
+      snapshotAt: now,
+      totalLanes: 3,
+      laneStateCounts: [
+        { state: "approval_pending", count: 1, laneIds: ["lane-claude-code-review-001"] },
+        { state: "ready",            count: 1, laneIds: ["lane-codex-testing-001"] },
+        { state: "blocked",          count: 1, laneIds: ["lane-openclaw-blocked-001"] },
+      ],
+      pendingApprovalCount: 1,
+      blockedCount: 1,
+      deniedCount: 0,
+      verifiedCount: 0,
+      completedCount: 0,
+      allLanesExecutionAllowed: false,
+      allLanesDryRun: true,
+    },
+    allExecutionBlocked: true,
+    allDryRun: true,
+    governanceNote:
+      "SEEDED DEMO STATE — This governed operations view demonstrates the AI-E governance layer. " +
+      "No runtimes have been invoked. All lanes remain in dry-run governance state. " +
+      "Human operator approval is required before any execution can be permitted.",
   };
 }

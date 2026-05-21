@@ -2,6 +2,7 @@ export { GovernedOperationsDashboard } from "./GovernedOperationsDashboard";
 export {
   buildGovernedOperationsDashboardViewModel,
   buildLaneCardViewModel,
+  createSeededGovernedOperationsDashboardViewModel,
   getApprovalStateDisplay,
   getLaneStateDisplay,
   getRuntimeTypeDisplay,

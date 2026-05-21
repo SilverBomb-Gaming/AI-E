@@ -28,6 +28,7 @@ import type {
 import type { ExecutionChainRecord } from "@/lib/aie/executionChainState";
 import type { OperatorRuntimeStateProviderResult } from "@/lib/aie/operatorRuntimeStateContract";
 import type { StrategyGoal, StrategyPortfolioScore } from "@/lib/aie/strategyGoalPortfolio";
+import { GovernedOperationsDashboard, createSeededGovernedOperationsDashboardViewModel } from "@/frontend/ui/governed-operations-dashboard";
 
 function ToggleInput({
   label,
@@ -151,6 +152,21 @@ function StatusBadge({ status }: { status: string }) {
   return (
     <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${getStatusClassName(status)}`}>
       {status.replace(/_/g, " ")}
+    </span>
+  );
+}
+
+function SourceBadge({ variant }: { variant: "live" | "seeded" | "simulated" | "governed_preview" }) {
+  const configs: Record<typeof variant, { label: string; className: string }> = {
+    live:             { label: "LIVE",             className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
+    seeded:           { label: "SEEDED",           className: "border-amber-200 bg-amber-50 text-amber-700" },
+    simulated:        { label: "SIMULATED",        className: "border-ocean/20 bg-ocean/10 text-ocean" },
+    governed_preview: { label: "GOVERNED PREVIEW", className: "border-ocean/20 bg-ocean/5 text-ocean" },
+  };
+  const config = configs[variant];
+  return (
+    <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${config.className}`}>
+      {config.label}
     </span>
   );
 }
@@ -889,10 +905,16 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             </div>
           </div>
           <div className={`mt-6 rounded-[1.5rem] border p-4 ${providerResult.source === "live_runtime" ? "border-emerald-200 bg-emerald-50/70" : providerResult.source === "demo_seed" ? "border-amber-200 bg-amber-50/70" : "border-coral/20 bg-coral/10"}`}>
-            <p className="text-xs uppercase tracking-[0.18em] text-slate">State Source: {getSourceLabel(providerResult.source)}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate">State Source:</p>
+              {providerResult.source === "live_runtime" ? <SourceBadge variant="live" /> : null}
+              {providerResult.source === "demo_seed" ? <SourceBadge variant="seeded" /> : null}
+              {providerResult.source === "unavailable" ? <SourceBadge variant="simulated" /> : null}
+              <p className="text-xs uppercase tracking-[0.18em] text-slate">{getSourceLabel(providerResult.source)}</p>
+            </div>
             <p className="mt-2 text-sm leading-7 body-muted">{getSourceExplanation(providerResult)}</p>
             {providerResult.source === "demo_seed" ? (
-              <p className="mt-2 text-xs font-bold text-ember">DEMO/SEEDED STATE: This is a demonstration of the AI-E Operator Console. No live runtime execution is occurring. All data is simulated for product review.</p>
+              <p className="mt-2 text-xs font-bold text-ember">SEEDED STATE: This is a demonstration of the AI-E Operator Console. No live runtime execution is occurring. Governed runtime lanes and all other sections below reflect seeded demo data — not live runtime state.</p>
             ) : null}
             <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate">Client Controls: {isHydrated ? "Ready" : "Loading"}</p>
             {providerResult.warnings.length > 0 ? (
@@ -923,7 +945,87 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
           </div>
         </section>
 
-        <SectionCard eyebrow="0" title="Studio Command Center">
+        <SectionCard eyebrow="Governed Lanes" title="Governed Runtime Lanes">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {providerResult.source === "live_runtime" ? <SourceBadge variant="live" /> : <SourceBadge variant="seeded" />}
+            <p className="text-xs text-slate">Active runtime lanes under AI-E governance. All operator controls are lane-scoped and operator-authoritative.</p>
+          </div>
+          <div className="space-y-4">
+            <article className="rounded-[1.5rem] border border-ocean/20 bg-ocean/5 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge status={dashboardState?.governed_runtime_lanes?.scheduler_status.status ?? "no_runnable_lanes"} />
+                <StatusBadge status={dashboardState?.governed_runtime_lanes?.resource_status.status ?? "resource_idle"} />
+              </div>
+              <p className="mt-3 text-sm leading-7 body-muted">{dashboardState?.governed_runtime_lanes?.scheduler_status.explanation ?? "No governed runtime lane schedule is available."}</p>
+              <p className="mt-2 text-sm leading-7 body-muted">{dashboardState?.governed_runtime_lanes?.resource_status.explanation ?? "No governed runtime lane resource state is available."}</p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <p className="text-xs leading-6 text-slate">Tracked lanes: {dashboardState?.governed_runtime_lanes?.sessions.length ?? 0}</p>
+                <p className="text-xs leading-6 text-slate">Selected lane: {dashboardState?.governed_runtime_lanes?.selected_session_id ?? "none"}</p>
+                <p className="text-xs leading-6 text-slate">CPU: {dashboardState?.governed_runtime_lanes?.total_logical_cpu_units ?? 0} / {dashboardState?.governed_runtime_lanes?.max_logical_cpu_units ?? 0}</p>
+                <p className="text-xs leading-6 text-slate">Chains: {dashboardState?.governed_runtime_lanes?.total_active_chains ?? 0} / {dashboardState?.governed_runtime_lanes?.max_concurrent_chains ?? 0}</p>
+              </div>
+            </article>
+
+            {dashboardState?.governed_runtime_lanes?.conflicts.length ? (
+              <article className="rounded-[1.5rem] border border-coral/15 bg-coral/5 p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Conflict safety</p>
+                <div className="mt-3 space-y-2">
+                  {dashboardState.governed_runtime_lanes.conflicts.map((conflict) => (
+                    <p key={conflict.conflict_id} className="text-sm leading-7 body-muted">
+                      {conflict.kind}: {conflict.left_session_id} vs {conflict.right_session_id} | {conflict.resolution.replace(/_/g, " ")}
+                    </p>
+                  ))}
+                </div>
+              </article>
+            ) : null}
+
+            {dashboardState?.governed_runtime_lanes?.coordination_dependencies.length ? (
+              <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate">Coordination dependencies</p>
+                <div className="mt-3 space-y-2">
+                  {dashboardState.governed_runtime_lanes.coordination_dependencies.map((dependency) => (
+                    <p key={`${dependency.source_session_id}-${dependency.target_session_id}-${dependency.relationship}`} className="text-sm leading-7 body-muted">
+                      {dependency.source_session_id} {dependency.relationship} {dependency.target_session_id} [{dependency.status}]
+                    </p>
+                  ))}
+                </div>
+              </article>
+            ) : null}
+
+            <div className="space-y-4">
+              {dashboardState?.governed_runtime_lanes?.sessions.length ? dashboardState.governed_runtime_lanes.sessions.map((session) => {
+                const mergeTargetSessionId = dashboardState.governed_runtime_lanes?.sessions.find((candidate) => candidate.session_id !== session.session_id)?.session_id ?? null;
+                return (
+                  <GovernedRuntimeLaneRow
+                    key={session.session_id}
+                    lane={session}
+                    mergeTargetLaneId={mergeTargetSessionId}
+                    onPause={() => handleAction({ type: "pause_governed_lane", session_id: session.session_id })}
+                    onResume={() => handleAction({ type: "resume_governed_lane", session_id: session.session_id })}
+                    onTerminate={() => handleAction({ type: "terminate_governed_lane", session_id: session.session_id })}
+                    onPromote={(priority) => handleAction({ type: "reprioritize_governed_lane", session_id: session.session_id, session_priority: priority })}
+                    onMerge={() => handleAction({ type: "merge_governed_lanes", session_id: session.session_id, target_session_id: mergeTargetSessionId })}
+                    disabled={isPending}
+                  />
+                );
+              }) : <p className="text-sm leading-7 body-muted">No governed runtime lanes are currently registered.</p>}
+            </div>
+          </div>
+        </SectionCard>
+
+        <SectionCard eyebrow="Governed Preview" title="Governed Operations">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <SourceBadge variant="governed_preview" />
+            {providerResult.source === "demo_seed" ? <SourceBadge variant="seeded" /> : null}
+          </div>
+          <p className="mb-5 text-sm leading-7 body-muted">
+            This view shows how AI-E governs registered operation lanes. Each lane is sandbox-isolated, execution-blocked, and requires explicit operator approval before any runtime is permitted to proceed. Runtimes do the bounded work — AI-E governs the work.
+            {providerResult.source === "demo_seed" ? " The data below is seeded demo state — not connected to live runtime." : ""}
+          </p>
+          <GovernedOperationsDashboard viewModel={createSeededGovernedOperationsDashboardViewModel()} />
+        </SectionCard>
+
+        <SectionCard eyebrow="Studio" title="Studio Command Center">
           {studioOperations ? (
             <div className="space-y-6">
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1597,70 +1699,6 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             </div>
           </SectionCard>
 
-          <SectionCard eyebrow="6D" title="Governed Runtime Lanes">
-            <div className="space-y-4">
-              <article className="rounded-[1.5rem] border border-ocean/20 bg-ocean/5 p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatusBadge status={dashboardState?.governed_runtime_lanes?.scheduler_status.status ?? "no_runnable_lanes"} />
-                  <StatusBadge status={dashboardState?.governed_runtime_lanes?.resource_status.status ?? "resource_idle"} />
-                </div>
-                <p className="mt-3 text-sm leading-7 body-muted">{dashboardState?.governed_runtime_lanes?.scheduler_status.explanation ?? "No governed runtime lane schedule is available."}</p>
-                <p className="mt-2 text-sm leading-7 body-muted">{dashboardState?.governed_runtime_lanes?.resource_status.explanation ?? "No governed runtime lane resource state is available."}</p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <p className="text-xs leading-6 text-slate">Tracked lanes: {dashboardState?.governed_runtime_lanes?.sessions.length ?? 0}</p>
-                  <p className="text-xs leading-6 text-slate">Selected lane: {dashboardState?.governed_runtime_lanes?.selected_session_id ?? "none"}</p>
-                  <p className="text-xs leading-6 text-slate">CPU: {dashboardState?.governed_runtime_lanes?.total_logical_cpu_units ?? 0} / {dashboardState?.governed_runtime_lanes?.max_logical_cpu_units ?? 0}</p>
-                  <p className="text-xs leading-6 text-slate">Chains: {dashboardState?.governed_runtime_lanes?.total_active_chains ?? 0} / {dashboardState?.governed_runtime_lanes?.max_concurrent_chains ?? 0}</p>
-                </div>
-              </article>
-
-              {dashboardState?.governed_runtime_lanes?.conflicts.length ? (
-                <article className="rounded-[1.5rem] border border-coral/15 bg-coral/5 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Conflict safety</p>
-                  <div className="mt-3 space-y-2">
-                    {dashboardState.governed_runtime_lanes.conflicts.map((conflict) => (
-                      <p key={conflict.conflict_id} className="text-sm leading-7 body-muted">
-                        {conflict.kind}: {conflict.left_session_id} vs {conflict.right_session_id} | {conflict.resolution.replace(/_/g, " ")}
-                      </p>
-                    ))}
-                  </div>
-                </article>
-              ) : null}
-
-              {dashboardState?.governed_runtime_lanes?.coordination_dependencies.length ? (
-                <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Coordination dependencies</p>
-                  <div className="mt-3 space-y-2">
-                    {dashboardState.governed_runtime_lanes.coordination_dependencies.map((dependency) => (
-                      <p key={`${dependency.source_session_id}-${dependency.target_session_id}-${dependency.relationship}`} className="text-sm leading-7 body-muted">
-                        {dependency.source_session_id} {dependency.relationship} {dependency.target_session_id} [{dependency.status}]
-                      </p>
-                    ))}
-                  </div>
-                </article>
-              ) : null}
-
-              <div className="space-y-4">
-                {dashboardState?.governed_runtime_lanes?.sessions.length ? dashboardState.governed_runtime_lanes.sessions.map((session) => {
-                  const mergeTargetSessionId = dashboardState.governed_runtime_lanes?.sessions.find((candidate) => candidate.session_id !== session.session_id)?.session_id ?? null;
-                  return (
-                    <GovernedRuntimeLaneRow
-                      key={session.session_id}
-                      lane={session}
-                      mergeTargetLaneId={mergeTargetSessionId}
-                      onPause={() => handleAction({ type: "pause_governed_lane", session_id: session.session_id })}
-                      onResume={() => handleAction({ type: "resume_governed_lane", session_id: session.session_id })}
-                      onTerminate={() => handleAction({ type: "terminate_governed_lane", session_id: session.session_id })}
-                      onPromote={(priority) => handleAction({ type: "reprioritize_governed_lane", session_id: session.session_id, session_priority: priority })}
-                      onMerge={() => handleAction({ type: "merge_governed_lanes", session_id: session.session_id, target_session_id: mergeTargetSessionId })}
-                      disabled={isPending}
-                    />
-                  );
-                }) : <p className="text-sm leading-7 body-muted">No governed runtime lanes are currently registered.</p>}
-              </div>
-            </div>
-          </SectionCard>
-
           <SectionCard eyebrow="7" title="Runtime Introspection">
             <div className="grid gap-4 md:grid-cols-2">
               <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
@@ -1698,7 +1736,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             </div>
           </SectionCard>
 
-          <SectionCard eyebrow="9" title="Supervised Autonomy Session">
+          <SectionCard eyebrow="Supervised Session" title="Supervised Session Controls">
             <div className="space-y-4">
               <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1823,7 +1861,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             </div>
           </SectionCard>
 
-          <SectionCard eyebrow="10" title="Overnight Autonomy">
+          <SectionCard eyebrow="Overnight Queue" title="Overnight Review Queue">
             <div className="space-y-4">
               {activeSession?.review_queue?.length ? activeSession.review_queue.map((reviewItem) => (
                 <ReviewQueueRow
