@@ -14,3 +14,11 @@ export {
   type LaneStateDisplayVariant,
   type VerificationStateDisplay,
 } from "./governedOperationsDashboardModel";
+export {
+  generateGovernedOperationProposal,
+  getCategoryLabel,
+  getRuntimeLabel,
+  type GovernedOperationCategory,
+  type GovernedOperationProposal,
+  type GovernedOperationRuntime,
+} from "./governedTaskIntake";

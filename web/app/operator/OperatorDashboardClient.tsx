@@ -28,7 +28,14 @@ import type {
 import type { ExecutionChainRecord } from "@/lib/aie/executionChainState";
 import type { OperatorRuntimeStateProviderResult } from "@/lib/aie/operatorRuntimeStateContract";
 import type { StrategyGoal, StrategyPortfolioScore } from "@/lib/aie/strategyGoalPortfolio";
-import { GovernedOperationsDashboard, createSeededGovernedOperationsDashboardViewModel } from "@/frontend/ui/governed-operations-dashboard";
+import {
+  GovernedOperationsDashboard,
+  createSeededGovernedOperationsDashboardViewModel,
+  generateGovernedOperationProposal,
+  getCategoryLabel,
+  getRuntimeLabel,
+  type GovernedOperationProposal,
+} from "@/frontend/ui/governed-operations-dashboard";
 
 function ToggleInput({
   label,
@@ -773,6 +780,8 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const [chatInput, setChatInput] = useState("");
   const [isPending, startTransition] = useTransition();
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [intakeText, setIntakeText] = useState("");
+  const [governedProposal, setGovernedProposal] = useState<GovernedOperationProposal | null>(null);
 
   useEffect(() => {
     setProviderResult(initialProviderResult);
@@ -945,6 +954,122 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             </div>
           </div>
         </section>
+
+        {/* Task Intake */}
+        <SectionCard eyebrow="Task Intake" title="Create Governed Operation">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">GOVERNED PREVIEW</span>
+            <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-700">SIMULATED</span>
+            <p className="text-xs text-slate">Describe an operation. A governed proposal will be generated client-side. No execution occurs.</p>
+          </div>
+          <div className="mb-3 flex flex-wrap gap-2">
+            {[
+              "Fix enemy patrol AI behavior",
+              "Refactor the API layer types",
+              "Review test coverage for dashboard",
+              "Fix fall recovery after ledge drop",
+            ].map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                onClick={() => { setIntakeText(chip); setGovernedProposal(null); }}
+                className="rounded-full border border-ink/10 bg-white/70 px-4 py-2 text-xs font-medium text-ink transition hover:-translate-y-0.5"
+              >
+                {chip}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={intakeText}
+            onChange={(e) => { setIntakeText(e.target.value); setGovernedProposal(null); }}
+            placeholder="Describe the operation to govern (e.g. fix enemy patrol AI, refactor authentication types)…"
+            className="w-full resize-none rounded-[1.25rem] border border-ink/10 bg-white/80 px-4 py-3 text-sm text-ink placeholder:text-slate focus:outline-none focus:ring-2 focus:ring-ocean/20"
+            rows={3}
+          />
+          <div className="mt-3 flex flex-wrap gap-3">
+            <button
+              type="button"
+              disabled={intakeText.trim().length === 0}
+              onClick={() => { setGovernedProposal(generateGovernedOperationProposal(intakeText.trim())); }}
+              className="rounded-full border border-ocean/20 bg-ocean px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Create Governed Operation
+            </button>
+            {governedProposal ? (
+              <button
+                type="button"
+                onClick={() => { setGovernedProposal(null); setIntakeText(""); }}
+                className="rounded-full border border-ink/10 bg-white/70 px-5 py-3 text-sm font-semibold text-ink transition hover:-translate-y-0.5"
+              >
+                Clear Proposal
+              </button>
+            ) : null}
+          </div>
+          {governedProposal ? (
+            <div className="mt-5 space-y-4">
+              <div className="rounded-[1.5rem] border border-ocean/15 bg-ocean/5 p-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">GOVERNED PREVIEW</span>
+                  <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-700">SIMULATED</span>
+                  <span className="font-mono text-xs text-slate">{governedProposal.proposalId}</span>
+                </div>
+                <p className="mt-3 text-sm font-semibold text-ink">{governedProposal.request}</p>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-[1rem] border border-ink/10 bg-white/80 p-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Runtime</p>
+                    <p className="mt-1 text-xs font-semibold text-ink">{getRuntimeLabel(governedProposal.runtime)}</p>
+                  </div>
+                  <div className="rounded-[1rem] border border-ink/10 bg-white/80 p-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Category</p>
+                    <p className="mt-1 text-xs font-semibold text-ink">{getCategoryLabel(governedProposal.category)}</p>
+                  </div>
+                  <div className="rounded-[1rem] border border-ink/10 bg-white/80 p-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Lane State</p>
+                    <p className="mt-1 text-xs font-semibold text-amber-700">Approval Pending</p>
+                  </div>
+                  <div className="rounded-[1rem] border border-coral/15 bg-coral/5 p-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Execution</p>
+                    <p className="mt-1 text-xs font-bold text-ember">BLOCKED</p>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {governedProposal.commandPolicy.slice(0, 4).map((item) => (
+                    <div
+                      key={item.rule}
+                      className={`rounded-[1rem] border px-3 py-2 ${item.status === "blocked" ? "border-coral/15 bg-coral/5" : "border-emerald-200 bg-emerald-50/70"}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs text-ink">{item.rule}</p>
+                        <span className={`text-xs font-bold uppercase tracking-[0.12em] ${item.status === "blocked" ? "text-ember" : "text-emerald-700"}`}>
+                          {item.status}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4">
+                  <p className="text-xs uppercase tracking-[0.18em] text-slate">Estimated Affected Files</p>
+                  <ul className="mt-2 space-y-1">
+                    {governedProposal.estimatedAffectedFiles.map((f) => (
+                      <li key={f} className="font-mono text-xs text-ink">{f}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="mt-4 rounded-[1rem] border border-amber-200 bg-amber-50/70 p-3">
+                  <p className="text-xs leading-6 text-amber-800">{governedProposal.governanceNote}</p>
+                </div>
+                <div className="mt-4">
+                  <Link
+                    href="/operator/preview"
+                    className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-5 py-3 text-sm font-semibold text-ocean transition hover:-translate-y-0.5"
+                  >
+                    Review in Execution Preview →
+                  </Link>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </SectionCard>
 
         <SectionCard eyebrow="Governed Lanes" title="Governed Runtime Lanes">
           <div className="mb-3 flex flex-wrap items-center gap-2">
