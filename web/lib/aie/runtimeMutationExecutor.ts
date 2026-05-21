@@ -314,7 +314,7 @@ function validateMutationRequest(
     }
 
     case "pause_all_sessions": {
-      const hasRunnableSession = state.autonomous_sessions?.sessions.some((candidate) => candidate.status === "running" || candidate.status === "pending")
+      const hasRunnableSession = state.governed_runtime_lanes?.sessions.some((candidate) => candidate.status === "running" || candidate.status === "pending")
         || Boolean(state.supervised_session && ["running", "recovering", "pending_approval"].includes(state.supervised_session.status))
         || Boolean(state.active_goal);
       if (!hasRunnableSession) {
@@ -324,7 +324,7 @@ function validateMutationRequest(
     }
 
     case "resume_safe_sessions": {
-      const hasSafePausedSession = state.autonomous_sessions?.sessions.some((candidate) => candidate.status === "paused" && !candidate.blocked_by_conflict && candidate.tick_budget_remaining > 0)
+      const hasSafePausedSession = state.governed_runtime_lanes?.sessions.some((candidate) => candidate.status === "paused" && !candidate.blocked_by_conflict && candidate.tick_budget_remaining > 0)
         || Boolean(state.supervised_session && state.supervised_session.status === "paused" && !state.supervised_session.pending_operator_review && state.approvals_required.length === 0);
       if (!hasSafePausedSession) {
         return "no paused safe session is available for a studio-wide resume mutation";
@@ -445,61 +445,61 @@ function validateMutationRequest(
       return null;
     }
 
-    case "pause_autonomous_session": {
+    case "pause_governed_lane": {
       const sessionId = input.action?.session_id ?? null;
       const session = sessionId
-        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
+        ? state.governed_runtime_lanes?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
         : null;
       if (!session || session.status !== "running") {
-        return "no running autonomous session is available for a live pause mutation";
+        return "no running governed runtime lane is available for a live pause mutation";
       }
       return null;
     }
 
-    case "resume_autonomous_session": {
+    case "resume_governed_lane": {
       const sessionId = input.action?.session_id ?? null;
       const session = sessionId
-        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
+        ? state.governed_runtime_lanes?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
         : null;
       if (!session || !["paused", "blocked"].includes(session.status)) {
-        return "no paused autonomous session is available for a live resume mutation";
+        return "no paused governed runtime lane is available for a live resume mutation";
       }
       return null;
     }
 
-    case "reprioritize_autonomous_session": {
+    case "reprioritize_governed_lane": {
       const sessionId = input.action?.session_id ?? null;
       const session = sessionId
-        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
+        ? state.governed_runtime_lanes?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
         : null;
       if (!session || !input.action?.session_priority) {
-        return "a target autonomous session and priority are required for a live reprioritize mutation";
+        return "a target governed runtime lane and priority are required for a live reprioritize mutation";
       }
       return null;
     }
 
-    case "merge_autonomous_sessions": {
+    case "merge_governed_lanes": {
       const sourceSessionId = input.action?.session_id ?? null;
       const targetSessionId = input.action?.target_session_id ?? null;
       const sourceSession = sourceSessionId
-        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === sourceSessionId) ?? null
+        ? state.governed_runtime_lanes?.sessions.find((candidate) => candidate.session_id === sourceSessionId) ?? null
         : null;
       const targetSession = targetSessionId
-        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === targetSessionId) ?? null
+        ? state.governed_runtime_lanes?.sessions.find((candidate) => candidate.session_id === targetSessionId) ?? null
         : null;
       if (!sourceSession || !targetSession || sourceSession.session_id === targetSession.session_id) {
-        return "two distinct autonomous sessions are required for a live merge mutation";
+        return "two distinct governed runtime lanes are required for a live merge mutation";
       }
       return null;
     }
 
-    case "terminate_autonomous_session": {
+    case "terminate_governed_lane": {
       const sessionId = input.action?.session_id ?? null;
       const session = sessionId
-        ? state.autonomous_sessions?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
+        ? state.governed_runtime_lanes?.sessions.find((candidate) => candidate.session_id === sessionId) ?? null
         : null;
       if (!session || ["completed", "failed"].includes(session.status)) {
-        return "no active autonomous session is available for a live terminate mutation";
+        return "no active governed runtime lane is available for a live terminate mutation";
       }
       return null;
     }
@@ -731,11 +731,11 @@ function appendSupervisedSessionControlEvent(
   input: RuntimeMutationExecutorInput,
   reason: string,
 ): void {
-  const isAutonomousSessionIntent = input.runtime_intent === "pause_autonomous_session"
-    || input.runtime_intent === "resume_autonomous_session"
-    || input.runtime_intent === "reprioritize_autonomous_session"
-    || input.runtime_intent === "merge_autonomous_sessions"
-    || input.runtime_intent === "terminate_autonomous_session";
+  const isAutonomousSessionIntent = input.runtime_intent === "pause_governed_lane"
+    || input.runtime_intent === "resume_governed_lane"
+    || input.runtime_intent === "reprioritize_governed_lane"
+    || input.runtime_intent === "merge_governed_lanes"
+    || input.runtime_intent === "terminate_governed_lane";
   const isStudioIntent = input.runtime_intent === "pause_all_sessions"
     || input.runtime_intent === "resume_safe_sessions"
     || input.runtime_intent === "prioritize_review_queue"
@@ -957,11 +957,11 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
       || input.runtime_intent === "select_chat_option"
       || input.runtime_intent === "archive_chat_session"
       || input.runtime_intent === "request_chat_summary"
-      || input.runtime_intent === "pause_autonomous_session"
-      || input.runtime_intent === "resume_autonomous_session"
-      || input.runtime_intent === "reprioritize_autonomous_session"
-      || input.runtime_intent === "merge_autonomous_sessions"
-      || input.runtime_intent === "terminate_autonomous_session"
+      || input.runtime_intent === "pause_governed_lane"
+      || input.runtime_intent === "resume_governed_lane"
+      || input.runtime_intent === "reprioritize_governed_lane"
+      || input.runtime_intent === "merge_governed_lanes"
+      || input.runtime_intent === "terminate_governed_lane"
       || input.runtime_intent === "pause_supervised_session"
       || input.runtime_intent === "stop_supervised_session"
       || input.runtime_intent === "request_supervised_operator_review"
@@ -1011,11 +1011,11 @@ export function executeRuntimeMutation(input: RuntimeMutationExecutorInput): Run
 
   if (!input.start_continuous_loop
     || input.runtime_intent === "pause_active_goal"
-    || input.runtime_intent === "pause_autonomous_session"
-    || input.runtime_intent === "resume_autonomous_session"
-    || input.runtime_intent === "reprioritize_autonomous_session"
-    || input.runtime_intent === "merge_autonomous_sessions"
-    || input.runtime_intent === "terminate_autonomous_session"
+    || input.runtime_intent === "pause_governed_lane"
+    || input.runtime_intent === "resume_governed_lane"
+    || input.runtime_intent === "reprioritize_governed_lane"
+    || input.runtime_intent === "merge_governed_lanes"
+    || input.runtime_intent === "terminate_governed_lane"
     || input.runtime_intent === "pause_supervised_session"
     || input.runtime_intent === "stop_supervised_session"
     || input.runtime_intent === "request_supervised_operator_review"

@@ -55,7 +55,7 @@ export function deriveMetaPolicyState(
   existingPolicyState?: MetaPolicyState | null,
 ): MetaPolicyState {
   return {
-    concurrency_mode: existingPolicyState?.concurrency_mode ?? `max_concurrent_chains=${state.autonomous_sessions?.max_concurrent_chains ?? 1}`,
+    concurrency_mode: existingPolicyState?.concurrency_mode ?? `max_concurrent_chains=${state.governed_runtime_lanes?.max_concurrent_chains ?? 1}`,
     tick_budget_mode: existingPolicyState?.tick_budget_mode ?? `tick_budget=${state.supervised_session?.tick_budget ?? 4}`,
     review_timing_mode: existingPolicyState?.review_timing_mode ?? `review_queue_enabled=${state.supervised_session?.overnight_policy?.review_queue_enabled ?? true}`,
     work_type_priority_mode: existingPolicyState?.work_type_priority_mode ?? `top_priority=${state.planning_recommendations?.[0]?.work_item_id ?? "balanced"}`,

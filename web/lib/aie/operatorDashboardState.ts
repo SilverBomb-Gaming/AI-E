@@ -234,7 +234,7 @@ export type OperatorDashboardPlanningRecommendation = {
   requires_operator_review: boolean;
 };
 
-export type OperatorDashboardAutonomousSession = {
+export type OperatorDashboardGovernedRuntimeLane = {
   session_id: string;
   session_type: AutonomousSessionRecord["session_type"];
   priority: AutonomousSessionPriority;
@@ -253,7 +253,7 @@ export type OperatorDashboardAutonomousSession = {
   ready_on_dependency: boolean;
 };
 
-export type OperatorDashboardAutonomousSessionConflict = {
+export type OperatorDashboardGovernedLaneConflict = {
   conflict_id: string;
   kind: "shared_file" | "shared_goal" | "overlapping_chain" | "incompatible_scope";
   resolution: "block_one_session" | "queue_work" | "request_operator_review" | "merge_scopes_if_safe";
@@ -264,7 +264,7 @@ export type OperatorDashboardAutonomousSessionConflict = {
   explanation: string;
 };
 
-export type OperatorDashboardAutonomousSessionDependency = {
+export type OperatorDashboardGovernedLaneDependency = {
   source_session_id: string;
   target_session_id: string;
   relationship: "unlocks" | "triggers";
@@ -272,15 +272,15 @@ export type OperatorDashboardAutonomousSessionDependency = {
   reason: string;
 };
 
-export type OperatorDashboardAutonomousSessionGroup = {
+export type OperatorDashboardGovernedLaneGroup = {
   coordination_group_id: string;
   session_ids: string[];
   status: "active" | "blocked" | "completed";
   shared_goal: string | null;
 };
 
-export type OperatorDashboardAutonomousSessionState = {
-  sessions: OperatorDashboardAutonomousSession[];
+export type OperatorDashboardGovernedLaneState = {
+  sessions: OperatorDashboardGovernedRuntimeLane[];
   selected_session_id: string | null;
   runnable_session_ids: string[];
   blocked_session_ids: string[];
@@ -292,9 +292,9 @@ export type OperatorDashboardAutonomousSessionState = {
   total_logical_cpu_units: number;
   total_active_chains: number;
   assigned_agent_ids: string[];
-  conflicts: OperatorDashboardAutonomousSessionConflict[];
-  coordination_groups: OperatorDashboardAutonomousSessionGroup[];
-  coordination_dependencies: OperatorDashboardAutonomousSessionDependency[];
+  conflicts: OperatorDashboardGovernedLaneConflict[];
+  coordination_groups: OperatorDashboardGovernedLaneGroup[];
+  coordination_dependencies: OperatorDashboardGovernedLaneDependency[];
 };
 
 export type OperatorDashboardState = {
@@ -323,7 +323,7 @@ export type OperatorDashboardState = {
   delivery_packages?: AutonomousDeliveryPackage[];
   planning_recommendations?: OperatorDashboardPlanningRecommendation[];
   planning_policy_feedback?: AutonomousWorkItemPolicyFeedback;
-  autonomous_sessions?: OperatorDashboardAutonomousSessionState;
+  governed_runtime_lanes?: OperatorDashboardGovernedLaneState;
   studio_operations?: StudioOperationsState;
   studio_risk_acknowledgements?: import("./studioOperationsState").StudioRiskAcknowledgement[];
   studio_summary_package?: StudioOperationsSummaryPackage | null;
@@ -634,7 +634,7 @@ function buildPlanningState(context: OperatorDashboardContext): {
   };
 }
 
-function buildAutonomousSessionState(context: OperatorDashboardContext): OperatorDashboardAutonomousSessionState {
+function buildGovernedLaneState(context: OperatorDashboardContext): OperatorDashboardGovernedLaneState {
   const generatedAt = normalizeText(context.generated_at) || EMPTY_TIMESTAMP;
   const registry = context.autonomous_session_registry
     ? createAutonomousSessionRegistry(context.autonomous_session_registry)
@@ -1238,7 +1238,7 @@ export function buildOperatorDashboardState(context: OperatorDashboardContext): 
   const pausedGoals = sortGoalSnapshots(goalSnapshots.filter((goal) => goal.status === "paused"));
   const activeGoal = selectedGoalId ? goalSnapshotMap.get(selectedGoalId) ?? null : null;
   const planningState = buildPlanningState(context);
-  const autonomousSessionState = buildAutonomousSessionState(context);
+  const governedLaneState = buildGovernedLaneState(context);
 
   return {
     active_goal: activeGoal,
@@ -1281,7 +1281,7 @@ export function buildOperatorDashboardState(context: OperatorDashboardContext): 
     delivery_packages: planningState.delivery_packages,
     planning_recommendations: planningState.planning_recommendations,
     planning_policy_feedback: planningState.planning_policy_feedback,
-    autonomous_sessions: autonomousSessionState,
+    governed_runtime_lanes: governedLaneState,
     last_updated_at: deriveLastUpdatedAt(context, goals, reports),
   };
 }
@@ -1362,7 +1362,7 @@ export function extractActionableItems(state: OperatorDashboardState): OperatorD
     });
   }
 
-  for (const conflict of state.autonomous_sessions?.conflicts ?? []) {
+  for (const conflict of state.governed_runtime_lanes?.conflicts ?? []) {
     if (conflict.resolution !== "block_one_session" && conflict.resolution !== "request_operator_review") {
       continue;
     }
@@ -1430,7 +1430,7 @@ export function summarizeOperatorDashboardState(state: OperatorDashboardState): 
     `Validation issues: ${state.validation_issues.length}`,
     `Recovery recommendations: ${state.recovery_recommendations.length}`,
     `Proposed work items: ${state.proposed_work_items?.length ?? 0}`,
-    `Autonomous sessions: ${state.autonomous_sessions?.sessions.length ?? 0}`,
+    `Governed runtime lanes: ${state.governed_runtime_lanes?.sessions.length ?? 0}`,
     `Review packages: ${state.review_packages?.length ?? 0}`,
     `Delivery packages: ${state.delivery_packages?.length ?? 0}`,
     `Runtime status: ${state.runtime_status.status}`,

@@ -39,11 +39,11 @@ export type SafeRuntimeIntent =
   | "select_chat_option"
   | "archive_chat_session"
   | "request_chat_summary"
-  | "pause_autonomous_session"
-  | "resume_autonomous_session"
-  | "reprioritize_autonomous_session"
-  | "merge_autonomous_sessions"
-  | "terminate_autonomous_session"
+  | "pause_governed_lane"
+  | "resume_governed_lane"
+  | "reprioritize_governed_lane"
+  | "merge_governed_lanes"
+  | "terminate_governed_lane"
   | "start_supervised_session"
   | "pause_supervised_session"
   | "resume_supervised_session"
@@ -215,7 +215,7 @@ function resolveAutonomousSession(state: OperatorDashboardState, sessionId: stri
     return null;
   }
 
-  return state.autonomous_sessions?.sessions.find((session) => session.session_id === sessionId) ?? null;
+  return state.governed_runtime_lanes?.sessions.find((session) => session.session_id === sessionId) ?? null;
 }
 
 function resolveStrategyGoal(state: OperatorDashboardState, goalId: string | null | undefined) {
@@ -376,7 +376,7 @@ export function createSafeRuntimeActionBridgeResult(
     }
 
     case "pause_all_sessions": {
-      const hasRunnableSession = state.autonomous_sessions?.sessions.some((session) => session.status === "running" || session.status === "pending")
+      const hasRunnableSession = state.governed_runtime_lanes?.sessions.some((session) => session.status === "running" || session.status === "pending")
         || (state.supervised_session ? ["running", "recovering", "pending_approval"].includes(state.supervised_session.status) : false)
         || Boolean(state.active_goal);
       if (!hasRunnableSession) {
@@ -386,7 +386,7 @@ export function createSafeRuntimeActionBridgeResult(
     }
 
     case "resume_safe_sessions": {
-      const hasSafePausedSession = state.autonomous_sessions?.sessions.some((session) => session.status === "paused" && !session.blocked_by_conflict && session.tick_budget_remaining > 0)
+      const hasSafePausedSession = state.governed_runtime_lanes?.sessions.some((session) => session.status === "paused" && !session.blocked_by_conflict && session.tick_budget_remaining > 0)
         || Boolean(state.supervised_session && state.supervised_session.status === "paused" && !state.supervised_session.pending_operator_review && state.approvals_required.length === 0);
       if (!hasSafePausedSession) {
         return buildResult(source, action, "action_rejected", "no_op", "no paused safe session exists for a studio-wide resume request", providerResult.warnings, createdAt);
@@ -566,7 +566,7 @@ export function createSafeRuntimeActionBridgeResult(
       return buildResult(source, action, "action_ready", "request_chat_summary", "a bounded chat summary may be generated from the current conversational session", providerResult.warnings, createdAt);
     }
 
-    case "pause_autonomous_session":
+    case "pause_governed_lane":
     {
       const session = resolveAutonomousSession(state, action.session_id);
       if (!session || session.status !== "running") {
@@ -575,7 +575,7 @@ export function createSafeRuntimeActionBridgeResult(
           action,
           "action_rejected",
           "no_op",
-          "no running autonomous session exists for a live pause request",
+          "no running governed runtime lane exists for a live pause request",
           providerResult.warnings,
           createdAt,
         );
@@ -585,14 +585,14 @@ export function createSafeRuntimeActionBridgeResult(
         source,
         action,
         "action_ready",
-        "pause_autonomous_session",
-        "the selected autonomous session may be paused through the persisted multi-session control path",
-        [...providerResult.warnings, `Session target: ${session.session_id}`],
+        "pause_governed_lane",
+        "the selected governed runtime lane may be paused through the persisted multi-lane control path",
+        [...providerResult.warnings, `Lane target: ${session.session_id}`],
         createdAt,
       );
     }
 
-    case "resume_autonomous_session":
+    case "resume_governed_lane":
     {
       const session = resolveAutonomousSession(state, action.session_id);
       if (!session || !["paused", "blocked"].includes(session.status)) {
@@ -601,7 +601,7 @@ export function createSafeRuntimeActionBridgeResult(
           action,
           "action_rejected",
           "no_op",
-          "no paused autonomous session exists for a live resume request",
+          "no paused governed runtime lane exists for a live resume request",
           providerResult.warnings,
           createdAt,
         );
@@ -611,14 +611,14 @@ export function createSafeRuntimeActionBridgeResult(
         source,
         action,
         "action_ready",
-        "resume_autonomous_session",
-        "the selected autonomous session may resume through the persisted multi-session control path",
-        [...providerResult.warnings, `Session target: ${session.session_id}`],
+        "resume_governed_lane",
+        "the selected governed runtime lane may resume through the persisted multi-lane control path",
+        [...providerResult.warnings, `Lane target: ${session.session_id}`],
         createdAt,
       );
     }
 
-    case "reprioritize_autonomous_session":
+    case "reprioritize_governed_lane":
     {
       const session = resolveAutonomousSession(state, action.session_id);
       if (!session || !action.session_priority) {
@@ -627,7 +627,7 @@ export function createSafeRuntimeActionBridgeResult(
           action,
           "action_rejected",
           "no_op",
-          "a target autonomous session and priority are required for a live reprioritize request",
+          "a target governed runtime lane and priority are required for a live reprioritize request",
           providerResult.warnings,
           createdAt,
         );
@@ -637,14 +637,14 @@ export function createSafeRuntimeActionBridgeResult(
         source,
         action,
         "action_ready",
-        "reprioritize_autonomous_session",
-        "the selected autonomous session priority may be updated through the persisted multi-session control path",
-        [...providerResult.warnings, `Session target: ${session.session_id}`, `Priority: ${action.session_priority}`],
+        "reprioritize_governed_lane",
+        "the selected governed runtime lane priority may be updated through the persisted multi-lane control path",
+        [...providerResult.warnings, `Lane target: ${session.session_id}`, `Priority: ${action.session_priority}`],
         createdAt,
       );
     }
 
-    case "merge_autonomous_sessions":
+    case "merge_governed_lanes":
     {
       const sourceSession = resolveAutonomousSession(state, action.session_id);
       const targetSession = resolveAutonomousSession(state, action.target_session_id);
@@ -654,7 +654,7 @@ export function createSafeRuntimeActionBridgeResult(
           action,
           "action_rejected",
           "no_op",
-          "two distinct autonomous sessions are required for a live merge request",
+          "two distinct governed runtime lanes are required for a live merge request",
           providerResult.warnings,
           createdAt,
         );
@@ -664,14 +664,14 @@ export function createSafeRuntimeActionBridgeResult(
         source,
         action,
         "action_ready",
-        "merge_autonomous_sessions",
-        "the selected autonomous sessions may be merged through the persisted multi-session control path",
+        "merge_governed_lanes",
+        "the selected governed runtime lanes may be merged through the persisted multi-lane control path",
         [...providerResult.warnings, `Merge source: ${sourceSession.session_id}`, `Merge target: ${targetSession.session_id}`],
         createdAt,
       );
     }
 
-    case "terminate_autonomous_session": {
+    case "terminate_governed_lane": {
       const session = resolveAutonomousSession(state, action.session_id);
       if (!session || ["completed", "failed"].includes(session.status)) {
         return buildResult(
@@ -679,7 +679,7 @@ export function createSafeRuntimeActionBridgeResult(
           action,
           "action_rejected",
           "no_op",
-          "no active autonomous session exists for a live terminate request",
+          "no active governed runtime lane exists for a live terminate request",
           providerResult.warnings,
           createdAt,
         );
@@ -689,9 +689,9 @@ export function createSafeRuntimeActionBridgeResult(
         source,
         action,
         "action_ready",
-        "terminate_autonomous_session",
-        "the selected autonomous session may be terminated through the persisted multi-session control path",
-        [...providerResult.warnings, `Session target: ${session.session_id}`],
+        "terminate_governed_lane",
+        "the selected governed runtime lane may be terminated through the persisted multi-lane control path",
+        [...providerResult.warnings, `Lane target: ${session.session_id}`],
         createdAt,
       );
     }

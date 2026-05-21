@@ -25,7 +25,7 @@ export function createStudioOperationsSummary(
   const studioOperations = state.studio_operations ?? aggregateStudioHealthFromDashboardState(state);
   const running = [
     ...(state.active_goal ? [`Goal: ${state.active_goal.description}`] : []),
-    ...((state.autonomous_sessions?.sessions ?? [])
+    ...((state.governed_runtime_lanes?.sessions ?? [])
       .filter((session) => session.status === "running" || session.status === "pending")
       .map((session) => `Session: ${session.session_id} (${session.status})`)),
     ...((state.execution_chains ?? [])
@@ -34,7 +34,7 @@ export function createStudioOperationsSummary(
   ];
   const blocked = [
     ...state.blocked_goals.map((goal) => `Goal: ${goal.description} (${goal.blocker_type})`),
-    ...((state.autonomous_sessions?.sessions ?? [])
+    ...((state.governed_runtime_lanes?.sessions ?? [])
       .filter((session) => session.status === "blocked" || session.status === "failed" || session.blocked_by_conflict)
       .map((session) => `Session: ${session.session_id} (${session.status})`)),
     ...((state.execution_chains ?? [])

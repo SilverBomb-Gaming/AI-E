@@ -289,29 +289,29 @@ test("decompose_strategy_goal creates bounded proposed work items", () => {
   assert.equal(result.state.strategy_decompositions?.[0]?.strategy_goal_id, "strategy-ship-first-playable-loop");
 });
 
-test("pause_autonomous_session pauses the selected multi-session worker", () => {
+test("pause_governed_lane pauses the selected multi-session worker", () => {
   const initialState = createOperatorDashboardDemoState();
 
   const result = applyOperatorControlAction(initialState, {
-    type: "pause_autonomous_session",
+    type: "pause_governed_lane",
     session_id: "demo-session-feature-ui",
   });
 
   assert.equal(result.changed, true);
-  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "paused");
+  assert.equal(result.state.governed_runtime_lanes?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "paused");
 });
 
-test("reprioritize_autonomous_session updates session ordering priority", () => {
+test("reprioritize_governed_lane updates session ordering priority", () => {
   const initialState = createOperatorDashboardDemoState();
 
   const result = applyOperatorControlAction(initialState, {
-    type: "reprioritize_autonomous_session",
+    type: "reprioritize_governed_lane",
     session_id: "demo-session-bugfix-delivery",
     session_priority: "critical",
   });
 
   assert.equal(result.changed, true);
-  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.priority, "critical");
+  assert.equal(result.state.governed_runtime_lanes?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.priority, "critical");
 });
 
 test("pause_all_sessions pauses active autonomous work safely", () => {
@@ -322,7 +322,7 @@ test("pause_all_sessions pauses active autonomous work safely", () => {
   });
 
   assert.equal(result.changed, true);
-  assert.equal(result.state.autonomous_sessions?.sessions.every((session) => session.status !== "running" && session.status !== "pending"), true);
+  assert.equal(result.state.governed_runtime_lanes?.sessions.every((session) => session.status !== "running" && session.status !== "pending"), true);
   assert.equal(result.state.runtime_status.status, "runtime_paused");
 });
 
@@ -330,11 +330,11 @@ test("resume_safe_sessions skips blocked sessions and resumes only safe paused s
   const initialState = applyOperatorControlAction(createOperatorDashboardDemoState(), {
     type: "pause_all_sessions",
   }).state;
-  if (!initialState.autonomous_sessions) {
-    throw new Error("Expected autonomous sessions in demo seed.");
+  if (!initialState.governed_runtime_lanes) {
+    throw new Error("Expected governed runtime lanes in demo seed.");
   }
-  initialState.autonomous_sessions.sessions[1] = {
-    ...initialState.autonomous_sessions.sessions[1],
+  initialState.governed_runtime_lanes.sessions[1] = {
+    ...initialState.governed_runtime_lanes.sessions[1],
     blocked_by_conflict: true,
     ready_on_dependency: false,
   };
@@ -344,8 +344,8 @@ test("resume_safe_sessions skips blocked sessions and resumes only safe paused s
   });
 
   assert.equal(result.changed, true);
-  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "pending");
-  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.status, "paused");
+  assert.equal(result.state.governed_runtime_lanes?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "pending");
+  assert.equal(result.state.governed_runtime_lanes?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.status, "paused");
 });
 
 test("acknowledge_studio_risk persists the current top studio risk acknowledgement", () => {
@@ -408,29 +408,29 @@ test("request_studio_summary creates a persisted studio summary package", () => 
   assert.equal(result.state.studio_summary_package?.recommended_next_operator_action.length ? true : false, true);
 });
 
-test("merge_autonomous_sessions consolidates the source session into the target", () => {
+test("merge_governed_lanes consolidates the source session into the target", () => {
   const initialState = createOperatorDashboardDemoState();
 
   const result = applyOperatorControlAction(initialState, {
-    type: "merge_autonomous_sessions",
+    type: "merge_governed_lanes",
     session_id: "demo-session-bugfix-delivery",
     target_session_id: "demo-session-feature-ui",
   });
 
   assert.equal(result.changed, true);
-  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.status, "completed");
-  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.queued_work_item_count, 2);
+  assert.equal(result.state.governed_runtime_lanes?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.status, "completed");
+  assert.equal(result.state.governed_runtime_lanes?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.queued_work_item_count, 2);
 });
 
-test("terminate_autonomous_session marks the session failed and removes it from runnable work", () => {
+test("terminate_governed_lane marks the session failed and removes it from runnable work", () => {
   const initialState = createOperatorDashboardDemoState();
 
   const result = applyOperatorControlAction(initialState, {
-    type: "terminate_autonomous_session",
+    type: "terminate_governed_lane",
     session_id: "demo-session-feature-ui",
   });
 
   assert.equal(result.changed, true);
-  assert.equal(result.state.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "failed");
-  assert.equal(result.state.autonomous_sessions?.runnable_session_ids.includes("demo-session-feature-ui"), false);
+  assert.equal(result.state.governed_runtime_lanes?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "failed");
+  assert.equal(result.state.governed_runtime_lanes?.runnable_session_ids.includes("demo-session-feature-ui"), false);
 });

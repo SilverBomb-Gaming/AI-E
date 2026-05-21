@@ -499,7 +499,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       delivery_packages: [],
       planning_recommendations: [],
       planning_policy_feedback: createAutonomousWorkItemPolicyFeedback(),
-      autonomous_sessions: demoState.autonomous_sessions,
+      governed_runtime_lanes: demoState.governed_runtime_lanes,
       supervised_session: undefined,
       supervised_checkpoints: [],
       last_updated_at: seededAt,
@@ -595,9 +595,9 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       delivery_packages: [deliveryPackage],
       planning_recommendations: demoState.planning_recommendations,
       planning_policy_feedback: demoState.planning_policy_feedback ?? createAutonomousWorkItemPolicyFeedback(),
-      autonomous_sessions: demoState.autonomous_sessions ? {
-        ...demoState.autonomous_sessions,
-        sessions: demoState.autonomous_sessions.sessions.map((session) => session.session_id === "demo-session-feature-ui"
+      governed_runtime_lanes: demoState.governed_runtime_lanes ? {
+        ...demoState.governed_runtime_lanes,
+        sessions: demoState.governed_runtime_lanes.sessions.map((session) => session.session_id === "demo-session-feature-ui"
           ? {
             ...session,
             status: "running",
@@ -673,9 +673,9 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       delivery_packages: demoState.delivery_packages,
       planning_recommendations: demoState.planning_recommendations,
       planning_policy_feedback: demoState.planning_policy_feedback ?? createAutonomousWorkItemPolicyFeedback(),
-      autonomous_sessions: demoState.autonomous_sessions ? {
-        ...demoState.autonomous_sessions,
-        sessions: demoState.autonomous_sessions.sessions.map((session, index) => ({
+      governed_runtime_lanes: demoState.governed_runtime_lanes ? {
+        ...demoState.governed_runtime_lanes,
+        sessions: demoState.governed_runtime_lanes.sessions.map((session, index) => ({
           ...session,
           status: index === 0 ? "paused" : "blocked",
           blocked_by_conflict: index !== 0,
@@ -683,7 +683,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         })),
         runnable_session_ids: [],
         ready_session_ids: [],
-        blocked_session_ids: demoState.autonomous_sessions.sessions.filter((_, index) => index !== 0).map((session) => session.session_id),
+        blocked_session_ids: demoState.governed_runtime_lanes.sessions.filter((_, index) => index !== 0).map((session) => session.session_id),
         scheduler_status: {
           status: "no_runnable_sessions",
           explanation: "No autonomous session is runnable while the operator reviews meta-intelligence recommendations.",
@@ -758,9 +758,9 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       delivery_packages: demoState.delivery_packages,
       planning_recommendations: demoState.planning_recommendations,
       planning_policy_feedback: demoState.planning_policy_feedback ?? createAutonomousWorkItemPolicyFeedback(),
-      autonomous_sessions: demoState.autonomous_sessions ? {
-        ...demoState.autonomous_sessions,
-        sessions: demoState.autonomous_sessions.sessions.map((session, index) => ({
+      governed_runtime_lanes: demoState.governed_runtime_lanes ? {
+        ...demoState.governed_runtime_lanes,
+        sessions: demoState.governed_runtime_lanes.sessions.map((session, index) => ({
           ...session,
           status: index === 0 ? "paused" : "blocked",
           blocked_by_conflict: index !== 0,
@@ -768,7 +768,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         })),
         runnable_session_ids: [],
         ready_session_ids: [],
-        blocked_session_ids: demoState.autonomous_sessions.sessions.map((session) => session.session_id),
+        blocked_session_ids: demoState.governed_runtime_lanes.sessions.map((session) => session.session_id),
         scheduler_status: {
           status: "no_runnable_sessions",
           explanation: "No autonomous session is runnable while the operator manages strategy portfolio state.",
@@ -848,9 +848,9 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
       delivery_packages: demoState.delivery_packages,
       planning_recommendations: demoState.planning_recommendations,
       planning_policy_feedback: demoState.planning_policy_feedback ?? createAutonomousWorkItemPolicyFeedback(),
-      autonomous_sessions: demoState.autonomous_sessions ? {
-        ...demoState.autonomous_sessions,
-        sessions: demoState.autonomous_sessions.sessions.map((session, index) => ({
+      governed_runtime_lanes: demoState.governed_runtime_lanes ? {
+        ...demoState.governed_runtime_lanes,
+        sessions: demoState.governed_runtime_lanes.sessions.map((session, index) => ({
           ...session,
           status: index === 0 ? "paused" : "blocked",
           blocked_by_conflict: index !== 0,
@@ -858,7 +858,7 @@ export function createContinuousRuntimeProofSeedPayload(options: ContinuousRunti
         })),
         runnable_session_ids: [],
         ready_session_ids: [],
-        blocked_session_ids: demoState.autonomous_sessions.sessions.map((session) => session.session_id),
+        blocked_session_ids: demoState.governed_runtime_lanes.sessions.map((session) => session.session_id),
         scheduler_status: {
           status: "no_runnable_sessions",
           explanation: "No autonomous session is runnable while the operator manages conversational command state.",

@@ -1,12 +1,12 @@
 import type { AutonomousDeliveryPackage, AutonomousReviewPackage } from "./autonomousWorkPlanning";
 import type { ExecutionChainRecord } from "./executionChainState";
-import type { OperatorDashboardAgentRuntime, OperatorDashboardAutonomousSessionState, OperatorDashboardState, OperatorRuntimeObservabilityEvent, OperatorDashboardStatusLine } from "./operatorDashboardState";
+import type { OperatorDashboardAgentRuntime, OperatorDashboardGovernedLaneState, OperatorDashboardState, OperatorRuntimeObservabilityEvent, OperatorDashboardStatusLine } from "./operatorDashboardState";
 import type { StudioOperationsState, StudioPriorityWorkItem, StudioRecommendedOperatorAction, StudioResourcePressure, StudioRiskItem, StudioOperationsStatus } from "./studioOperationsState";
 import type { SupervisedAutonomySessionRecord } from "./supervisedAutonomySession";
 
 export type StudioHealthAggregatorInput = {
   runtime_status: OperatorDashboardStatusLine;
-  autonomous_sessions?: OperatorDashboardAutonomousSessionState;
+  autonomous_sessions?: OperatorDashboardGovernedLaneState;
   agent_runtime?: OperatorDashboardAgentRuntime;
   execution_chains?: ExecutionChainRecord[];
   review_queue?: AutonomousReviewPackage[];
@@ -38,7 +38,7 @@ function normalizePriority(value: string | null | undefined): "critical" | "high
   return "medium";
 }
 
-function inferResourcePressure(autonomousSessions?: OperatorDashboardAutonomousSessionState): StudioResourcePressure {
+function inferResourcePressure(autonomousSessions?: OperatorDashboardGovernedLaneState): StudioResourcePressure {
   if (!autonomousSessions || autonomousSessions.sessions.length === 0) {
     return "low";
   }
@@ -391,7 +391,7 @@ export function aggregateStudioHealth(input: StudioHealthAggregatorInput): Studi
 export function aggregateStudioHealthFromDashboardState(state: OperatorDashboardState): StudioOperationsState {
   return aggregateStudioHealth({
     runtime_status: state.runtime_status,
-    autonomous_sessions: state.autonomous_sessions,
+    autonomous_sessions: state.governed_runtime_lanes,
     agent_runtime: state.agent_runtime,
     execution_chains: state.execution_chains,
     review_queue: state.review_packages,

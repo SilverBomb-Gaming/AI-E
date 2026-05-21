@@ -376,7 +376,7 @@ export function createOperatorDashboardDemoState(): OperatorDashboardState {
     delivery_packages: state.delivery_packages,
     recovery_events: state.recovery_recommendations,
     operator_decisions: state.meta_operator_decision_history,
-    autonomous_sessions: state.autonomous_sessions,
+    autonomous_sessions: state.governed_runtime_lanes,
     agent_runtime: state.agent_runtime,
   });
   state.meta_policy_recommendations = recommendMetaPolicyAdjustments({

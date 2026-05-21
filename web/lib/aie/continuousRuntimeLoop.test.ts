@@ -191,7 +191,7 @@ test("loop runs multiple cycles", () => {
 test("loop preserves studio command-center state slices across bounded ticks", () => {
   const seeded = createSeededRuntimeRecord((state) => {
     const demoState = createOperatorDashboardDemoState();
-    state.autonomous_sessions = demoState.autonomous_sessions;
+    state.governed_runtime_lanes = demoState.governed_runtime_lanes;
     state.delivery_packages = demoState.delivery_packages;
     state.studio_risk_acknowledgements = [{
       risk_id: "studio-risk-1",
@@ -222,7 +222,7 @@ test("loop preserves studio command-center state slices across bounded ticks", (
   );
 
   assert.equal(result.ticks.length >= 1, true);
-  assert.equal(result.runtime_state?.operator_dashboard_state?.autonomous_sessions?.sessions.length, 2);
+  assert.equal(result.runtime_state?.operator_dashboard_state?.governed_runtime_lanes?.sessions.length, 2);
   assert.equal(result.runtime_state?.operator_dashboard_state?.delivery_packages?.[0]?.work_item_id, "demo-work-delivery-ready");
   assert.equal(result.runtime_state?.operator_dashboard_state?.studio_risk_acknowledgements?.[0]?.risk_id, "studio-risk-1");
   assert.equal(result.runtime_state?.operator_dashboard_state?.studio_summary_package?.requested_at, "2026-04-26T12:00:00.000Z");

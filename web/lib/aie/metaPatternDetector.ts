@@ -18,7 +18,7 @@ export type MetaPatternDetectorInput = {
   proof_results?: string[];
   trace_results?: string[];
   operator_decisions?: MetaOperatorDecisionRecord[];
-  autonomous_sessions?: OperatorDashboardState["autonomous_sessions"];
+  autonomous_sessions?: OperatorDashboardState["governed_runtime_lanes"];
   agent_runtime?: OperatorDashboardState["agent_runtime"];
 };
 
@@ -215,7 +215,7 @@ export function buildMetaIntelligenceState(
   patterns: MetaDetectedPattern[],
   recommendations: MetaPolicyAdjustment[],
 ): MetaIntelligenceState {
-  const sessions = state.autonomous_sessions?.sessions ?? [];
+  const sessions = state.governed_runtime_lanes?.sessions ?? [];
   const totalSessions = sessions.length + (state.supervised_session ? 1 : 0);
   const successfulSessions = sessions.filter((session) => session.status === "completed").length + (state.supervised_session?.status === "completed" ? 1 : 0);
   const failedSessions = sessions.filter((session) => session.status === "failed").length + (state.supervised_session?.status === "failed" ? 1 : 0);

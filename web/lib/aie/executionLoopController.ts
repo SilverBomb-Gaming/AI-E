@@ -211,7 +211,7 @@ function preserveDashboardExtensions(
 ): OperatorDashboardState {
   return {
     ...dashboardState,
-    autonomous_sessions: projectedState.autonomous_sessions ? structuredClone(projectedState.autonomous_sessions) : projectedState.autonomous_sessions,
+    governed_runtime_lanes: projectedState.governed_runtime_lanes ? structuredClone(projectedState.governed_runtime_lanes) : projectedState.governed_runtime_lanes,
     delivery_packages: projectedState.delivery_packages ? structuredClone(projectedState.delivery_packages) : projectedState.delivery_packages,
     studio_operations: projectedState.studio_operations ? structuredClone(projectedState.studio_operations) : projectedState.studio_operations,
     studio_risk_acknowledgements: projectedState.studio_risk_acknowledgements ? structuredClone(projectedState.studio_risk_acknowledgements) : projectedState.studio_risk_acknowledgements,

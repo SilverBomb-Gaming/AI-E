@@ -13,11 +13,11 @@ import type {
 import type {
   OperatorDashboardApprovalRequirement,
   OperatorDashboardAgentRuntime,
-  OperatorDashboardAutonomousSession,
-  OperatorDashboardAutonomousSessionConflict,
-  OperatorDashboardAutonomousSessionDependency,
-  OperatorDashboardAutonomousSessionGroup,
-  OperatorDashboardAutonomousSessionState,
+  OperatorDashboardGovernedRuntimeLane,
+  OperatorDashboardGovernedLaneConflict,
+  OperatorDashboardGovernedLaneDependency,
+  OperatorDashboardGovernedLaneGroup,
+  OperatorDashboardGovernedLaneState,
   OperatorDashboardBlockedGoal,
   OperatorDashboardBlocker,
   OperatorDashboardFailure,
@@ -950,7 +950,7 @@ function isDashboardPlanningPolicyFeedback(value: unknown): value is AutonomousW
   );
 }
 
-function isDashboardAutonomousSession(value: unknown): value is OperatorDashboardAutonomousSession {
+function isDashboardGovernedRuntimeLane(value: unknown): value is OperatorDashboardGovernedRuntimeLane {
   return Boolean(
     value
     && typeof value === "object"
@@ -974,7 +974,7 @@ function isDashboardAutonomousSession(value: unknown): value is OperatorDashboar
   );
 }
 
-function isDashboardAutonomousSessionConflict(value: unknown): value is OperatorDashboardAutonomousSessionConflict {
+function isDashboardGovernedLaneConflict(value: unknown): value is OperatorDashboardGovernedLaneConflict {
   return Boolean(
     value
     && typeof value === "object"
@@ -990,7 +990,7 @@ function isDashboardAutonomousSessionConflict(value: unknown): value is Operator
   );
 }
 
-function isDashboardAutonomousSessionDependency(value: unknown): value is OperatorDashboardAutonomousSessionDependency {
+function isDashboardGovernedLaneDependency(value: unknown): value is OperatorDashboardGovernedLaneDependency {
   return Boolean(
     value
     && typeof value === "object"
@@ -1002,7 +1002,7 @@ function isDashboardAutonomousSessionDependency(value: unknown): value is Operat
   );
 }
 
-function isDashboardAutonomousSessionGroup(value: unknown): value is OperatorDashboardAutonomousSessionGroup {
+function isDashboardGovernedLaneGroup(value: unknown): value is OperatorDashboardGovernedLaneGroup {
   return Boolean(
     value
     && typeof value === "object"
@@ -1014,12 +1014,12 @@ function isDashboardAutonomousSessionGroup(value: unknown): value is OperatorDas
   );
 }
 
-function isDashboardAutonomousSessionState(value: unknown): value is OperatorDashboardAutonomousSessionState {
+function isDashboardGovernedLaneState(value: unknown): value is OperatorDashboardGovernedLaneState {
   return Boolean(
     value
     && typeof value === "object"
     && Array.isArray((value as { sessions?: unknown }).sessions)
-    && ((value as { sessions?: unknown[] }).sessions ?? []).every(isDashboardAutonomousSession)
+    && ((value as { sessions?: unknown[] }).sessions ?? []).every(isDashboardGovernedRuntimeLane)
     && (((value as { selected_session_id?: unknown }).selected_session_id === null) || typeof (value as { selected_session_id?: unknown }).selected_session_id === "string")
     && Array.isArray((value as { runnable_session_ids?: unknown }).runnable_session_ids)
     && ((value as { runnable_session_ids?: unknown[] }).runnable_session_ids ?? []).every((item) => typeof item === "string")
@@ -1036,11 +1036,11 @@ function isDashboardAutonomousSessionState(value: unknown): value is OperatorDas
     && Array.isArray((value as { assigned_agent_ids?: unknown }).assigned_agent_ids)
     && ((value as { assigned_agent_ids?: unknown[] }).assigned_agent_ids ?? []).every((item) => typeof item === "string")
     && Array.isArray((value as { conflicts?: unknown }).conflicts)
-    && ((value as { conflicts?: unknown[] }).conflicts ?? []).every(isDashboardAutonomousSessionConflict)
+    && ((value as { conflicts?: unknown[] }).conflicts ?? []).every(isDashboardGovernedLaneConflict)
     && Array.isArray((value as { coordination_groups?: unknown }).coordination_groups)
-    && ((value as { coordination_groups?: unknown[] }).coordination_groups ?? []).every(isDashboardAutonomousSessionGroup)
+    && ((value as { coordination_groups?: unknown[] }).coordination_groups ?? []).every(isDashboardGovernedLaneGroup)
     && Array.isArray((value as { coordination_dependencies?: unknown }).coordination_dependencies)
-    && ((value as { coordination_dependencies?: unknown[] }).coordination_dependencies ?? []).every(isDashboardAutonomousSessionDependency)
+    && ((value as { coordination_dependencies?: unknown[] }).coordination_dependencies ?? []).every(isDashboardGovernedLaneDependency)
   );
 }
 
@@ -1116,8 +1116,8 @@ function isOperatorDashboardState(value: unknown): value is OperatorDashboardSta
         && ((value as { planning_recommendations?: unknown[] }).planning_recommendations ?? []).every(isDashboardPlanningRecommendation)))
     && (((value as { planning_policy_feedback?: unknown }).planning_policy_feedback === undefined)
       || isDashboardPlanningPolicyFeedback((value as { planning_policy_feedback?: unknown }).planning_policy_feedback))
-    && (((value as { autonomous_sessions?: unknown }).autonomous_sessions === undefined)
-      || isDashboardAutonomousSessionState((value as { autonomous_sessions?: unknown }).autonomous_sessions))
+    && (((value as { governed_runtime_lanes?: unknown }).governed_runtime_lanes === undefined)
+      || isDashboardGovernedLaneState((value as { governed_runtime_lanes?: unknown }).governed_runtime_lanes))
     && (((value as { supervised_session?: unknown }).supervised_session === undefined)
       || ((value as { supervised_session?: unknown }).supervised_session === null)
       || isSupervisedAutonomySessionRecord((value as { supervised_session?: unknown }).supervised_session))

@@ -17,14 +17,14 @@ function createNominalState() {
     status: "runtime_ready",
     explanation: "Nominal runtime state for studio aggregation tests.",
   };
-  if (state.autonomous_sessions) {
-    state.autonomous_sessions.sessions = state.autonomous_sessions.sessions.map((session) => ({
+  if (state.governed_runtime_lanes) {
+    state.governed_runtime_lanes.sessions = state.governed_runtime_lanes.sessions.map((session) => ({
       ...session,
       status: session.session_id === "demo-session-feature-ui" ? "running" : "pending",
       blocked_by_conflict: false,
       ready_on_dependency: true,
     }));
-    state.autonomous_sessions.blocked_session_ids = [];
+    state.governed_runtime_lanes.blocked_session_ids = [];
   }
   return state;
 }
@@ -42,11 +42,11 @@ test("studio state contract reports nominal state from clean runtime data", () =
 
 test("studio state contract reports blocked state when sessions fail", () => {
   const state = createNominalState();
-  if (!state.autonomous_sessions) {
-    throw new Error("Expected autonomous session state in demo seed.");
+  if (!state.governed_runtime_lanes) {
+    throw new Error("Expected governed runtime lane state in demo seed.");
   }
-  state.autonomous_sessions.sessions[1] = {
-    ...state.autonomous_sessions.sessions[1],
+  state.governed_runtime_lanes.sessions[1] = {
+    ...state.governed_runtime_lanes.sessions[1],
     status: "failed",
     blocked_by_conflict: true,
     ready_on_dependency: false,
@@ -61,11 +61,11 @@ test("studio state contract reports blocked state when sessions fail", () => {
 
 test("studio state contract reports overloaded state under critical resource pressure", () => {
   const state = createNominalState();
-  if (!state.autonomous_sessions) {
-    throw new Error("Expected autonomous session state in demo seed.");
+  if (!state.governed_runtime_lanes) {
+    throw new Error("Expected governed runtime lane state in demo seed.");
   }
-  state.autonomous_sessions.max_logical_cpu_units = 2;
-  state.autonomous_sessions.max_concurrent_chains = 1;
+  state.governed_runtime_lanes.max_logical_cpu_units = 2;
+  state.governed_runtime_lanes.max_concurrent_chains = 1;
 
   const result = aggregateStudioHealthFromDashboardState(state);
 
@@ -103,11 +103,11 @@ test("pending reviews reduce studio health and recommend queue prioritization", 
 test("failed sessions reduce studio health score", () => {
   const baseState = createNominalState();
   const failedState = createNominalState();
-  if (!failedState.autonomous_sessions) {
-    throw new Error("Expected autonomous session state in demo seed.");
+  if (!failedState.governed_runtime_lanes) {
+    throw new Error("Expected governed runtime lane state in demo seed.");
   }
-  failedState.autonomous_sessions.sessions[0] = {
-    ...failedState.autonomous_sessions.sessions[0],
+  failedState.governed_runtime_lanes.sessions[0] = {
+    ...failedState.governed_runtime_lanes.sessions[0],
     status: "failed",
     blocked_by_conflict: true,
   };
@@ -124,7 +124,7 @@ test("aggregator computes counts from persisted runtime slices and does not inve
   state.execution_chains = [];
   state.review_packages = [];
   state.delivery_packages = [];
-  state.autonomous_sessions = undefined;
+  state.governed_runtime_lanes = undefined;
 
   const result = aggregateStudioHealthFromDashboardState(state);
 

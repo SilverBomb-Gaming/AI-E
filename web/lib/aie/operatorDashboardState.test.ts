@@ -378,9 +378,9 @@ test("autonomous sessions surface parallel orchestration state", () => {
     generated_at: "2026-04-29T12:05:00.000Z",
   });
 
-  assert.equal(state.autonomous_sessions?.sessions.length, 2);
-  assert.equal(state.autonomous_sessions?.selected_session_id, "session-bugfix-b");
-  assert.equal(state.autonomous_sessions?.conflicts.some((conflict) => conflict.kind === "shared_file"), true);
+  assert.equal(state.governed_runtime_lanes?.sessions.length, 2);
+  assert.equal(state.governed_runtime_lanes?.selected_session_id, "session-bugfix-b");
+  assert.equal(state.governed_runtime_lanes?.conflicts.some((conflict) => conflict.kind === "shared_file"), true);
   assert.equal(extractActionableItems(state).some((item) => item.kind === "conflict"), true);
-  assert.match(summarizeOperatorDashboardState(state), /Autonomous sessions: 2/);
+  assert.match(summarizeOperatorDashboardState(state), /Governed runtime lanes: 2/);
 });

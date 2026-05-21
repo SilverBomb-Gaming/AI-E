@@ -313,7 +313,7 @@ function hydrateMetaIntelligenceSlices(state: OperatorDashboardState): OperatorD
     delivery_packages: nextState.delivery_packages,
     recovery_events: nextState.recovery_recommendations,
     operator_decisions: nextState.meta_operator_decision_history,
-    autonomous_sessions: nextState.autonomous_sessions,
+    autonomous_sessions: nextState.governed_runtime_lanes,
     agent_runtime: nextState.agent_runtime,
   });
   nextState.meta_policy_recommendations = recommendMetaPolicyAdjustments({
@@ -494,7 +494,7 @@ function buildLiveOperatorDashboardState(
       status: record.last_trigger_result?.status ?? bootResume.status,
       explanation: record.last_trigger_result?.reason ?? bootResume.reason,
     },
-    autonomous_sessions: {
+    governed_runtime_lanes: {
       sessions: [],
       selected_session_id: null,
       runnable_session_ids: [],
@@ -502,11 +502,11 @@ function buildLiveOperatorDashboardState(
       ready_session_ids: [],
       scheduler_status: {
         status: "no_runnable_sessions",
-        explanation: "No autonomous session registry is available in the persisted runtime snapshot.",
+        explanation: "No governed runtime lane registry is available in the persisted runtime snapshot.",
       },
       resource_status: {
         status: "resource_idle",
-        explanation: "No autonomous sessions are registered for bounded parallel execution yet.",
+        explanation: "No governed runtime lanes are registered for bounded parallel execution yet.",
       },
       max_logical_cpu_units: 0,
       max_concurrent_chains: 0,

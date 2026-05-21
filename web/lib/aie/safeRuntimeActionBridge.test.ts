@@ -58,7 +58,7 @@ function createLiveProviderResult(): OperatorRuntimeStateProviderResult {
   liveResult.dashboard_state = {
     ...liveResult.dashboard_state,
     ...demoState,
-    autonomous_sessions: demoState.autonomous_sessions,
+    governed_runtime_lanes: demoState.governed_runtime_lanes,
     active_goal: {
       goal_id: "live-active-goal",
       description: "Stabilize live runtime lane",
@@ -216,9 +216,9 @@ test("resume_safe_sessions creates the studio resume intent", () => {
   providerResult.dashboard_state = {
     ...providerResult.dashboard_state!,
     approvals_required: [],
-    autonomous_sessions: {
-      ...providerResult.dashboard_state!.autonomous_sessions!,
-      sessions: providerResult.dashboard_state!.autonomous_sessions!.sessions.map((session) => ({
+    governed_runtime_lanes: {
+      ...providerResult.dashboard_state!.governed_runtime_lanes!,
+      sessions: providerResult.dashboard_state!.governed_runtime_lanes!.sessions.map((session) => ({
         ...session,
         status: session.session_id === "demo-session-feature-ui" ? "paused" : "blocked",
         blocked_by_conflict: session.session_id === "demo-session-bugfix-delivery",
@@ -360,20 +360,20 @@ test("pause_session creates pause supervised intent", () => {
   assert.equal(result.runtime_intent, "pause_supervised_session");
 });
 
-test("pause_autonomous_session creates live multi-session intent", () => {
+test("pause_governed_lane creates live multi-session intent", () => {
   const result = createSafeRuntimeActionBridgeResult(createLiveProviderResult(), {
-    type: "pause_autonomous_session",
+    type: "pause_governed_lane",
     session_id: "demo-session-feature-ui",
   });
 
   assert.equal(result.status, "action_ready");
   assert.equal(result.goal_id, "demo-session-feature-ui");
-  assert.equal(result.runtime_intent, "pause_autonomous_session");
+  assert.equal(result.runtime_intent, "pause_governed_lane");
 });
 
-test("merge_autonomous_sessions requires distinct live sessions", () => {
+test("merge_governed_lanes requires distinct live sessions", () => {
   const result = createSafeRuntimeActionBridgeResult(createLiveProviderResult(), {
-    type: "merge_autonomous_sessions",
+    type: "merge_governed_lanes",
     session_id: "demo-session-feature-ui",
     target_session_id: "demo-session-feature-ui",
   });

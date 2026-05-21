@@ -312,7 +312,7 @@ test("pause intent does not trigger execution loop", () => {
   assert.equal(result.updated_runtime_state.last_status, "service_paused");
 });
 
-test("pause autonomous session persists through live runtime mutation without starting loops", () => {
+test("pause governed lane persists through live runtime mutation without starting loops", () => {
   const seeded = createSeededRuntimeRecord({
     mutateState(state) {
       state.approvals_required = [];
@@ -330,10 +330,10 @@ test("pause autonomous session persists through live runtime mutation without st
 
   const result = executeRuntimeMutation({
     action: {
-      type: "pause_autonomous_session",
+      type: "pause_governed_lane",
       session_id: "demo-session-feature-ui",
     },
-    runtime_intent: "pause_autonomous_session",
+    runtime_intent: "pause_governed_lane",
     current_runtime_state: seeded.record,
     current_dashboard_state: seeded.state,
     runtime_state_store: seeded.store,
@@ -346,7 +346,7 @@ test("pause autonomous session persists through live runtime mutation without st
   assert.equal(result.execution_loop?.status, "loop_not_triggered");
   assert.equal(result.continuous_runtime_loop, null);
   assert.equal(
-    result.updated_runtime_state.operator_dashboard_state?.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status,
+    result.updated_runtime_state.operator_dashboard_state?.governed_runtime_lanes?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status,
     "paused",
   );
 });
@@ -378,7 +378,7 @@ test("pause_all_sessions pauses active autonomous sessions without starting loop
   });
 
   assert.equal(result.status, "mutation_applied");
-  assert.equal(result.updated_runtime_state.operator_dashboard_state?.autonomous_sessions?.sessions.some((session) => session.status === "running" || session.status === "pending"), false);
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.governed_runtime_lanes?.sessions.some((session) => session.status === "running" || session.status === "pending"), false);
   assert.equal(result.continuous_runtime_loop, null);
   assert.equal(result.updated_runtime_state.last_status, "service_paused");
 });
@@ -387,10 +387,10 @@ test("resume_safe_sessions skips blocked paused sessions in persisted runtime st
   const seeded = createSeededRuntimeRecord({
     mutateState(state) {
       state.approvals_required = [];
-      if (!state.autonomous_sessions) {
-        throw new Error("Expected autonomous sessions.");
+      if (!state.governed_runtime_lanes) {
+        throw new Error("Expected governed runtime lanes.");
       }
-      state.autonomous_sessions.sessions = state.autonomous_sessions.sessions.map((session) => ({
+      state.governed_runtime_lanes.sessions = state.governed_runtime_lanes.sessions.map((session) => ({
         ...session,
         status: "paused",
         blocked_by_conflict: session.session_id === "demo-session-bugfix-delivery",
@@ -416,8 +416,8 @@ test("resume_safe_sessions skips blocked paused sessions in persisted runtime st
   });
 
   assert.equal(result.status, "mutation_applied");
-  assert.equal(result.updated_runtime_state.operator_dashboard_state?.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "pending");
-  assert.equal(result.updated_runtime_state.operator_dashboard_state?.autonomous_sessions?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.status, "paused");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.governed_runtime_lanes?.sessions.find((session) => session.session_id === "demo-session-feature-ui")?.status, "pending");
+  assert.equal(result.updated_runtime_state.operator_dashboard_state?.governed_runtime_lanes?.sessions.find((session) => session.session_id === "demo-session-bugfix-delivery")?.status, "paused");
   assert.equal(result.continuous_runtime_loop, null);
 });
 
