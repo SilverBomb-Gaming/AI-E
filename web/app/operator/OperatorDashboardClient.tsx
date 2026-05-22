@@ -68,6 +68,35 @@ type RuntimeAdapterDispatchLifecycleState = "idle" | "dispatching" | "completed"
 
 type SandboxPatchDispatchLifecycleState = "idle" | "dispatching" | "completed" | "failed";
 
+// ---- Sandbox Notes Dispatch (EXEC-0052-C notes) ------------------------------------
+
+type SandboxNotesDispatchLifecycleState = "idle" | "dispatching" | "completed" | "failed";
+
+type SandboxNotesDispatchLifecycleRecord = { state: string; timestamp: string; message?: string };
+
+type SandboxNotesDispatchClientResult = {
+  manifestVersion: string;
+  outcome: "completed" | "failed" | "timeout" | "rejected";
+  dispatchId: string;
+  sandboxId: string;
+  runtimeType: string;
+  adapterId: string;
+  adapterVersion: string;
+  operationRequest: string;
+  notesFilePath: string;
+  receiptId: string;
+  receiptSandboxPath: string;
+  beforeSnapshotFileCount: number;
+  afterSnapshotFileCount: number;
+  lifecycle: { currentState: string; records: SandboxNotesDispatchLifecycleRecord[] };
+  outputCapture: { stdout: string; stderr: string[] };
+  rollbackContract: { rollbackReady: boolean; rollbackMetadata?: { changedFiles: string[]; diffSummary: string } };
+  durationMs: number;
+  error?: string;
+};
+
+type SandboxNotesDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
+
 type SandboxPatchDispatchLifecycleRecord = { state: string; timestamp: string; message?: string };
 
 type SandboxPatchDispatchClientResult = {
@@ -957,6 +986,51 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
     }
   }
 
+  const [sandboxNotesDispatchState, setSandboxNotesDispatchState] = useState<SandboxNotesDispatchLifecycleState>("idle");
+  const [sandboxNotesDispatchResult, setSandboxNotesDispatchResult] = useState<SandboxNotesDispatchClientResult | null>(null);
+  const [sandboxNotesDispatchApiError, setSandboxNotesDispatchApiError] = useState<SandboxNotesDispatchApiError | null>(null);
+  const [sandboxNotesOperatorId, setSandboxNotesOperatorId] = useState("operator");
+  const [sandboxNotesNote, setSandboxNotesNote] = useState("Added governed stamina cooldown note");
+
+  async function handleSandboxNotesDispatch() {
+    setSandboxNotesDispatchState("dispatching");
+    setSandboxNotesDispatchResult(null);
+    setSandboxNotesDispatchApiError(null);
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const operationRequest = sandboxNotesNote.trim() || "Added governed stamina cooldown note";
+    try {
+      const res = await fetch("/api/operator/sandbox-notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          approvalToken: "operator-approved",
+          operationRequest,
+          authorization: {
+            authorityToken: "operator-approved",
+            approvedBy: sandboxNotesOperatorId.trim() || "operator",
+            approvedAt: nowIso,
+            proposalId: `proposal-exec0052c-notes-${Date.now()}`,
+            operationRequest,
+          },
+          expiresAt,
+          operatorId: sandboxNotesOperatorId.trim() || "operator",
+        }),
+      });
+      const data = (await res.json()) as SandboxNotesDispatchClientResult | SandboxNotesDispatchApiError;
+      if (!res.ok) {
+        setSandboxNotesDispatchApiError(data as SandboxNotesDispatchApiError);
+        setSandboxNotesDispatchState("failed");
+        return;
+      }
+      const result = data as SandboxNotesDispatchClientResult;
+      setSandboxNotesDispatchResult(result);
+      setSandboxNotesDispatchState(result.outcome === "completed" ? "completed" : "failed");
+    } catch {
+      setSandboxNotesDispatchState("failed");
+    }
+  }
+
   async function handleProofDispatch() {
     setProofDispatchState("dispatching");
     setProofDispatchResult(null);
@@ -1656,6 +1730,150 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                     <p className="text-xs uppercase tracking-[0.18em] text-slate">Sandbox ID</p>
                     <p className="mt-1 font-mono text-xs text-amber-900">{sandboxPatchDispatchResult.sandboxId}</p>
                     <p className="mt-1 text-xs text-amber-700">Adapter: {sandboxPatchDispatchResult.adapterId} · {sandboxPatchDispatchResult.adapterVersion} · Mutation bounded to .ai-e/sandboxes/{sandboxPatchDispatchResult.sandboxId}/. Production workspace not mutated.</p>
+                  </article>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </SectionCard>
+
+        {/* Sandbox Notes Dispatch (EXEC-0052-C canonical) */}
+        <SectionCard eyebrow="Sandbox Notes" title="Approve &amp; Append Sandbox Note">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">REAL EXECUTION</span>
+            <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">EXEC-0052-C</span>
+            <p className="text-xs text-slate">Governed markdown mutation. Appends one bullet note to sandboxNotes.md. On first run: creates the file. Sandbox-scoped only — production workspace not touched.</p>
+          </div>
+          <div className="mb-4 flex flex-col gap-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-xs uppercase tracking-[0.18em] text-slate">Note text</span>
+                <input
+                  type="text"
+                  value={sandboxNotesNote}
+                  onChange={(e) => setSandboxNotesNote(e.target.value)}
+                  placeholder="Added governed stamina cooldown note"
+                  className="w-80 rounded-[0.75rem] border border-ink/10 bg-white/80 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-ocean/20"
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs uppercase tracking-[0.18em] text-slate">Operator ID</span>
+                <input
+                  type="text"
+                  value={sandboxNotesOperatorId}
+                  onChange={(e) => setSandboxNotesOperatorId(e.target.value)}
+                  placeholder="operator"
+                  className="rounded-[0.75rem] border border-ink/10 bg-white/80 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-ocean/20"
+                />
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                disabled={sandboxNotesDispatchState === "dispatching"}
+                onClick={() => { void handleSandboxNotesDispatch(); }}
+                className="rounded-full border border-emerald-200 bg-emerald-500 px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {sandboxNotesDispatchState === "dispatching" ? "Appending Note…" : "Approve & Append Note"}
+              </button>
+              {sandboxNotesDispatchState !== "idle" ? (
+                <button
+                  type="button"
+                  onClick={() => { setSandboxNotesDispatchState("idle"); setSandboxNotesDispatchResult(null); setSandboxNotesDispatchApiError(null); }}
+                  className="rounded-full border border-ink/10 bg-white/70 px-4 py-3 text-sm font-semibold text-ink transition hover:-translate-y-0.5"
+                >
+                  Reset
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          {sandboxNotesDispatchState !== "idle" ? (
+            <div className="space-y-3">
+              {sandboxNotesDispatchApiError ? (
+                <div className="rounded-[1.25rem] border border-coral/20 bg-coral/10 p-4">
+                  <p className="text-sm font-semibold text-ember">{sandboxNotesDispatchApiError.error}</p>
+                  {sandboxNotesDispatchApiError.hint ? <p className="mt-1 font-mono text-xs text-slate">{sandboxNotesDispatchApiError.hint}</p> : null}
+                </div>
+              ) : sandboxNotesDispatchState === "dispatching" ? (
+                <div className="rounded-[1.25rem] border border-ocean/15 bg-ocean/5 p-4">
+                  <p className="text-sm body-muted">Verifying authorization → reading sandboxNotes.md → appending note → writing result…</p>
+                </div>
+              ) : sandboxNotesDispatchResult ? (
+                <>
+                  {/* Outcome banner */}
+                  <div className={`rounded-[1.5rem] border p-4 ${sandboxNotesDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50/70" : "border-coral/20 bg-coral/10"}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${sandboxNotesDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-coral/20 bg-coral/10 text-ember"}`}>
+                        {sandboxNotesDispatchResult.outcome}
+                      </span>
+                      <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">{sandboxNotesDispatchResult.runtimeType ?? "openclaw"}</span>
+                      <span className="text-xs text-slate">{sandboxNotesDispatchResult.durationMs}ms</span>
+                    </div>
+                    {sandboxNotesDispatchResult.outcome !== "completed" ? (
+                      <p className="mt-2 text-sm text-ember">{sandboxNotesDispatchResult.error ?? "Notes dispatch failed"}</p>
+                    ) : null}
+                  </div>
+
+                  {/* Mutation output */}
+                  {sandboxNotesDispatchResult.outputCapture.stdout ? (
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Mutation Output</p>
+                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-xs text-ink">{sandboxNotesDispatchResult.outputCapture.stdout}</pre>
+                    </article>
+                  ) : null}
+
+                  {/* Lifecycle */}
+                  <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Runtime Lifecycle</p>
+                    <ul className="mt-3 space-y-1">
+                      {sandboxNotesDispatchResult.lifecycle.records.map((step, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[9px] font-bold text-emerald-700">{i + 1}</span>
+                          <span className="font-mono text-xs text-ink">{step.state}</span>
+                          {step.message ? <span className="text-xs text-slate">— {step.message}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-xs text-slate">Current state: <strong>{sandboxNotesDispatchResult.lifecycle.currentState}</strong></p>
+                  </article>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {/* Notes file */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Mutation Target</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{sandboxNotesDispatchResult.notesFilePath}</p>
+                    </article>
+
+                    {/* Receipt */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Receipt ID</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{sandboxNotesDispatchResult.receiptId || "—"}</p>
+                    </article>
+
+                    {/* Rollback */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Rollback</p>
+                      <p className={`mt-1 text-xs font-bold ${sandboxNotesDispatchResult.rollbackContract.rollbackReady ? "text-emerald-700" : "text-ember"}`}>
+                        {sandboxNotesDispatchResult.rollbackContract.rollbackReady ? "READY" : "NOT READY"}
+                      </p>
+                      {sandboxNotesDispatchResult.rollbackContract.rollbackReady && sandboxNotesDispatchResult.rollbackContract.rollbackMetadata ? (
+                        <p className="mt-0.5 text-xs text-slate">{sandboxNotesDispatchResult.rollbackContract.rollbackMetadata.diffSummary}</p>
+                      ) : null}
+                    </article>
+
+                    {/* Snapshots */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Snapshots</p>
+                      <p className="mt-2 text-xs text-slate">Before: <strong>{sandboxNotesDispatchResult.beforeSnapshotFileCount}</strong> file(s) · After: <strong>{sandboxNotesDispatchResult.afterSnapshotFileCount}</strong> file(s)</p>
+                    </article>
+                  </div>
+
+                  {/* Sandbox ID */}
+                  <article className="rounded-[1.25rem] border border-amber-200 bg-amber-50/70 p-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Sandbox</p>
+                    <p className="mt-1 font-mono text-xs text-amber-900">{sandboxNotesDispatchResult.sandboxId}</p>
+                    <p className="mt-1 text-xs text-amber-700">Adapter: {sandboxNotesDispatchResult.adapterId} · {sandboxNotesDispatchResult.adapterVersion} · Mutation bounded to .ai-e/sandboxes/{sandboxNotesDispatchResult.sandboxId}/. Production workspace not mutated.</p>
                   </article>
                 </>
               ) : null}
