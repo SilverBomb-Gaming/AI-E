@@ -97,6 +97,35 @@ type SandboxNotesDispatchClientResult = {
 
 type SandboxNotesDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
 
+// ---- Sandbox Gameplay Config Dispatch (EXEC-0052-D) --------------------------------
+
+type SandboxGameplayConfigDispatchLifecycleState = "idle" | "dispatching" | "completed" | "failed";
+
+type SandboxGameplayConfigDispatchLifecycleRecord = { state: string; timestamp: string; message?: string };
+
+type SandboxGameplayConfigDispatchClientResult = {
+  manifestVersion: string;
+  outcome: "completed" | "failed" | "timeout" | "rejected";
+  dispatchId: string;
+  sandboxId: string;
+  runtimeType: string;
+  adapterId: string;
+  adapterVersion: string;
+  operationRequest: string;
+  configFilePath: string;
+  receiptId: string;
+  receiptSandboxPath: string;
+  beforeSnapshotFileCount: number;
+  afterSnapshotFileCount: number;
+  lifecycle: { currentState: string; records: SandboxGameplayConfigDispatchLifecycleRecord[] };
+  outputCapture: { stdout: string; stderr: string[] };
+  rollbackContract: { rollbackReady: boolean; rollbackMetadata?: { changedFiles: string[]; diffSummary: string } };
+  durationMs: number;
+  error?: string;
+};
+
+type SandboxGameplayConfigDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
+
 type SandboxPatchDispatchLifecycleRecord = { state: string; timestamp: string; message?: string };
 
 type SandboxPatchDispatchClientResult = {
@@ -1031,6 +1060,51 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
     }
   }
 
+  const [sandboxGameplayConfigDispatchState, setSandboxGameplayConfigDispatchState] = useState<SandboxGameplayConfigDispatchLifecycleState>("idle");
+  const [sandboxGameplayConfigDispatchResult, setSandboxGameplayConfigDispatchResult] = useState<SandboxGameplayConfigDispatchClientResult | null>(null);
+  const [sandboxGameplayConfigDispatchApiError, setSandboxGameplayConfigDispatchApiError] = useState<SandboxGameplayConfigDispatchApiError | null>(null);
+  const [sandboxGameplayConfigOperatorId, setSandboxGameplayConfigOperatorId] = useState("operator");
+  const [sandboxGameplayConfigPatchLabel, setSandboxGameplayConfigPatchLabel] = useState("apply movement speed tuning");
+
+  async function handleSandboxGameplayConfigDispatch() {
+    setSandboxGameplayConfigDispatchState("dispatching");
+    setSandboxGameplayConfigDispatchResult(null);
+    setSandboxGameplayConfigDispatchApiError(null);
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const operationRequest = sandboxGameplayConfigPatchLabel.trim() || "apply movement speed tuning";
+    try {
+      const res = await fetch("/api/operator/sandbox-gameplay-config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          approvalToken: "operator-approved",
+          operationRequest,
+          authorization: {
+            authorityToken: "operator-approved",
+            approvedBy: sandboxGameplayConfigOperatorId.trim() || "operator",
+            approvedAt: nowIso,
+            proposalId: `proposal-exec0052d-gameplay-${Date.now()}`,
+            operationRequest,
+          },
+          expiresAt,
+          operatorId: sandboxGameplayConfigOperatorId.trim() || "operator",
+        }),
+      });
+      const data = (await res.json()) as SandboxGameplayConfigDispatchClientResult | SandboxGameplayConfigDispatchApiError;
+      if (!res.ok) {
+        setSandboxGameplayConfigDispatchApiError(data as SandboxGameplayConfigDispatchApiError);
+        setSandboxGameplayConfigDispatchState("failed");
+        return;
+      }
+      const result = data as SandboxGameplayConfigDispatchClientResult;
+      setSandboxGameplayConfigDispatchResult(result);
+      setSandboxGameplayConfigDispatchState(result.outcome === "completed" ? "completed" : "failed");
+    } catch {
+      setSandboxGameplayConfigDispatchState("failed");
+    }
+  }
+
   async function handleProofDispatch() {
     setProofDispatchState("dispatching");
     setProofDispatchResult(null);
@@ -1874,6 +1948,120 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                     <p className="text-xs uppercase tracking-[0.18em] text-slate">Sandbox</p>
                     <p className="mt-1 font-mono text-xs text-amber-900">{sandboxNotesDispatchResult.sandboxId}</p>
                     <p className="mt-1 text-xs text-amber-700">Adapter: {sandboxNotesDispatchResult.adapterId} · {sandboxNotesDispatchResult.adapterVersion} · Mutation bounded to .ai-e/sandboxes/{sandboxNotesDispatchResult.sandboxId}/. Production workspace not mutated.</p>
+                  </article>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </SectionCard>
+
+        {/* Sandbox Gameplay Config Dispatch (EXEC-0052-D) */}
+        <SectionCard eyebrow="Sandbox Gameplay Config" title="Approve &amp; Apply Gameplay Tuning">
+          <div className="mb-4 space-y-3">
+            <p className="text-xs text-slate">Governed gameplay config mutation. Applies a deterministic tuning step to sandboxGameplayConfig.json (movementSpeed +0.5, staminaCooldown −0.1, enemyAggroRange +1.0). On first run: creates the file with defaults. Sandbox-scoped only.</p>
+            <div className="space-y-2">
+              <label className="block text-xs uppercase tracking-[0.18em] text-slate">Patch label (operationRequest)</label>
+              <input
+                type="text"
+                className="w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-2 text-sm text-ink"
+                value={sandboxGameplayConfigPatchLabel}
+                onChange={(e) => { setSandboxGameplayConfigPatchLabel(e.target.value); }}
+                placeholder="apply movement speed tuning"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="block text-xs uppercase tracking-[0.18em] text-slate">Operator ID</label>
+              <input
+                type="text"
+                className="w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-2 text-sm text-ink"
+                value={sandboxGameplayConfigOperatorId}
+                onChange={(e) => { setSandboxGameplayConfigOperatorId(e.target.value); }}
+                placeholder="operator"
+              />
+            </div>
+            <button
+              type="button"
+              className="rounded-[1.25rem] bg-ocean px-6 py-3 text-sm font-semibold text-white disabled:opacity-40"
+              disabled={sandboxGameplayConfigDispatchState === "dispatching"}
+              onClick={() => { void handleSandboxGameplayConfigDispatch(); }}
+            >
+              {sandboxGameplayConfigDispatchState === "dispatching" ? "Applying Tuning…" : "Approve & Apply Tuning"}
+            </button>
+            {sandboxGameplayConfigDispatchState !== "idle" ? (
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${sandboxGameplayConfigDispatchState === "completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : sandboxGameplayConfigDispatchState === "dispatching" ? "border-ocean/20 bg-ocean/5 text-ocean" : "border-coral/20 bg-coral/10 text-ember"}`}>
+                  {sandboxGameplayConfigDispatchState}
+                </span>
+              </div>
+            ) : null}
+          </div>
+          {sandboxGameplayConfigDispatchState !== "idle" ? (
+            <div className="mt-4 space-y-4">
+              {sandboxGameplayConfigDispatchApiError ? (
+                <article className="rounded-[1.5rem] border border-coral/20 bg-coral/10 p-4">
+                  <p className="text-sm font-semibold text-ember">{sandboxGameplayConfigDispatchApiError.error}</p>
+                  {sandboxGameplayConfigDispatchApiError.hint ? <p className="mt-1 font-mono text-xs text-slate">{sandboxGameplayConfigDispatchApiError.hint}</p> : null}
+                </article>
+              ) : sandboxGameplayConfigDispatchState === "dispatching" ? (
+                <article className="rounded-[1.5rem] border border-ocean/20 bg-ocean/5 p-4">
+                  <p className="text-sm body-muted">Verifying authorization → reading sandboxGameplayConfig.json → applying tuning step → writing result…</p>
+                </article>
+              ) : sandboxGameplayConfigDispatchResult ? (
+                <>
+                  <div className={`rounded-[1.5rem] border p-4 ${sandboxGameplayConfigDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50/70" : "border-coral/20 bg-coral/10"}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${sandboxGameplayConfigDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-coral/20 bg-coral/10 text-ember"}`}>
+                        {sandboxGameplayConfigDispatchResult.outcome}
+                      </span>
+                      <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">{sandboxGameplayConfigDispatchResult.runtimeType ?? "openclaw"}</span>
+                      <span className="text-xs text-slate">{sandboxGameplayConfigDispatchResult.durationMs}ms</span>
+                    </div>
+                    {sandboxGameplayConfigDispatchResult.outcome !== "completed" ? (
+                      <p className="mt-2 text-sm text-ember">{sandboxGameplayConfigDispatchResult.error ?? "Gameplay config dispatch failed"}</p>
+                    ) : null}
+                  </div>
+                  {sandboxGameplayConfigDispatchResult.outputCapture.stdout ? (
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Mutation output (before / after / diff)</p>
+                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-xs text-ink">{sandboxGameplayConfigDispatchResult.outputCapture.stdout}</pre>
+                    </article>
+                  ) : null}
+                  <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Lifecycle</p>
+                    <div className="mt-2 space-y-1">
+                      {sandboxGameplayConfigDispatchResult.lifecycle.records.map((step, i) => (
+                        <p key={i} className="font-mono text-xs text-slate">{step.timestamp} <strong>{step.state}</strong>{step.message ? ` — ${step.message}` : ""}</p>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-slate">Current state: <strong>{sandboxGameplayConfigDispatchResult.lifecycle.currentState}</strong></p>
+                  </article>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Config file path</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{sandboxGameplayConfigDispatchResult.configFilePath}</p>
+                    </article>
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Receipt ID</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{sandboxGameplayConfigDispatchResult.receiptId || "—"}</p>
+                    </article>
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Rollback contract</p>
+                      <p className={`mt-1 text-xs font-bold ${sandboxGameplayConfigDispatchResult.rollbackContract.rollbackReady ? "text-emerald-700" : "text-ember"}`}>
+                        {sandboxGameplayConfigDispatchResult.rollbackContract.rollbackReady ? "READY" : "NOT READY"}
+                      </p>
+                      {sandboxGameplayConfigDispatchResult.rollbackContract.rollbackReady && sandboxGameplayConfigDispatchResult.rollbackContract.rollbackMetadata ? (
+                        <p className="mt-0.5 text-xs text-slate">{sandboxGameplayConfigDispatchResult.rollbackContract.rollbackMetadata.diffSummary}</p>
+                      ) : null}
+                    </article>
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Snapshots</p>
+                      <p className="mt-2 text-xs text-slate">Before: <strong>{sandboxGameplayConfigDispatchResult.beforeSnapshotFileCount}</strong> file(s) · After: <strong>{sandboxGameplayConfigDispatchResult.afterSnapshotFileCount}</strong> file(s)</p>
+                    </article>
+                  </div>
+                  <article className="rounded-[1.5rem] border border-amber-200 bg-amber-50/60 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-amber-700">Sandbox boundary</p>
+                    <p className="mt-1 font-mono text-xs text-amber-900">{sandboxGameplayConfigDispatchResult.sandboxId}</p>
+                    <p className="mt-1 text-xs text-amber-700">Adapter: {sandboxGameplayConfigDispatchResult.adapterId} · {sandboxGameplayConfigDispatchResult.adapterVersion} · Mutation bounded to .ai-e/sandboxes/{sandboxGameplayConfigDispatchResult.sandboxId}/. Production workspace not mutated.</p>
                   </article>
                 </>
               ) : null}
