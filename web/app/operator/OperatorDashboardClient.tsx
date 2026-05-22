@@ -60,6 +60,36 @@ type ProofDispatchClientResult = {
 
 type ProofDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
 
+// ---- Runtime Adapter Dispatch (EXEC-0052-B) ----------------------------------------
+
+type RuntimeAdapterDispatchLifecycleState = "idle" | "dispatching" | "completed" | "failed";
+
+type RuntimeAdapterDispatchLifecycleRecord = { state: string; timestamp: string; message?: string };
+
+type RuntimeAdapterDispatchClientResult = {
+  manifestVersion: string;
+  outcome: "completed" | "failed" | "timeout" | "rejected";
+  dispatchId: string;
+  invocationId: string;
+  sandboxId: string;
+  runtimeType: string;
+  adapterId: string;
+  adapterVersion: string;
+  operationRequest: string;
+  proofFilePath: string;
+  receiptId: string;
+  receiptSandboxPath: string;
+  beforeSnapshotFileCount: number;
+  afterSnapshotFileCount: number;
+  lifecycle: { currentState: string; records: RuntimeAdapterDispatchLifecycleRecord[] };
+  rollbackContract: { rollbackReady: boolean; rollbackMetadata?: { changedFiles: string[]; diffSummary: string } };
+  executedAt: string;
+  durationMs: number;
+  error?: string;
+};
+
+type RuntimeAdapterDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
+
 function ToggleInput({
   label,
   checked,
@@ -810,6 +840,49 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const [proofDispatchApiError, setProofDispatchApiError] = useState<ProofDispatchApiError | null>(null);
   const [proofOperatorId, setProofOperatorId] = useState("operator");
 
+  const [runtimeAdapterDispatchState, setRuntimeAdapterDispatchState] = useState<RuntimeAdapterDispatchLifecycleState>("idle");
+  const [runtimeAdapterDispatchResult, setRuntimeAdapterDispatchResult] = useState<RuntimeAdapterDispatchClientResult | null>(null);
+  const [runtimeAdapterDispatchApiError, setRuntimeAdapterDispatchApiError] = useState<RuntimeAdapterDispatchApiError | null>(null);
+  const [runtimeAdapterOperatorId, setRuntimeAdapterOperatorId] = useState("operator");
+
+  async function handleRuntimeAdapterDispatch() {
+    setRuntimeAdapterDispatchState("dispatching");
+    setRuntimeAdapterDispatchResult(null);
+    setRuntimeAdapterDispatchApiError(null);
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    try {
+      const res = await fetch("/api/operator/runtime-adapter-dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          approvalToken: "operator-approved",
+          operationRequest: "Write AI_E_RUNTIME_PROOF.txt to sandbox workspace",
+          authorization: {
+            authorityToken: "operator-approved",
+            approvedBy: runtimeAdapterOperatorId.trim() || "operator",
+            approvedAt: nowIso,
+            proposalId: `proposal-exec0052b-${Date.now()}`,
+            operationRequest: "Write AI_E_RUNTIME_PROOF.txt to sandbox workspace",
+          },
+          expiresAt,
+          operatorId: runtimeAdapterOperatorId.trim() || "operator",
+        }),
+      });
+      const data = (await res.json()) as RuntimeAdapterDispatchClientResult | RuntimeAdapterDispatchApiError;
+      if (!res.ok) {
+        setRuntimeAdapterDispatchApiError(data as RuntimeAdapterDispatchApiError);
+        setRuntimeAdapterDispatchState("failed");
+        return;
+      }
+      const result = data as RuntimeAdapterDispatchClientResult;
+      setRuntimeAdapterDispatchResult(result);
+      setRuntimeAdapterDispatchState(result.outcome === "completed" ? "completed" : "failed");
+    } catch {
+      setRuntimeAdapterDispatchState("failed");
+    }
+  }
+
   async function handleProofDispatch() {
     setProofDispatchState("dispatching");
     setProofDispatchResult(null);
@@ -1257,6 +1330,128 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                     <p className="text-xs uppercase tracking-[0.18em] text-slate">Sandbox ID</p>
                     <p className="mt-1 font-mono text-xs text-amber-900">{proofDispatchResult.sandboxId}</p>
                     <p className="mt-1 text-xs text-amber-700">All artifacts written inside .ai-e/sandboxes/{proofDispatchResult.sandboxId}/. Production workspace not mutated.</p>
+                  </article>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </SectionCard>
+
+        {/* Runtime Adapter Dispatch (EXEC-0052-B) */}
+        <SectionCard eyebrow="Runtime Adapter Dispatch" title="Approve &amp; Invoke Runtime Adapter">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">REAL EXECUTION</span>
+            <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">EXEC-0052-B</span>
+            <p className="text-xs text-slate">First real governed runtime adapter invocation. Writes AI_E_RUNTIME_PROOF.txt inside the sandbox workspace via the openclaw bounded local adapter. No production workspace is touched.</p>
+          </div>
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs uppercase tracking-[0.18em] text-slate">Operator ID</span>
+              <input
+                type="text"
+                value={runtimeAdapterOperatorId}
+                onChange={(e) => setRuntimeAdapterOperatorId(e.target.value)}
+                placeholder="operator"
+                className="rounded-[0.75rem] border border-ink/10 bg-white/80 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-ocean/20"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={runtimeAdapterDispatchState === "dispatching"}
+              onClick={() => { void handleRuntimeAdapterDispatch(); }}
+              className="rounded-full border border-emerald-200 bg-emerald-500 px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {runtimeAdapterDispatchState === "dispatching" ? "Dispatching…" : "Approve & Invoke Runtime Adapter"}
+            </button>
+            {runtimeAdapterDispatchState !== "idle" ? (
+              <button
+                type="button"
+                onClick={() => { setRuntimeAdapterDispatchState("idle"); setRuntimeAdapterDispatchResult(null); setRuntimeAdapterDispatchApiError(null); }}
+                className="rounded-full border border-ink/10 bg-white/70 px-4 py-3 text-sm font-semibold text-ink transition hover:-translate-y-0.5"
+              >
+                Reset
+              </button>
+            ) : null}
+          </div>
+
+          {runtimeAdapterDispatchState !== "idle" ? (
+            <div className="space-y-3">
+              {runtimeAdapterDispatchApiError ? (
+                <div className="rounded-[1.25rem] border border-coral/20 bg-coral/10 p-4">
+                  <p className="text-sm font-semibold text-ember">{runtimeAdapterDispatchApiError.error}</p>
+                  {runtimeAdapterDispatchApiError.hint ? <p className="mt-1 font-mono text-xs text-slate">{runtimeAdapterDispatchApiError.hint}</p> : null}
+                </div>
+              ) : runtimeAdapterDispatchState === "dispatching" ? (
+                <div className="rounded-[1.25rem] border border-ocean/15 bg-ocean/5 p-4">
+                  <p className="text-sm body-muted">Verifying authorization → preparing sandbox → invoking openclaw adapter → writing proof…</p>
+                </div>
+              ) : runtimeAdapterDispatchResult ? (
+                <>
+                  {/* Outcome banner */}
+                  <div className={`rounded-[1.5rem] border p-4 ${runtimeAdapterDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50/70" : "border-coral/20 bg-coral/10"}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${runtimeAdapterDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-coral/20 bg-coral/10 text-ember"}`}>
+                        {runtimeAdapterDispatchResult.outcome}
+                      </span>
+                      <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">{runtimeAdapterDispatchResult.runtimeType ?? "openclaw"}</span>
+                      <span className="text-xs text-slate">{runtimeAdapterDispatchResult.durationMs}ms</span>
+                    </div>
+                    {runtimeAdapterDispatchResult.outcome !== "completed" ? (
+                      <p className="mt-2 text-sm text-ember">{runtimeAdapterDispatchResult.error ?? "Dispatch failed"}</p>
+                    ) : null}
+                  </div>
+
+                  {/* Lifecycle */}
+                  <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Runtime Lifecycle</p>
+                    <ul className="mt-3 space-y-1">
+                      {runtimeAdapterDispatchResult.lifecycle.records.map((step, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[9px] font-bold text-emerald-700">{i + 1}</span>
+                          <span className="font-mono text-xs text-ink">{step.state}</span>
+                          {step.message ? <span className="text-xs text-slate">— {step.message}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-xs text-slate">Current state: <strong>{runtimeAdapterDispatchResult.lifecycle.currentState}</strong></p>
+                  </article>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {/* Proof file */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Proof File</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{runtimeAdapterDispatchResult.proofFilePath}</p>
+                    </article>
+
+                    {/* Receipt */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Receipt ID</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{runtimeAdapterDispatchResult.receiptId || "—"}</p>
+                    </article>
+
+                    {/* Rollback */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Rollback</p>
+                      <p className={`mt-1 text-xs font-bold ${runtimeAdapterDispatchResult.rollbackContract.rollbackReady ? "text-emerald-700" : "text-ember"}`}>
+                        {runtimeAdapterDispatchResult.rollbackContract.rollbackReady ? "READY" : "NOT READY"}
+                      </p>
+                      {runtimeAdapterDispatchResult.rollbackContract.rollbackReady && runtimeAdapterDispatchResult.rollbackContract.rollbackMetadata ? (
+                        <p className="mt-0.5 text-xs text-slate">{runtimeAdapterDispatchResult.rollbackContract.rollbackMetadata.diffSummary}</p>
+                      ) : null}
+                    </article>
+
+                    {/* Snapshots */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Snapshots</p>
+                      <p className="mt-2 text-xs text-slate">Before: <strong>{runtimeAdapterDispatchResult.beforeSnapshotFileCount}</strong> file(s) · After: <strong>{runtimeAdapterDispatchResult.afterSnapshotFileCount}</strong> file(s)</p>
+                    </article>
+                  </div>
+
+                  {/* Sandbox ID */}
+                  <article className="rounded-[1.25rem] border border-amber-200 bg-amber-50/70 p-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Sandbox ID</p>
+                    <p className="mt-1 font-mono text-xs text-amber-900">{runtimeAdapterDispatchResult.sandboxId}</p>
+                    <p className="mt-1 text-xs text-amber-700">Adapter: {runtimeAdapterDispatchResult.adapterId} · {runtimeAdapterDispatchResult.adapterVersion} · All artifacts written inside .ai-e/sandboxes/{runtimeAdapterDispatchResult.sandboxId}/. Production workspace not mutated.</p>
                   </article>
                 </>
               ) : null}
