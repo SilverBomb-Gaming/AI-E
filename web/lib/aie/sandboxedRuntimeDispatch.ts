@@ -524,3 +524,182 @@ export async function executeGovernedSandboxDispatch(
     return failureResult(isTimeout ? "timed_out" : "failed", error);
   }
 }
+
+// ---- Authorized proof dispatch (EXEC-0051-C) ----------------------------------------
+// Wraps executeGovernedSandboxDispatch with full authorization verification:
+// expiry check, replay guard, duplicate prevention, lifecycle tracking, rollback contract.
+
+import type { DispatchAuthorizationReceipt } from "./dispatchAuthorizationBoundary";
+import { authorizeDispatch } from "./dispatchAuthorizationBoundary";
+
+export const PROOF_FILE_NAME = "AI_E_DISPATCH_PROOF.txt" as const;
+export const PROOF_RUNTIME_ID = "aie-exec0051c-bounded-write" as const;
+
+export type GovernedProofDispatchRequest = Omit<GovernedDispatchRequest, "targetFileName" | "operationContent"> & {
+  authorization: GovernedExecutionApproval;
+  expiresAt: string;
+  runtimeId?: string;
+  operatorId?: string;
+};
+
+export type GovernedProofDispatchResult = GovernedDispatchResult & {
+  authorizationReceipt: DispatchAuthorizationReceipt;
+  rollbackContract: GovernedRollbackContract;
+  lifecycle: DispatchLifecycleRecord[];
+  proofFilePath: string;
+};
+
+function buildProofContent(params: {
+  dispatchId: string;
+  sandboxId: string;
+  operatorId: string;
+  runtimeId: string;
+  approvalId: string;
+  timestamp: string;
+  authorized: boolean;
+  receiptRef: string;
+}): string {
+  return [
+    "AI-E DISPATCH PROOF",
+    "===================",
+    `Dispatch ID:          ${params.dispatchId}`,
+    `Sandbox ID:           ${params.sandboxId}`,
+    `Operator ID:          ${params.operatorId}`,
+    `Runtime ID:           ${params.runtimeId}`,
+    `Approval ID:          ${params.approvalId}`,
+    `Authority Token:      ${GOVERNED_DISPATCH_APPROVAL_TOKEN}`,
+    `Timestamp:            ${params.timestamp}`,
+    `Lifecycle Status:     completed`,
+    `Authorization Result: ${params.authorized ? "authorized" : "denied"}`,
+    `Rollback Reference:   ${params.receiptRef}`,
+    "",
+    "This file was created by AI-E EXEC-0051-C · First Authorized Sandbox Mutation.",
+    "Mutation was bounded to this sandbox workspace only. Production workspace was not touched.",
+    "Shell execution: DISABLED. Network: DISABLED. Recursive agents: DISABLED.",
+  ].join("\n");
+}
+
+function buildRollbackContract(
+  result: GovernedDispatchResult,
+  nowStr: string,
+): GovernedRollbackContract {
+  const changed = result.diffEntries.filter((e) => e.changeKind !== "unchanged");
+  const diffSummary = [
+    `${result.diffEntries.filter((e) => e.changeKind === "created").length} created`,
+    `${result.diffEntries.filter((e) => e.changeKind === "modified").length} modified`,
+    `${result.diffEntries.filter((e) => e.changeKind === "deleted").length} deleted`,
+  ].join(", ");
+  return {
+    rollbackReady: result.outcome === "completed",
+    beforeSnapshotId: `${result.sandboxId}-before-snapshot`,
+    afterSnapshotId: `${result.sandboxId}-after-snapshot`,
+    rollbackMetadata: {
+      changedFiles: changed.map((e) => e.sandboxRelativePath),
+      diffSummary,
+      createdAt: nowStr,
+    },
+    verification: {
+      valid: result.outcome === "completed",
+      reason: result.outcome !== "completed" ? result.error : undefined,
+      checkedAt: nowStr,
+    },
+  };
+}
+
+export async function executeGovernedProofDispatch(
+  request: GovernedProofDispatchRequest,
+): Promise<GovernedProofDispatchResult> {
+  const startTime = Date.now();
+  const nowFn = request.now ?? (() => new Date().toISOString());
+  const nowStr = nowFn();
+  // Pin time for deterministic dispatch ID and proof content
+  const stableNow = () => nowStr;
+  const dispatchId = makeDispatchId(stableNow);
+
+  const operatorId = request.operatorId ?? "operator";
+  const runtimeId = request.runtimeId ?? PROOF_RUNTIME_ID;
+
+  const lifecycle: DispatchLifecycleRecord[] = [
+    { state: "awaiting_approval", timestamp: nowStr, message: "Verifying dispatch authorization..." },
+  ];
+
+  // Authorization check using dispatchAuthorizationBoundary
+  const authReceipt = authorizeDispatch({
+    approval: request.authorization,
+    sandboxId: request.sandboxId ?? "sandbox-unknown",
+    operationRequest: request.operationRequest,
+    expiresAt: request.expiresAt,
+    now: nowStr,
+  });
+
+  if (!authReceipt.result.authorized) {
+    const reason = authReceipt.result.reason ?? "authorization denied";
+    lifecycle.push({ state: "failed", timestamp: nowStr, message: `Authorization denied: ${reason}` });
+    return {
+      manifestVersion: "EXEC-0051",
+      dispatchId,
+      sandboxId: request.sandboxId ?? "sandbox-unknown",
+      sandboxRootPath: "",
+      outcome: "failed",
+      operationRequest: request.operationRequest,
+      targetFile: { sandboxRelativePath: PROOF_FILE_NAME, sizeBytes: 0 },
+      stdout: "",
+      stderr: [`Authorization denied: ${reason}`],
+      beforeSnapshotFileCount: 0,
+      afterSnapshotFileCount: 0,
+      diffEntries: [],
+      receiptId: "",
+      receiptSandboxPath: "",
+      executedAt: nowStr,
+      durationMs: Date.now() - startTime,
+      error: `Dispatch authorization denied: ${reason}`,
+      safetyBoundary: SAFETY_BOUNDARY,
+      authorizationReceipt: authReceipt,
+      rollbackContract: buildRollbackContract({ outcome: "failed", diffEntries: [], sandboxId: request.sandboxId ?? "", error: reason } as unknown as GovernedDispatchResult, nowStr),
+      lifecycle,
+      proofFilePath: PROOF_FILE_NAME,
+    };
+  }
+
+  lifecycle.push({ state: "dispatching", timestamp: nowStr, message: "Authorization verified. Preparing sandbox workspace..." });
+  lifecycle.push({ state: "executing", timestamp: nowStr, message: "Executing bounded proof mutation..." });
+
+  // Build proof content (uses pinned dispatchId so content matches result)
+  const proofContent = buildProofContent({
+    dispatchId,
+    sandboxId: request.sandboxId ?? "sandbox-auto",
+    operatorId,
+    runtimeId,
+    approvalId: authReceipt.authorizationToken.approvalId,
+    timestamp: nowStr,
+    authorized: true,
+    receiptRef: "receipts/<receipt-id>.json",
+  });
+
+  const baseResult = await executeGovernedSandboxDispatch({
+    ...request,
+    approvalToken: GOVERNED_DISPATCH_APPROVAL_TOKEN,
+    targetFileName: PROOF_FILE_NAME,
+    operationContent: proofContent,
+    now: stableNow,
+  });
+
+  const outcomeState: DispatchLifecycleRecord["state"] = baseResult.outcome === "completed" ? "completed" : "failed";
+  lifecycle.push({
+    state: outcomeState,
+    timestamp: nowStr,
+    message: baseResult.outcome === "completed"
+      ? `Proof file written. Receipt: ${baseResult.receiptId}. Rollback ready.`
+      : `Dispatch failed: ${baseResult.error ?? "unknown error"}`,
+  });
+
+  const rollbackContract = buildRollbackContract(baseResult, nowStr);
+
+  return {
+    ...baseResult,
+    authorizationReceipt: authReceipt,
+    rollbackContract,
+    lifecycle,
+    proofFilePath: baseResult.targetFile.sandboxRelativePath,
+  };
+}

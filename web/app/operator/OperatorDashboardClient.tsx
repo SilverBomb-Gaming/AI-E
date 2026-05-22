@@ -37,6 +37,29 @@ import {
   type GovernedOperationProposal,
 } from "@/frontend/ui/governed-operations-dashboard";
 
+type ProofDispatchLifecycleState = "idle" | "dispatching" | "completed" | "failed";
+
+type ProofDispatchLifecycleRecord = { state: string; timestamp: string; message?: string };
+
+type ProofDispatchClientResult = {
+  outcome: "completed" | "failed" | "timed_out";
+  dispatchId: string;
+  sandboxId: string;
+  proofFilePath: string;
+  receiptId: string;
+  receiptSandboxPath: string;
+  rollbackContract: { rollbackReady: boolean; rollbackMetadata: { changedFiles: string[]; diffSummary: string } };
+  authorizationReceipt: { result: { authorized: boolean; reason?: string } };
+  lifecycle: ProofDispatchLifecycleRecord[];
+  beforeSnapshotFileCount: number;
+  afterSnapshotFileCount: number;
+  executedAt: string;
+  durationMs: number;
+  error?: string;
+};
+
+type ProofDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
+
 function ToggleInput({
   label,
   checked,
@@ -782,6 +805,49 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [intakeText, setIntakeText] = useState("");
   const [governedProposal, setGovernedProposal] = useState<GovernedOperationProposal | null>(null);
+  const [proofDispatchState, setProofDispatchState] = useState<ProofDispatchLifecycleState>("idle");
+  const [proofDispatchResult, setProofDispatchResult] = useState<ProofDispatchClientResult | null>(null);
+  const [proofDispatchApiError, setProofDispatchApiError] = useState<ProofDispatchApiError | null>(null);
+  const [proofOperatorId, setProofOperatorId] = useState("operator");
+
+  async function handleProofDispatch() {
+    setProofDispatchState("dispatching");
+    setProofDispatchResult(null);
+    setProofDispatchApiError(null);
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    try {
+      const res = await fetch("/api/operator/sandbox-dispatch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          approvalToken: "operator-approved",
+          operationRequest: "Write AI_E_DISPATCH_PROOF.txt to sandbox workspace",
+          authorization: {
+            authorityToken: "operator-approved",
+            approvedBy: proofOperatorId.trim() || "operator",
+            approvedAt: nowIso,
+            proposalId: `proposal-exec0051c-${Date.now()}`,
+            operationRequest: "Write AI_E_DISPATCH_PROOF.txt to sandbox workspace",
+          },
+          expiresAt,
+          operatorId: proofOperatorId.trim() || "operator",
+          runtimeId: "aie-exec0051c-bounded-write",
+        }),
+      });
+      const data = (await res.json()) as ProofDispatchClientResult | ProofDispatchApiError;
+      if (!res.ok) {
+        setProofDispatchApiError(data as ProofDispatchApiError);
+        setProofDispatchState("failed");
+        return;
+      }
+      const result = data as ProofDispatchClientResult;
+      setProofDispatchResult(result);
+      setProofDispatchState(result.outcome === "completed" ? "completed" : "failed");
+    } catch {
+      setProofDispatchState("failed");
+    }
+  }
 
   useEffect(() => {
     setProviderResult(initialProviderResult);
@@ -1058,15 +1124,142 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                 <div className="mt-4 rounded-[1rem] border border-amber-200 bg-amber-50/70 p-3">
                   <p className="text-xs leading-6 text-amber-800">{governedProposal.governanceNote}</p>
                 </div>
-                <div className="mt-4">
+                <div className="mt-4 flex flex-wrap gap-3">
                   <Link
                     href="/operator/preview"
                     className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-5 py-3 text-sm font-semibold text-ocean transition hover:-translate-y-0.5"
                   >
                     Review in Execution Preview →
                   </Link>
+                  <button
+                    type="button"
+                    className="inline-flex rounded-full border border-emerald-200 bg-emerald-50/70 px-5 py-3 text-sm font-semibold text-emerald-700 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={async () => {
+                      // TODO: Wire to /api/operator/sandbox-dispatch
+                      // Set dispatch state to 'dispatching', then update with result/receipt
+                    }}
+                  >
+                    Approve &amp; Dispatch
+                  </button>
                 </div>
               </div>
+            </div>
+          ) : null}
+        </SectionCard>
+
+        {/* Proof Dispatch */}
+        <SectionCard eyebrow="Proof Dispatch" title="Approve &amp; Dispatch Proof">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">REAL EXECUTION</span>
+            <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">EXEC-0051-C</span>
+            <p className="text-xs text-slate">First authorized sandbox mutation. Writes AI_E_DISPATCH_PROOF.txt inside the governed sandbox workspace. No production workspace is touched.</p>
+          </div>
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs uppercase tracking-[0.18em] text-slate">Operator ID</span>
+              <input
+                type="text"
+                value={proofOperatorId}
+                onChange={(e) => setProofOperatorId(e.target.value)}
+                placeholder="operator"
+                className="rounded-[0.75rem] border border-ink/10 bg-white/80 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-ocean/20"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={proofDispatchState === "dispatching"}
+              onClick={() => { void handleProofDispatch(); }}
+              className="rounded-full border border-emerald-200 bg-emerald-500 px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {proofDispatchState === "dispatching" ? "Dispatching…" : "Approve & Dispatch Proof"}
+            </button>
+            {proofDispatchState !== "idle" ? (
+              <button
+                type="button"
+                onClick={() => { setProofDispatchState("idle"); setProofDispatchResult(null); setProofDispatchApiError(null); }}
+                className="rounded-full border border-ink/10 bg-white/70 px-4 py-3 text-sm font-semibold text-ink transition hover:-translate-y-0.5"
+              >
+                Reset
+              </button>
+            ) : null}
+          </div>
+
+          {proofDispatchState !== "idle" ? (
+            <div className="space-y-3">
+              {proofDispatchApiError ? (
+                <div className="rounded-[1.25rem] border border-coral/20 bg-coral/10 p-4">
+                  <p className="text-sm font-semibold text-ember">{proofDispatchApiError.error}</p>
+                  {proofDispatchApiError.hint ? <p className="mt-1 font-mono text-xs text-slate">{proofDispatchApiError.hint}</p> : null}
+                </div>
+              ) : proofDispatchState === "dispatching" ? (
+                <div className="rounded-[1.25rem] border border-ocean/15 bg-ocean/5 p-4">
+                  <p className="text-sm body-muted">Verifying authorization → preparing sandbox → executing proof mutation…</p>
+                </div>
+              ) : proofDispatchResult ? (
+                <>
+                  {/* Outcome banner */}
+                  <div className={`rounded-[1.5rem] border p-4 ${proofDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50/70" : "border-coral/20 bg-coral/10"}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${proofDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-coral/20 bg-coral/10 text-ember"}`}>
+                        {proofDispatchResult.outcome}
+                      </span>
+                      <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">REAL EXECUTION</span>
+                      <span className="text-xs text-slate">{proofDispatchResult.durationMs}ms</span>
+                    </div>
+                    {proofDispatchResult.outcome !== "completed" ? (
+                      <p className="mt-2 text-sm text-ember">{proofDispatchResult.error ?? "Dispatch failed"}</p>
+                    ) : null}
+                  </div>
+
+                  {/* Lifecycle */}
+                  <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Lifecycle</p>
+                    <ul className="mt-3 space-y-1">
+                      {proofDispatchResult.lifecycle.map((step, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className={`mt-0.5 h-2 w-2 flex-shrink-0 rounded-full ${step.state === "completed" ? "bg-emerald-500" : step.state === "failed" ? "bg-ember" : "bg-ocean"}`} />
+                          <span className="text-xs font-semibold uppercase tracking-[0.1em] text-slate w-28 flex-shrink-0">{step.state}</span>
+                          <span className="text-xs text-ink">{step.message}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </article>
+
+                  {/* Key IDs */}
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Proof File</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{proofDispatchResult.proofFilePath}</p>
+                    </article>
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Receipt ID</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{proofDispatchResult.receiptId || "—"}</p>
+                    </article>
+                    <article className={`rounded-[1.25rem] border p-3 ${proofDispatchResult.rollbackContract.rollbackReady ? "border-emerald-200 bg-emerald-50/70" : "border-coral/20 bg-coral/10"}`}>
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Rollback</p>
+                      <p className={`mt-1 text-xs font-bold ${proofDispatchResult.rollbackContract.rollbackReady ? "text-emerald-700" : "text-ember"}`}>
+                        {proofDispatchResult.rollbackContract.rollbackReady ? "READY" : "NOT READY"}
+                      </p>
+                      {proofDispatchResult.rollbackContract.rollbackReady ? (
+                        <p className="mt-0.5 text-xs text-slate">{proofDispatchResult.rollbackContract.rollbackMetadata.diffSummary}</p>
+                      ) : null}
+                    </article>
+                  </div>
+
+                  {/* Snapshot counts */}
+                  <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Snapshots</p>
+                    <p className="mt-2 text-xs text-slate">Before: <strong>{proofDispatchResult.beforeSnapshotFileCount}</strong> file(s) · After: <strong>{proofDispatchResult.afterSnapshotFileCount}</strong> file(s)</p>
+                  </article>
+
+                  {/* Sandbox ID */}
+                  <article className="rounded-[1.25rem] border border-amber-200 bg-amber-50/70 p-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Sandbox ID</p>
+                    <p className="mt-1 font-mono text-xs text-amber-900">{proofDispatchResult.sandboxId}</p>
+                    <p className="mt-1 text-xs text-amber-700">All artifacts written inside .ai-e/sandboxes/{proofDispatchResult.sandboxId}/. Production workspace not mutated.</p>
+                  </article>
+                </>
+              ) : null}
             </div>
           ) : null}
         </SectionCard>
