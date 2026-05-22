@@ -64,6 +64,37 @@ type ProofDispatchApiError = { error: string; hint?: string; dispatchEnabled?: f
 
 type RuntimeAdapterDispatchLifecycleState = "idle" | "dispatching" | "completed" | "failed";
 
+// ---- Sandbox Patch Dispatch (EXEC-0052-C) ------------------------------------------
+
+type SandboxPatchDispatchLifecycleState = "idle" | "dispatching" | "completed" | "failed";
+
+type SandboxPatchDispatchLifecycleRecord = { state: string; timestamp: string; message?: string };
+
+type SandboxPatchDispatchClientResult = {
+  manifestVersion: string;
+  outcome: "completed" | "failed" | "timeout" | "rejected";
+  dispatchId: string;
+  invocationId: string;
+  sandboxId: string;
+  runtimeType: string;
+  adapterId: string;
+  adapterVersion: string;
+  operationRequest: string;
+  patchFilePath: string;
+  receiptId: string;
+  receiptSandboxPath: string;
+  beforeSnapshotFileCount: number;
+  afterSnapshotFileCount: number;
+  lifecycle: { currentState: string; records: SandboxPatchDispatchLifecycleRecord[] };
+  outputCapture: { stdout: string; stderr: string[] };
+  rollbackContract: { rollbackReady: boolean; rollbackMetadata?: { changedFiles: string[]; diffSummary: string } };
+  executedAt: string;
+  durationMs: number;
+  error?: string;
+};
+
+type SandboxPatchDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
+
 type RuntimeAdapterDispatchLifecycleRecord = { state: string; timestamp: string; message?: string };
 
 type RuntimeAdapterDispatchClientResult = {
@@ -883,6 +914,49 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
     }
   }
 
+  const [sandboxPatchDispatchState, setSandboxPatchDispatchState] = useState<SandboxPatchDispatchLifecycleState>("idle");
+  const [sandboxPatchDispatchResult, setSandboxPatchDispatchResult] = useState<SandboxPatchDispatchClientResult | null>(null);
+  const [sandboxPatchDispatchApiError, setSandboxPatchDispatchApiError] = useState<SandboxPatchDispatchApiError | null>(null);
+  const [sandboxPatchOperatorId, setSandboxPatchOperatorId] = useState("operator");
+
+  async function handleSandboxPatchDispatch() {
+    setSandboxPatchDispatchState("dispatching");
+    setSandboxPatchDispatchResult(null);
+    setSandboxPatchDispatchApiError(null);
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    try {
+      const res = await fetch("/api/operator/sandbox-patch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          approvalToken: "operator-approved",
+          operationRequest: "Apply sandbox patch mutation to sandboxPatch.ts",
+          authorization: {
+            authorityToken: "operator-approved",
+            approvedBy: sandboxPatchOperatorId.trim() || "operator",
+            approvedAt: nowIso,
+            proposalId: `proposal-exec0052c-${Date.now()}`,
+            operationRequest: "Apply sandbox patch mutation to sandboxPatch.ts",
+          },
+          expiresAt,
+          operatorId: sandboxPatchOperatorId.trim() || "operator",
+        }),
+      });
+      const data = (await res.json()) as SandboxPatchDispatchClientResult | SandboxPatchDispatchApiError;
+      if (!res.ok) {
+        setSandboxPatchDispatchApiError(data as SandboxPatchDispatchApiError);
+        setSandboxPatchDispatchState("failed");
+        return;
+      }
+      const result = data as SandboxPatchDispatchClientResult;
+      setSandboxPatchDispatchResult(result);
+      setSandboxPatchDispatchState(result.outcome === "completed" ? "completed" : "failed");
+    } catch {
+      setSandboxPatchDispatchState("failed");
+    }
+  }
+
   async function handleProofDispatch() {
     setProofDispatchState("dispatching");
     setProofDispatchResult(null);
@@ -1452,6 +1526,136 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                     <p className="text-xs uppercase tracking-[0.18em] text-slate">Sandbox ID</p>
                     <p className="mt-1 font-mono text-xs text-amber-900">{runtimeAdapterDispatchResult.sandboxId}</p>
                     <p className="mt-1 text-xs text-amber-700">Adapter: {runtimeAdapterDispatchResult.adapterId} · {runtimeAdapterDispatchResult.adapterVersion} · All artifacts written inside .ai-e/sandboxes/{runtimeAdapterDispatchResult.sandboxId}/. Production workspace not mutated.</p>
+                  </article>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </SectionCard>
+
+        {/* Sandbox Patch Dispatch (EXEC-0052-C) */}
+        <SectionCard eyebrow="Sandbox Patch" title="Approve &amp; Apply Sandbox Patch">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">REAL EXECUTION</span>
+            <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">EXEC-0052-C</span>
+            <p className="text-xs text-slate">First useful governed sandbox mutation. Reads sandboxPatch.ts and increments patchVersion. On first run: creates the file. Sandbox-scoped only — production workspace not touched.</p>
+          </div>
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-xs uppercase tracking-[0.18em] text-slate">Operator ID</span>
+              <input
+                type="text"
+                value={sandboxPatchOperatorId}
+                onChange={(e) => setSandboxPatchOperatorId(e.target.value)}
+                placeholder="operator"
+                className="rounded-[0.75rem] border border-ink/10 bg-white/80 px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-ocean/20"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={sandboxPatchDispatchState === "dispatching"}
+              onClick={() => { void handleSandboxPatchDispatch(); }}
+              className="rounded-full border border-emerald-200 bg-emerald-500 px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {sandboxPatchDispatchState === "dispatching" ? "Patching…" : "Approve & Apply Patch"}
+            </button>
+            {sandboxPatchDispatchState !== "idle" ? (
+              <button
+                type="button"
+                onClick={() => { setSandboxPatchDispatchState("idle"); setSandboxPatchDispatchResult(null); setSandboxPatchDispatchApiError(null); }}
+                className="rounded-full border border-ink/10 bg-white/70 px-4 py-3 text-sm font-semibold text-ink transition hover:-translate-y-0.5"
+              >
+                Reset
+              </button>
+            ) : null}
+          </div>
+
+          {sandboxPatchDispatchState !== "idle" ? (
+            <div className="space-y-3">
+              {sandboxPatchDispatchApiError ? (
+                <div className="rounded-[1.25rem] border border-coral/20 bg-coral/10 p-4">
+                  <p className="text-sm font-semibold text-ember">{sandboxPatchDispatchApiError.error}</p>
+                  {sandboxPatchDispatchApiError.hint ? <p className="mt-1 font-mono text-xs text-slate">{sandboxPatchDispatchApiError.hint}</p> : null}
+                </div>
+              ) : sandboxPatchDispatchState === "dispatching" ? (
+                <div className="rounded-[1.25rem] border border-ocean/15 bg-ocean/5 p-4">
+                  <p className="text-sm body-muted">Verifying authorization → reading sandboxPatch.ts → incrementing patchVersion → writing result…</p>
+                </div>
+              ) : sandboxPatchDispatchResult ? (
+                <>
+                  {/* Outcome banner */}
+                  <div className={`rounded-[1.5rem] border p-4 ${sandboxPatchDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50/70" : "border-coral/20 bg-coral/10"}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${sandboxPatchDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-coral/20 bg-coral/10 text-ember"}`}>
+                        {sandboxPatchDispatchResult.outcome}
+                      </span>
+                      <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">{sandboxPatchDispatchResult.runtimeType ?? "openclaw"}</span>
+                      <span className="text-xs text-slate">{sandboxPatchDispatchResult.durationMs}ms</span>
+                    </div>
+                    {sandboxPatchDispatchResult.outcome !== "completed" ? (
+                      <p className="mt-2 text-sm text-ember">{sandboxPatchDispatchResult.error ?? "Patch dispatch failed"}</p>
+                    ) : null}
+                  </div>
+
+                  {/* Lifecycle */}
+                  <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Patch Lifecycle</p>
+                    <ul className="mt-3 space-y-1">
+                      {sandboxPatchDispatchResult.lifecycle.records.map((step, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[9px] font-bold text-emerald-700">{i + 1}</span>
+                          <span className="font-mono text-xs text-ink">{step.state}</span>
+                          {step.message ? <span className="text-xs text-slate">— {step.message}</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-xs text-slate">Current state: <strong>{sandboxPatchDispatchResult.lifecycle.currentState}</strong></p>
+                  </article>
+
+                  {/* stdout output */}
+                  {sandboxPatchDispatchResult.outputCapture.stdout ? (
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Mutation Output</p>
+                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-xs text-ink">{sandboxPatchDispatchResult.outputCapture.stdout}</pre>
+                    </article>
+                  ) : null}
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {/* Patch file */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Patch File</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{sandboxPatchDispatchResult.patchFilePath}</p>
+                    </article>
+
+                    {/* Receipt */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Receipt ID</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{sandboxPatchDispatchResult.receiptId || "—"}</p>
+                    </article>
+
+                    {/* Rollback */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Rollback</p>
+                      <p className={`mt-1 text-xs font-bold ${sandboxPatchDispatchResult.rollbackContract.rollbackReady ? "text-emerald-700" : "text-ember"}`}>
+                        {sandboxPatchDispatchResult.rollbackContract.rollbackReady ? "READY" : "NOT READY"}
+                      </p>
+                      {sandboxPatchDispatchResult.rollbackContract.rollbackReady && sandboxPatchDispatchResult.rollbackContract.rollbackMetadata ? (
+                        <p className="mt-0.5 text-xs text-slate">{sandboxPatchDispatchResult.rollbackContract.rollbackMetadata.diffSummary}</p>
+                      ) : null}
+                    </article>
+
+                    {/* Snapshots */}
+                    <article className="rounded-[1.25rem] border border-ink/10 bg-white/80 p-3">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Snapshots</p>
+                      <p className="mt-2 text-xs text-slate">Before: <strong>{sandboxPatchDispatchResult.beforeSnapshotFileCount}</strong> file(s) · After: <strong>{sandboxPatchDispatchResult.afterSnapshotFileCount}</strong> file(s)</p>
+                    </article>
+                  </div>
+
+                  {/* Sandbox ID */}
+                  <article className="rounded-[1.25rem] border border-amber-200 bg-amber-50/70 p-3">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Sandbox ID</p>
+                    <p className="mt-1 font-mono text-xs text-amber-900">{sandboxPatchDispatchResult.sandboxId}</p>
+                    <p className="mt-1 text-xs text-amber-700">Adapter: {sandboxPatchDispatchResult.adapterId} · {sandboxPatchDispatchResult.adapterVersion} · Mutation bounded to .ai-e/sandboxes/{sandboxPatchDispatchResult.sandboxId}/. Production workspace not mutated.</p>
                   </article>
                 </>
               ) : null}
