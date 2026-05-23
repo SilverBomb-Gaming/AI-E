@@ -101,6 +101,35 @@ type SandboxNotesDispatchApiError = { error: string; hint?: string; dispatchEnab
 
 type SandboxGameplayConfigDispatchLifecycleState = "idle" | "dispatching" | "completed" | "failed";
 
+// ---- Sandbox Unity Script Dispatch (EXEC-0052-E) -----------------------------------
+
+type SandboxUnityScriptDispatchLifecycleState = "idle" | "dispatching" | "completed" | "failed";
+
+type SandboxUnityScriptDispatchLifecycleRecord = { state: string; timestamp: string; message?: string };
+
+type SandboxUnityScriptDispatchClientResult = {
+  manifestVersion: string;
+  outcome: "completed" | "failed" | "timeout" | "rejected";
+  dispatchId: string;
+  sandboxId: string;
+  runtimeType: string;
+  adapterId: string;
+  adapterVersion: string;
+  operationRequest: string;
+  scriptFilePath: string;
+  receiptId: string;
+  receiptSandboxPath: string;
+  beforeSnapshotFileCount: number;
+  afterSnapshotFileCount: number;
+  lifecycle: { currentState: string; records: SandboxUnityScriptDispatchLifecycleRecord[] };
+  outputCapture: { stdout: string; stderr: string[] };
+  rollbackContract: { rollbackReady: boolean; rollbackMetadata?: { changedFiles: string[]; diffSummary: string } };
+  durationMs: number;
+  error?: string;
+};
+
+type SandboxUnityScriptDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
+
 type SandboxGameplayConfigDispatchLifecycleRecord = { state: string; timestamp: string; message?: string };
 
 type SandboxGameplayConfigDispatchClientResult = {
@@ -1066,6 +1095,12 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const [sandboxGameplayConfigOperatorId, setSandboxGameplayConfigOperatorId] = useState("operator");
   const [sandboxGameplayConfigPatchLabel, setSandboxGameplayConfigPatchLabel] = useState("apply movement speed tuning");
 
+  const [sandboxUnityScriptDispatchState, setSandboxUnityScriptDispatchState] = useState<SandboxUnityScriptDispatchLifecycleState>("idle");
+  const [sandboxUnityScriptDispatchResult, setSandboxUnityScriptDispatchResult] = useState<SandboxUnityScriptDispatchClientResult | null>(null);
+  const [sandboxUnityScriptDispatchApiError, setSandboxUnityScriptDispatchApiError] = useState<SandboxUnityScriptDispatchApiError | null>(null);
+  const [sandboxUnityScriptOperatorId, setSandboxUnityScriptOperatorId] = useState("operator");
+  const [sandboxUnityScriptOperationRequest, setSandboxUnityScriptOperationRequest] = useState("apply Unity script movement speed mutation");
+
   async function handleSandboxGameplayConfigDispatch() {
     setSandboxGameplayConfigDispatchState("dispatching");
     setSandboxGameplayConfigDispatchResult(null);
@@ -1102,6 +1137,45 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
       setSandboxGameplayConfigDispatchState(result.outcome === "completed" ? "completed" : "failed");
     } catch {
       setSandboxGameplayConfigDispatchState("failed");
+    }
+  }
+
+  async function handleSandboxUnityScriptDispatch() {
+    setSandboxUnityScriptDispatchState("dispatching");
+    setSandboxUnityScriptDispatchResult(null);
+    setSandboxUnityScriptDispatchApiError(null);
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const operationRequest = sandboxUnityScriptOperationRequest.trim() || "apply Unity script movement speed mutation";
+    try {
+      const res = await fetch("/api/operator/sandbox-unity-script", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          approvalToken: "operator-approved",
+          operationRequest,
+          authorization: {
+            authorityToken: "operator-approved",
+            approvedBy: sandboxUnityScriptOperatorId.trim() || "operator",
+            approvedAt: nowIso,
+            proposalId: `proposal-exec0052e-unity-${Date.now()}`,
+            operationRequest,
+          },
+          expiresAt,
+          operatorId: sandboxUnityScriptOperatorId.trim() || "operator",
+        }),
+      });
+      const data = (await res.json()) as SandboxUnityScriptDispatchClientResult | SandboxUnityScriptDispatchApiError;
+      if (!res.ok) {
+        setSandboxUnityScriptDispatchApiError(data as SandboxUnityScriptDispatchApiError);
+        setSandboxUnityScriptDispatchState("failed");
+        return;
+      }
+      const result = data as SandboxUnityScriptDispatchClientResult;
+      setSandboxUnityScriptDispatchResult(result);
+      setSandboxUnityScriptDispatchState(result.outcome === "completed" ? "completed" : "failed");
+    } catch {
+      setSandboxUnityScriptDispatchState("failed");
     }
   }
 
@@ -2067,6 +2141,132 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                     <p className="text-xs uppercase tracking-[0.18em] text-amber-700">Sandbox boundary</p>
                     <p className="mt-1 font-mono text-xs text-amber-900">{sandboxGameplayConfigDispatchResult.sandboxId}</p>
                     <p className="mt-1 text-xs text-amber-700">Adapter: {sandboxGameplayConfigDispatchResult.adapterId} · {sandboxGameplayConfigDispatchResult.adapterVersion} · Mutation bounded to .ai-e/sandboxes/{sandboxGameplayConfigDispatchResult.sandboxId}/. Production workspace not mutated.</p>
+                  </article>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </SectionCard>
+
+        {/* Sandbox Unity Script Dispatch (EXEC-0052-E) */}
+        <SectionCard eyebrow="Sandbox Unity Script" title="Approve &amp; Apply Unity Script Mutation">
+          <div className="mb-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">REAL EXECUTION</span>
+              <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">EXEC-0052-E</span>
+              <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-700">SANDBOX ONLY</span>
+            </div>
+            <p className="text-xs text-slate">First governed Unity-style C# script mutation. Applies a deterministic movement speed increment (+0.5f) to sandboxPlayerMovement.cs. On first run: creates the file with sandbox defaults. Bounded to sandbox workspace — no production Unity assets touched.</p>
+            <div className="space-y-2">
+              <label className="block text-xs uppercase tracking-[0.18em] text-slate">Operation request</label>
+              <input
+                type="text"
+                className="w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-2 text-sm text-ink"
+                value={sandboxUnityScriptOperationRequest}
+                onChange={(e) => { setSandboxUnityScriptOperationRequest(e.target.value); }}
+                placeholder="apply Unity script movement speed mutation"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="block text-xs uppercase tracking-[0.18em] text-slate">Operator ID</label>
+              <input
+                type="text"
+                className="w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-2 text-sm text-ink"
+                value={sandboxUnityScriptOperatorId}
+                onChange={(e) => { setSandboxUnityScriptOperatorId(e.target.value); }}
+                placeholder="operator"
+              />
+            </div>
+            <button
+              type="button"
+              className="rounded-[1.25rem] bg-ocean px-6 py-3 text-sm font-semibold text-white disabled:opacity-40"
+              disabled={sandboxUnityScriptDispatchState === "dispatching"}
+              onClick={() => { void handleSandboxUnityScriptDispatch(); }}
+            >
+              {sandboxUnityScriptDispatchState === "dispatching" ? "Applying Unity Mutation…" : "Approve & Apply Unity Mutation"}
+            </button>
+            {sandboxUnityScriptDispatchState !== "idle" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${sandboxUnityScriptDispatchState === "completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : sandboxUnityScriptDispatchState === "dispatching" ? "border-ocean/20 bg-ocean/5 text-ocean" : "border-coral/20 bg-coral/10 text-ember"}`}>
+                  {sandboxUnityScriptDispatchState}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setSandboxUnityScriptDispatchState("idle"); setSandboxUnityScriptDispatchResult(null); setSandboxUnityScriptDispatchApiError(null); }}
+                  className="rounded-full border border-ink/10 bg-white/70 px-3 py-1 text-xs font-semibold text-ink transition hover:-translate-y-0.5"
+                >
+                  Reset
+                </button>
+              </div>
+            ) : null}
+          </div>
+          {sandboxUnityScriptDispatchState !== "idle" ? (
+            <div className="mt-4 space-y-4">
+              {sandboxUnityScriptDispatchApiError ? (
+                <article className="rounded-[1.5rem] border border-coral/20 bg-coral/10 p-4">
+                  <p className="text-sm font-semibold text-ember">{sandboxUnityScriptDispatchApiError.error}</p>
+                  {sandboxUnityScriptDispatchApiError.hint ? <p className="mt-1 font-mono text-xs text-slate">{sandboxUnityScriptDispatchApiError.hint}</p> : null}
+                </article>
+              ) : sandboxUnityScriptDispatchState === "dispatching" ? (
+                <article className="rounded-[1.5rem] border border-ocean/20 bg-ocean/5 p-4">
+                  <p className="text-sm body-muted">Verifying authorization → reading sandboxPlayerMovement.cs → applying movement speed mutation → writing result…</p>
+                </article>
+              ) : sandboxUnityScriptDispatchResult ? (
+                <>
+                  <div className={`rounded-[1.5rem] border p-4 ${sandboxUnityScriptDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50/70" : "border-coral/20 bg-coral/10"}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${sandboxUnityScriptDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-coral/20 bg-coral/10 text-ember"}`}>
+                        {sandboxUnityScriptDispatchResult.outcome}
+                      </span>
+                      <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">{sandboxUnityScriptDispatchResult.runtimeType ?? "openclaw"}</span>
+                      <span className="text-xs text-slate">{sandboxUnityScriptDispatchResult.durationMs}ms</span>
+                    </div>
+                    {sandboxUnityScriptDispatchResult.outcome !== "completed" ? (
+                      <p className="mt-2 text-sm text-ember">{sandboxUnityScriptDispatchResult.error ?? "Unity script dispatch failed"}</p>
+                    ) : null}
+                  </div>
+                  {sandboxUnityScriptDispatchResult.outputCapture.stdout ? (
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Mutation output (before / after / summary)</p>
+                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-xs text-ink">{sandboxUnityScriptDispatchResult.outputCapture.stdout}</pre>
+                    </article>
+                  ) : null}
+                  <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Runtime Lifecycle</p>
+                    <div className="mt-2 space-y-1">
+                      {sandboxUnityScriptDispatchResult.lifecycle.records.map((step, i) => (
+                        <p key={i} className="font-mono text-xs text-slate">{step.timestamp} <strong>{step.state}</strong>{step.message ? ` — ${step.message}` : ""}</p>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-slate">Current state: <strong>{sandboxUnityScriptDispatchResult.lifecycle.currentState}</strong></p>
+                  </article>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Script file path</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{sandboxUnityScriptDispatchResult.scriptFilePath}</p>
+                    </article>
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Receipt ID</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{sandboxUnityScriptDispatchResult.receiptId || "—"}</p>
+                    </article>
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Rollback contract</p>
+                      <p className={`mt-1 text-xs font-bold ${sandboxUnityScriptDispatchResult.rollbackContract.rollbackReady ? "text-emerald-700" : "text-ember"}`}>
+                        {sandboxUnityScriptDispatchResult.rollbackContract.rollbackReady ? "READY" : "NOT READY"}
+                      </p>
+                      {sandboxUnityScriptDispatchResult.rollbackContract.rollbackReady && sandboxUnityScriptDispatchResult.rollbackContract.rollbackMetadata ? (
+                        <p className="mt-0.5 text-xs text-slate">{sandboxUnityScriptDispatchResult.rollbackContract.rollbackMetadata.diffSummary}</p>
+                      ) : null}
+                    </article>
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Snapshots</p>
+                      <p className="mt-2 text-xs text-slate">Before: <strong>{sandboxUnityScriptDispatchResult.beforeSnapshotFileCount}</strong> file(s) · After: <strong>{sandboxUnityScriptDispatchResult.afterSnapshotFileCount}</strong> file(s)</p>
+                    </article>
+                  </div>
+                  <article className="rounded-[1.5rem] border border-amber-200 bg-amber-50/60 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-amber-700">Sandbox boundary — Unity production assets not touched</p>
+                    <p className="mt-1 font-mono text-xs text-amber-900">{sandboxUnityScriptDispatchResult.sandboxId}</p>
+                    <p className="mt-1 text-xs text-amber-700">Adapter: {sandboxUnityScriptDispatchResult.adapterId} · {sandboxUnityScriptDispatchResult.adapterVersion} · Mutation bounded to .ai-e/sandboxes/{sandboxUnityScriptDispatchResult.sandboxId}/. No Assets/ or ProjectSettings/ modified.</p>
                   </article>
                 </>
               ) : null}
