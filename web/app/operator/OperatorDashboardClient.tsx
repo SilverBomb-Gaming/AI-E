@@ -1958,7 +1958,12 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
         {/* Sandbox Gameplay Config Dispatch (EXEC-0052-D) */}
         <SectionCard eyebrow="Sandbox Gameplay Config" title="Approve &amp; Apply Gameplay Tuning">
           <div className="mb-4 space-y-3">
-            <p className="text-xs text-slate">Governed gameplay config mutation. Applies a deterministic tuning step to sandboxGameplayConfig.json (movementSpeed +0.5, staminaCooldown −0.1, enemyAggroRange +1.0). On first run: creates the file with defaults. Sandbox-scoped only.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">REAL EXECUTION</span>
+              <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">EXEC-0052-D</span>
+              <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-700">SANDBOX ONLY</span>
+            </div>
+            <p className="text-xs text-slate">First governed gameplay config mutation. Applies a deterministic tuning step to sandboxGameplayConfig.json (movementSpeed +0.5, staminaCooldown −0.1, enemyAggroRange +1.0). On first run: creates the file with defaults. Mutation bounded to sandbox workspace — no Unity production assets touched.</p>
             <div className="space-y-2">
               <label className="block text-xs uppercase tracking-[0.18em] text-slate">Patch label (operationRequest)</label>
               <input
