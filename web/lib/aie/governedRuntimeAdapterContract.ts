@@ -92,6 +92,7 @@ export type RuntimeFailureCategory =
   | "sandbox_boundary_violation"
   | "operation_rejected_by_adapter"
   | "lifecycle_state_error"
+  | "proposal_replay_rejected"
   | "unknown_failure";
 
 export type RuntimeFailureContract = {
@@ -112,18 +113,21 @@ export type RuntimeFailureContract = {
 export type RuntimeExecutionState =
   | "queued"
   | "authorization_verified"
+  | "replay_verified"
   | "dispatching"
   | "running"
   | "completed"
   | "failed"
   | "timeout"
-  | "rejected";
+  | "rejected"
+  | "replay_rejected";
 
 export const RUNTIME_TERMINAL_STATES: readonly RuntimeExecutionState[] = [
   "completed",
   "failed",
   "timeout",
   "rejected",
+  "replay_rejected",
 ] as const;
 
 export type RuntimeExecutionLifecycleRecord = {
@@ -435,7 +439,9 @@ export function makeFailedInvocationResult(params: {
 }): RuntimeInvocationResult {
   const outcome: RuntimeInvocationOutcome =
     params.failure.category === "invocation_timeout" ? "timeout"
-    : params.failure.category === "authorization_denied" || params.failure.category === "operation_rejected_by_adapter" ? "rejected"
+    : params.failure.category === "authorization_denied"
+      || params.failure.category === "operation_rejected_by_adapter"
+      || params.failure.category === "proposal_replay_rejected" ? "rejected"
     : "failed";
   const started = new Date(params.lifecycle.startedAt).getTime();
   const ended = new Date(params.now).getTime();

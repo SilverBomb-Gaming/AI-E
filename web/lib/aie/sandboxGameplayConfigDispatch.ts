@@ -17,6 +17,13 @@ import * as path from "node:path";
 import { authorizeDispatch } from "./dispatchAuthorizationBoundary";
 import type { DispatchAuthorizationReceipt } from "./dispatchAuthorizationBoundary";
 import {
+  makeProposalReplayRejectionReceipt,
+  proposalReplayRegistry,
+  recordProposalExecution,
+  verifyProposalNotReplayed,
+  type ProposalReplayRejectionReceipt,
+} from "./governedProposalReplayRegistry";
+import {
   SANDBOX_GAMEPLAY_CONFIG_ADAPTER_ID,
   SANDBOX_GAMEPLAY_CONFIG_ADAPTER_VERSION,
   SANDBOX_GAMEPLAY_CONFIG_FILE_NAME,
@@ -39,6 +46,7 @@ import {
   type GovernedRuntimeType,
   type RuntimeAdapterSafetyBoundary,
   type RuntimeExecutionLifecycle,
+  type RuntimeExecutionLifecycleRecord,
   type RuntimeInvocationResult,
   type RuntimeOutputCapture,
 } from "./governedRuntimeAdapterContract";
@@ -110,6 +118,7 @@ export type SandboxGameplayConfigDispatchResult = {
   executedAt: string;
   durationMs: number;
   error?: string;
+  proposalReplayRejectionReceipt?: ProposalReplayRejectionReceipt;
   safetyBoundary: RuntimeAdapterSafetyBoundary;
 };
 
@@ -289,6 +298,107 @@ function makeGameplayAuthDeniedResult(params: {
 }
 
 // =====================================================================================
+// PROPOSAL REPLAY HELPERS (EXEC-0052-F)
+// =====================================================================================
+
+function insertReplayVerifiedRecord(
+  lifecycle: RuntimeExecutionLifecycle,
+  replayVerifiedAt: string,
+): RuntimeExecutionLifecycle {
+  const authIdx = lifecycle.records.findIndex((r) => r.state === "authorization_verified");
+  if (authIdx === -1) return lifecycle;
+  const record: RuntimeExecutionLifecycleRecord = {
+    state: "replay_verified",
+    timestamp: replayVerifiedAt,
+    message: "Proposal replay check passed — no prior execution found",
+  };
+  return {
+    ...lifecycle,
+    records: [
+      ...lifecycle.records.slice(0, authIdx + 1),
+      record,
+      ...lifecycle.records.slice(authIdx + 1),
+    ],
+  };
+}
+
+function makeGameplayReplayRejectedResult(params: {
+  dispatchId: string;
+  invocationId: string;
+  scaffold: GovernedSandboxScaffold;
+  operationRequest: string;
+  adapterId: GovernedRuntimeAdapterId;
+  adapterVersion: string;
+  operatorId: string;
+  approvalReference: string;
+  authorizationReceipt: DispatchAuthorizationReceipt;
+  proposalReplayRejectionReceipt: ProposalReplayRejectionReceipt;
+  reason: string;
+  nowStr: string;
+  startTime: number;
+  configFilePath: string;
+}): SandboxGameplayConfigDispatchResult {
+  let lifecycle = createRuntimeExecutionLifecycle(params.invocationId, params.nowStr);
+  lifecycle = advanceLifecycleState(lifecycle, "authorization_verified", params.nowStr,
+    "Authorization token verified");
+  lifecycle = advanceLifecycleState(lifecycle, "replay_rejected", params.nowStr,
+    `Proposal replay rejected: ${params.reason}`);
+  const failure = makeRuntimeFailure("proposal_replay_rejected",
+    `Proposal replay rejected: ${params.reason}`, params.nowStr);
+  const invResult = makeFailedInvocationResult({
+    invocationId: params.invocationId,
+    dispatchId: params.dispatchId,
+    sandboxId: params.scaffold.sandboxId,
+    runtimeType: "openclaw",
+    adapterId: params.adapterId,
+    failure,
+    lifecycle,
+    now: params.nowStr,
+  });
+  const emptyDiff: GovernedDispatchDiffEntry[] = [];
+  const rollbackContract = buildGameplayRollbackContract(
+    params.scaffold.sandboxId, emptyDiff, "rejected", params.nowStr, params.reason,
+  );
+  const dispatchRecord = createGovernedRuntimeDispatchRecord({
+    dispatchId: params.dispatchId,
+    operatorId: params.operatorId,
+    operationRequest: params.operationRequest,
+    approvalReference: params.approvalReference,
+    result: invResult,
+    adapterVersion: params.adapterVersion,
+    recordedAt: params.nowStr,
+  });
+  return {
+    manifestVersion: "EXEC-0052-D",
+    outcome: "rejected",
+    dispatchId: params.dispatchId,
+    invocationId: params.invocationId,
+    sandboxId: params.scaffold.sandboxId,
+    sandboxRootPath: params.scaffold.sandboxRoot.absolutePath,
+    runtimeType: "openclaw",
+    adapterId: params.adapterId,
+    adapterVersion: params.adapterVersion,
+    operationRequest: params.operationRequest,
+    configFilePath: params.configFilePath,
+    receiptId: "",
+    receiptSandboxPath: "",
+    beforeSnapshotFileCount: 0,
+    afterSnapshotFileCount: 0,
+    diffEntries: emptyDiff,
+    lifecycle,
+    outputCapture: makeEmptyOutputCapture(params.nowStr),
+    rollbackContract,
+    authorizationReceipt: params.authorizationReceipt,
+    dispatchRecord,
+    proposalReplayRejectionReceipt: params.proposalReplayRejectionReceipt,
+    executedAt: params.nowStr,
+    durationMs: Date.now() - params.startTime,
+    error: `Proposal replay rejected: ${params.reason}`,
+    safetyBoundary: makeRuntimeAdapterSafetyBoundary(),
+  };
+}
+
+// =====================================================================================
 // MAIN DISPATCH FUNCTION
 // =====================================================================================
 
@@ -350,6 +460,54 @@ export async function executeSandboxGameplayConfigDispatch(
       approvalReference,
       authorizationReceipt: authReceipt,
       reason,
+      nowStr,
+      startTime,
+      configFilePath,
+    });
+  }
+
+  // Proposal-scoped replay check — enforces global proposal identity as replay boundary
+  const replayCheck = verifyProposalNotReplayed(
+    proposalReplayRegistry,
+    {
+      proposalId: request.authorization.proposalId,
+      approvalToken: request.authorization.authorityToken,
+      operationRequest,
+    },
+    nowStr,
+  );
+  if (replayCheck.isReplay) {
+    const replayRejectionReceipt = replayCheck.existingRecord
+      ? makeProposalReplayRejectionReceipt({
+          proposalId: request.authorization.proposalId,
+          originalRecord: replayCheck.existingRecord,
+          attemptedAt: nowStr,
+          operatorId,
+          replayFingerprint: replayCheck.fingerprint,
+          reason: replayCheck.reason ?? "proposal-replay-rejected",
+        })
+      : {
+          proposalId: request.authorization.proposalId,
+          originalDispatchId: "unknown",
+          originalSandboxId: "unknown",
+          originalRuntimeType: "unknown",
+          replayRejectionReason: replayCheck.reason ?? "proposal-replay-rejected",
+          attemptedAt: nowStr,
+          operatorId,
+          replayFingerprint: replayCheck.fingerprint,
+        };
+    return makeGameplayReplayRejectedResult({
+      dispatchId,
+      invocationId,
+      scaffold,
+      operationRequest,
+      adapterId: SANDBOX_GAMEPLAY_CONFIG_ADAPTER_ID,
+      adapterVersion: SANDBOX_GAMEPLAY_CONFIG_ADAPTER_VERSION,
+      operatorId,
+      approvalReference,
+      authorizationReceipt: authReceipt,
+      proposalReplayRejectionReceipt: replayRejectionReceipt,
+      reason: replayCheck.reason ?? "proposal-replay-rejected",
       nowStr,
       startTime,
       configFilePath,
@@ -490,6 +648,25 @@ export async function executeSandboxGameplayConfigDispatch(
       scaffold.sandboxId, diffEntries, outcome, nowStr, invResult.failure?.message,
     );
 
+    if (outcome === "completed") {
+      recordProposalExecution(proposalReplayRegistry, {
+        fingerprint: replayCheck.fingerprint,
+        proposalId: request.authorization.proposalId,
+        approvalToken: request.authorization.authorityToken,
+        operationRequest,
+        sandboxId: scaffold.sandboxId,
+        dispatchId,
+        invocationId,
+        runtimeType: adapter.runtimeType,
+        adapterId: adapterId as string,
+        outcome: "completed",
+        executedAt: nowStr,
+        operatorId,
+      });
+    }
+
+    const finalLifecycle = insertReplayVerifiedRecord(invResult.lifecycle, nowStr);
+
     const dispatchRecord = createGovernedRuntimeDispatchRecord({
       dispatchId, operatorId, operationRequest, approvalReference,
       result: invResult, adapterVersion, recordedAt: nowStr,
@@ -506,7 +683,7 @@ export async function executeSandboxGameplayConfigDispatch(
       receiptSandboxPath: receiptRecord.receipt.receipt.path.sandboxRelativePath,
       beforeSnapshotFileCount: beforeRecord.manifest.fileCount,
       afterSnapshotFileCount: afterRecord.manifest.fileCount,
-      diffEntries, lifecycle: invResult.lifecycle,
+      diffEntries, lifecycle: finalLifecycle,
       outputCapture: invResult.outputCapture,
       rollbackContract, authorizationReceipt: authReceipt,
       dispatchRecord, executedAt: nowStr,

@@ -126,6 +126,16 @@ type SandboxUnityScriptDispatchClientResult = {
   rollbackContract: { rollbackReady: boolean; rollbackMetadata?: { changedFiles: string[]; diffSummary: string } };
   durationMs: number;
   error?: string;
+  proposalReplayRejectionReceipt?: {
+    proposalId: string;
+    originalDispatchId: string;
+    originalSandboxId: string;
+    originalRuntimeType: string;
+    replayRejectionReason: string;
+    attemptedAt: string;
+    operatorId: string;
+    replayFingerprint: string;
+  };
 };
 
 type SandboxUnityScriptDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
@@ -151,6 +161,16 @@ type SandboxGameplayConfigDispatchClientResult = {
   rollbackContract: { rollbackReady: boolean; rollbackMetadata?: { changedFiles: string[]; diffSummary: string } };
   durationMs: number;
   error?: string;
+  proposalReplayRejectionReceipt?: {
+    proposalId: string;
+    originalDispatchId: string;
+    originalSandboxId: string;
+    originalRuntimeType: string;
+    replayRejectionReason: string;
+    attemptedAt: string;
+    operatorId: string;
+    replayFingerprint: string;
+  };
 };
 
 type SandboxGameplayConfigDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
@@ -2036,6 +2056,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
               <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">REAL EXECUTION</span>
               <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">EXEC-0052-D</span>
               <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-700">SANDBOX ONLY</span>
+              <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-violet-700">REPLAY PROTECTED</span>
             </div>
             <p className="text-xs text-slate">First governed gameplay config mutation. Applies a deterministic tuning step to sandboxGameplayConfig.json (movementSpeed +0.5, staminaCooldown −0.1, enemyAggroRange +1.0). On first run: creates the file with defaults. Mutation bounded to sandbox workspace — no Unity production assets touched.</p>
             <div className="space-y-2">
@@ -2142,6 +2163,18 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                     <p className="mt-1 font-mono text-xs text-amber-900">{sandboxGameplayConfigDispatchResult.sandboxId}</p>
                     <p className="mt-1 text-xs text-amber-700">Adapter: {sandboxGameplayConfigDispatchResult.adapterId} · {sandboxGameplayConfigDispatchResult.adapterVersion} · Mutation bounded to .ai-e/sandboxes/{sandboxGameplayConfigDispatchResult.sandboxId}/. Production workspace not mutated.</p>
                   </article>
+                  {sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt ? (
+                    <article className="rounded-[1.5rem] border border-coral/30 bg-coral/10 p-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-ember">Proposal Replay Rejected</p>
+                      <p className="mt-1 text-xs text-ember">{sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt.replayRejectionReason}</p>
+                      <div className="mt-2 space-y-0.5">
+                        <p className="font-mono text-xs text-slate">Proposal: {sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt.proposalId}</p>
+                        <p className="font-mono text-xs text-slate">Original dispatch: {sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt.originalDispatchId}</p>
+                        <p className="font-mono text-xs text-slate">Original sandbox: {sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt.originalSandboxId}</p>
+                        <p className="font-mono text-xs text-slate">Attempted at: {sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt.attemptedAt}</p>
+                      </div>
+                    </article>
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -2155,6 +2188,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
               <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">REAL EXECUTION</span>
               <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">EXEC-0052-E</span>
               <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-700">SANDBOX ONLY</span>
+              <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-violet-700">REPLAY PROTECTED</span>
             </div>
             <p className="text-xs text-slate">First governed Unity-style C# script mutation. Applies a deterministic movement speed increment (+0.5f) to sandboxPlayerMovement.cs. On first run: creates the file with sandbox defaults. Bounded to sandbox workspace — no production Unity assets touched.</p>
             <div className="space-y-2">
@@ -2268,6 +2302,18 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                     <p className="mt-1 font-mono text-xs text-amber-900">{sandboxUnityScriptDispatchResult.sandboxId}</p>
                     <p className="mt-1 text-xs text-amber-700">Adapter: {sandboxUnityScriptDispatchResult.adapterId} · {sandboxUnityScriptDispatchResult.adapterVersion} · Mutation bounded to .ai-e/sandboxes/{sandboxUnityScriptDispatchResult.sandboxId}/. No Assets/ or ProjectSettings/ modified.</p>
                   </article>
+                  {sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt ? (
+                    <article className="rounded-[1.5rem] border border-coral/30 bg-coral/10 p-4">
+                      <p className="text-xs font-bold uppercase tracking-[0.18em] text-ember">Proposal Replay Rejected</p>
+                      <p className="mt-1 text-xs text-ember">{sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt.replayRejectionReason}</p>
+                      <div className="mt-2 space-y-0.5">
+                        <p className="font-mono text-xs text-slate">Proposal: {sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt.proposalId}</p>
+                        <p className="font-mono text-xs text-slate">Original dispatch: {sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt.originalDispatchId}</p>
+                        <p className="font-mono text-xs text-slate">Original sandbox: {sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt.originalSandboxId}</p>
+                        <p className="font-mono text-xs text-slate">Attempted at: {sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt.attemptedAt}</p>
+                      </div>
+                    </article>
+                  ) : null}
                 </>
               ) : null}
             </div>
