@@ -228,6 +228,43 @@ type RuntimeAdapterDispatchClientResult = {
 
 type RuntimeAdapterDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
 
+type SandboxGameplayFeaturePatchDispatchLifecycleRecord = { state: string; timestamp: string; message?: string };
+
+type SandboxGameplayFeaturePatchDispatchClientResult = {
+  manifestVersion: string;
+  outcome: "completed" | "failed" | "timeout" | "rejected";
+  dispatchId: string;
+  sandboxId: string;
+  runtimeType: string;
+  adapterId: string;
+  adapterVersion: string;
+  operationRequest: string;
+  patchFilePath: string;
+  receiptId: string;
+  receiptSandboxPath: string;
+  beforeSnapshotFileCount: number;
+  afterSnapshotFileCount: number;
+  lifecycle: { currentState: string; records: SandboxGameplayFeaturePatchDispatchLifecycleRecord[] };
+  outputCapture: { stdout: string; stderr: string[] };
+  rollbackContract: { rollbackReady: boolean; rollbackMetadata?: { changedFiles: string[]; diffSummary: string } };
+  durationMs: number;
+  error?: string;
+  proposalReplayRejectionReceipt?: {
+    proposalId: string;
+    originalDispatchId: string;
+    originalSandboxId: string;
+    originalRuntimeType: string;
+    replayRejectionReason: string;
+    attemptedAt: string;
+    operatorId: string;
+    replayFingerprint: string;
+  };
+};
+
+type SandboxGameplayFeaturePatchDispatchApiError = { error: string; hint?: string; dispatchEnabled?: false };
+
+type SandboxGameplayFeaturePatchDispatchLifecycleState = "idle" | "dispatching" | "completed" | "failed";
+
 function ToggleInput({
   label,
   checked,
@@ -1123,6 +1160,13 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const [sandboxUnityScriptOperationRequest, setSandboxUnityScriptOperationRequest] = useState("apply Unity script movement speed mutation");
   const [sandboxUnityScriptProposalId, setSandboxUnityScriptProposalId] = useState<string | null>(null);
 
+  const [sandboxGameplayFeaturePatchDispatchState, setSandboxGameplayFeaturePatchDispatchState] = useState<SandboxGameplayFeaturePatchDispatchLifecycleState>("idle");
+  const [sandboxGameplayFeaturePatchDispatchResult, setSandboxGameplayFeaturePatchDispatchResult] = useState<SandboxGameplayFeaturePatchDispatchClientResult | null>(null);
+  const [sandboxGameplayFeaturePatchDispatchApiError, setSandboxGameplayFeaturePatchDispatchApiError] = useState<SandboxGameplayFeaturePatchDispatchApiError | null>(null);
+  const [sandboxGameplayFeaturePatchOperatorId, setSandboxGameplayFeaturePatchOperatorId] = useState("operator");
+  const [sandboxGameplayFeaturePatchOperationRequest, setSandboxGameplayFeaturePatchOperationRequest] = useState("inject stamina clamp feature");
+  const [sandboxGameplayFeaturePatchProposalId, setSandboxGameplayFeaturePatchProposalId] = useState<string | null>(null);
+
   async function handleSandboxGameplayConfigDispatch() {
     setSandboxGameplayConfigDispatchState("dispatching");
     setSandboxGameplayConfigDispatchResult(null);
@@ -1212,6 +1256,52 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
       setSandboxUnityScriptDispatchState(result.outcome === "completed" ? "completed" : "failed");
     } catch {
       setSandboxUnityScriptDispatchState("failed");
+    }
+  }
+
+  async function handleSandboxGameplayFeaturePatchDispatch() {
+    setSandboxGameplayFeaturePatchDispatchState("dispatching");
+    setSandboxGameplayFeaturePatchDispatchResult(null);
+    setSandboxGameplayFeaturePatchDispatchApiError(null);
+    const nowIso = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const operationRequest = sandboxGameplayFeaturePatchOperationRequest.trim() || "inject stamina clamp feature";
+
+    let proposalId = sandboxGameplayFeaturePatchProposalId;
+    if (!proposalId) {
+      proposalId = `proposal-exec0052g-feature-patch-${Date.now()}`;
+      setSandboxGameplayFeaturePatchProposalId(proposalId);
+    }
+
+    try {
+      const res = await fetch("/api/operator/sandbox-gameplay-feature-patch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          approvalToken: "operator-approved",
+          operationRequest,
+          authorization: {
+            authorityToken: "operator-approved",
+            approvedBy: sandboxGameplayFeaturePatchOperatorId.trim() || "operator",
+            approvedAt: nowIso,
+            proposalId,
+            operationRequest,
+          },
+          expiresAt,
+          operatorId: sandboxGameplayFeaturePatchOperatorId.trim() || "operator",
+        }),
+      });
+      const data = (await res.json()) as SandboxGameplayFeaturePatchDispatchClientResult | SandboxGameplayFeaturePatchDispatchApiError;
+      if (!res.ok) {
+        setSandboxGameplayFeaturePatchDispatchApiError(data as SandboxGameplayFeaturePatchDispatchApiError);
+        setSandboxGameplayFeaturePatchDispatchState("failed");
+        return;
+      }
+      const result = data as SandboxGameplayFeaturePatchDispatchClientResult;
+      setSandboxGameplayFeaturePatchDispatchResult(result);
+      setSandboxGameplayFeaturePatchDispatchState(result.outcome === "completed" ? "completed" : "failed");
+    } catch {
+      setSandboxGameplayFeaturePatchDispatchState("failed");
     }
   }
 
@@ -2386,6 +2476,142 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                       </div>
                     </article>
                   ) : null}
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </SectionCard>
+
+        {/* Sandbox Gameplay Feature Patch (EXEC-0052-G) */}
+        <SectionCard eyebrow="Sandbox Gameplay Feature Patch" title="Approve &amp; Apply Stamina Clamp Feature">
+          <div className="mb-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">REAL EXECUTION</span>
+              <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">EXEC-0052-G</span>
+              <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-amber-700">SANDBOX ONLY</span>
+              <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-violet-700">REPLAY PROTECTED</span>
+            </div>
+            <p className="text-xs text-slate">First governed gameplay feature patch. Injects StaminaHelper.ClampStaminaRegeneration() static method into sandboxGameplayFeaturePatch.cs. Ensures stamina values stay within valid bounds during regeneration. On first run: creates the file with feature patch. Mutation bounded to sandbox workspace — no production Unity assets touched.</p>
+            <div className="space-y-2">
+              <label className="block text-xs uppercase tracking-[0.18em] text-slate">Operation Request</label>
+              <input
+                type="text"
+                className="w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-2 text-sm text-ink"
+                value={sandboxGameplayFeaturePatchOperationRequest}
+                onChange={(e) => { setSandboxGameplayFeaturePatchOperationRequest(e.target.value); }}
+                placeholder="inject stamina clamp feature"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="block text-xs uppercase tracking-[0.18em] text-slate">Operator ID</label>
+              <input
+                type="text"
+                className="w-full rounded-[1rem] border border-ink/10 bg-white/80 px-4 py-2 text-sm text-ink"
+                value={sandboxGameplayFeaturePatchOperatorId}
+                onChange={(e) => { setSandboxGameplayFeaturePatchOperatorId(e.target.value); }}
+                placeholder="operator"
+              />
+            </div>
+            <div className="rounded-[1rem] border border-violet-200 bg-violet-50/70 p-3">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate">Replay Protected</p>
+              <p className="mt-2 font-mono text-xs text-violet-900 break-all">{sandboxGameplayFeaturePatchProposalId || "(will generate on first dispatch)"}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSandboxGameplayFeaturePatchProposalId(null);
+                  setSandboxGameplayFeaturePatchDispatchState("idle");
+                  setSandboxGameplayFeaturePatchDispatchResult(null);
+                  setSandboxGameplayFeaturePatchDispatchApiError(null);
+                }}
+                className="mt-2 rounded-full border border-ink/10 bg-white/70 px-3 py-1 text-xs font-semibold text-ink transition hover:-translate-y-0.5"
+              >
+                Reset Proposal Identity
+              </button>
+            </div>
+            <button
+              type="button"
+              className="rounded-[1.25rem] bg-ocean px-6 py-3 text-sm font-semibold text-white disabled:opacity-40"
+              disabled={sandboxGameplayFeaturePatchDispatchState === "dispatching"}
+              onClick={() => { void handleSandboxGameplayFeaturePatchDispatch(); }}
+            >
+              {sandboxGameplayFeaturePatchDispatchState === "dispatching" ? "Injecting Feature…" : "Approve & Apply Feature Patch"}
+            </button>
+            {sandboxGameplayFeaturePatchDispatchState !== "idle" ? (
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${sandboxGameplayFeaturePatchDispatchState === "completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : sandboxGameplayFeaturePatchDispatchState === "dispatching" ? "border-ocean/20 bg-ocean/5 text-ocean" : "border-coral/20 bg-coral/10 text-ember"}`}>
+                  {sandboxGameplayFeaturePatchDispatchState}
+                </span>
+              </div>
+            ) : null}
+          </div>
+          {sandboxGameplayFeaturePatchDispatchState !== "idle" ? (
+            <div className="mt-4 space-y-4">
+              {sandboxGameplayFeaturePatchDispatchApiError ? (
+                <article className="rounded-[1.5rem] border border-coral/20 bg-coral/10 p-4">
+                  <p className="text-sm font-semibold text-ember">{sandboxGameplayFeaturePatchDispatchApiError.error}</p>
+                  {sandboxGameplayFeaturePatchDispatchApiError.hint ? <p className="mt-1 font-mono text-xs text-slate">{sandboxGameplayFeaturePatchDispatchApiError.hint}</p> : null}
+                </article>
+              ) : sandboxGameplayFeaturePatchDispatchState === "dispatching" ? (
+                <article className="rounded-[1.5rem] border border-ocean/20 bg-ocean/5 p-4">
+                  <p className="text-sm body-muted">Verifying authorization → reading sandboxGameplayFeaturePatch.cs → injecting stamina helper → writing result…</p>
+                </article>
+              ) : sandboxGameplayFeaturePatchDispatchResult ? (
+                <>
+                  <div className={`rounded-[1.5rem] border p-4 ${sandboxGameplayFeaturePatchDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50/70" : "border-coral/20 bg-coral/10"}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] ${sandboxGameplayFeaturePatchDispatchResult.outcome === "completed" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-coral/20 bg-coral/10 text-ember"}`}>
+                        {sandboxGameplayFeaturePatchDispatchResult.outcome}
+                      </span>
+                      <span className="inline-flex rounded-full border border-ocean/20 bg-ocean/5 px-3 py-1 text-xs font-bold uppercase tracking-[0.18em] text-ocean">{sandboxGameplayFeaturePatchDispatchResult.runtimeType ?? "openclaw"}</span>
+                      <span className="text-xs text-slate">{sandboxGameplayFeaturePatchDispatchResult.durationMs}ms</span>
+                    </div>
+                    {sandboxGameplayFeaturePatchDispatchResult.outcome !== "completed" ? (
+                      <p className="mt-2 text-sm text-ember">{sandboxGameplayFeaturePatchDispatchResult.error ?? "Feature patch injection failed"}</p>
+                    ) : null}
+                  </div>
+                  {sandboxGameplayFeaturePatchDispatchResult.proposalReplayRejectionReceipt ? (
+                    <article className="rounded-[1.5rem] border border-violet-200 bg-violet-50/70 p-4">
+                      <p className="text-sm font-semibold text-violet-900">Replay Rejection Receipt</p>
+                      <div className="mt-2 space-y-1 font-mono text-xs text-violet-800">
+                        <p><strong>Reason:</strong> {sandboxGameplayFeaturePatchDispatchResult.proposalReplayRejectionReceipt.replayRejectionReason}</p>
+                        <p><strong>Original Dispatch ID:</strong> {sandboxGameplayFeaturePatchDispatchResult.proposalReplayRejectionReceipt.originalDispatchId}</p>
+                        <p><strong>Original Sandbox ID:</strong> {sandboxGameplayFeaturePatchDispatchResult.proposalReplayRejectionReceipt.originalSandboxId}</p>
+                        <p><strong>Original Runtime:</strong> {sandboxGameplayFeaturePatchDispatchResult.proposalReplayRejectionReceipt.originalRuntimeType}</p>
+                        <p><strong>Attempted At:</strong> {sandboxGameplayFeaturePatchDispatchResult.proposalReplayRejectionReceipt.attemptedAt}</p>
+                      </div>
+                    </article>
+                  ) : null}
+                  {sandboxGameplayFeaturePatchDispatchResult.outputCapture.stdout ? (
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Feature Patch Output (generated C# method)</p>
+                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap font-mono text-xs text-ink">{sandboxGameplayFeaturePatchDispatchResult.outputCapture.stdout}</pre>
+                    </article>
+                  ) : null}
+                  <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate">Lifecycle</p>
+                    <div className="mt-2 space-y-1">
+                      {sandboxGameplayFeaturePatchDispatchResult.lifecycle.records.map((step, i) => (
+                        <p key={i} className="font-mono text-xs text-slate">{step.timestamp} <strong>{step.state}</strong>{step.message ? ` — ${step.message}` : ""}</p>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-slate">Current state: <strong>{sandboxGameplayFeaturePatchDispatchResult.lifecycle.currentState}</strong></p>
+                  </article>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Patch File Path</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{sandboxGameplayFeaturePatchDispatchResult.patchFilePath}</p>
+                    </article>
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Receipt ID</p>
+                      <p className="mt-1 font-mono text-xs text-ink">{sandboxGameplayFeaturePatchDispatchResult.receiptId || "—"}</p>
+                    </article>
+                    <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
+                      <p className="text-xs uppercase tracking-[0.18em] text-slate">Rollback Contract</p>
+                      <p className={`mt-1 text-xs font-bold ${sandboxGameplayFeaturePatchDispatchResult.rollbackContract.rollbackReady ? "text-emerald-700" : "text-ember"}`}>
+                        {sandboxGameplayFeaturePatchDispatchResult.rollbackContract.rollbackReady ? "READY" : "NOT READY"}
+                      </p>
+                    </article>
+                  </div>
                 </>
               ) : null}
             </div>
