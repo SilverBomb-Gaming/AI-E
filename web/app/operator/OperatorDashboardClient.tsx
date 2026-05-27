@@ -1114,12 +1114,14 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
   const [sandboxGameplayConfigDispatchApiError, setSandboxGameplayConfigDispatchApiError] = useState<SandboxGameplayConfigDispatchApiError | null>(null);
   const [sandboxGameplayConfigOperatorId, setSandboxGameplayConfigOperatorId] = useState("operator");
   const [sandboxGameplayConfigPatchLabel, setSandboxGameplayConfigPatchLabel] = useState("apply movement speed tuning");
+  const [sandboxGameplayConfigProposalId, setSandboxGameplayConfigProposalId] = useState<string | null>(null);
 
   const [sandboxUnityScriptDispatchState, setSandboxUnityScriptDispatchState] = useState<SandboxUnityScriptDispatchLifecycleState>("idle");
   const [sandboxUnityScriptDispatchResult, setSandboxUnityScriptDispatchResult] = useState<SandboxUnityScriptDispatchClientResult | null>(null);
   const [sandboxUnityScriptDispatchApiError, setSandboxUnityScriptDispatchApiError] = useState<SandboxUnityScriptDispatchApiError | null>(null);
   const [sandboxUnityScriptOperatorId, setSandboxUnityScriptOperatorId] = useState("operator");
   const [sandboxUnityScriptOperationRequest, setSandboxUnityScriptOperationRequest] = useState("apply Unity script movement speed mutation");
+  const [sandboxUnityScriptProposalId, setSandboxUnityScriptProposalId] = useState<string | null>(null);
 
   async function handleSandboxGameplayConfigDispatch() {
     setSandboxGameplayConfigDispatchState("dispatching");
@@ -1128,6 +1130,13 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
     const nowIso = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const operationRequest = sandboxGameplayConfigPatchLabel.trim() || "apply movement speed tuning";
+
+    let proposalId = sandboxGameplayConfigProposalId;
+    if (!proposalId) {
+      proposalId = `proposal-exec0052d-gameplay-${Date.now()}`;
+      setSandboxGameplayConfigProposalId(proposalId);
+    }
+
     try {
       const res = await fetch("/api/operator/sandbox-gameplay-config", {
         method: "POST",
@@ -1139,7 +1148,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             authorityToken: "operator-approved",
             approvedBy: sandboxGameplayConfigOperatorId.trim() || "operator",
             approvedAt: nowIso,
-            proposalId: `proposal-exec0052d-gameplay-${Date.now()}`,
+            proposalId,
             operationRequest,
           },
           expiresAt,
@@ -1167,6 +1176,13 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
     const nowIso = new Date().toISOString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const operationRequest = sandboxUnityScriptOperationRequest.trim() || "apply Unity script movement speed mutation";
+
+    let proposalId = sandboxUnityScriptProposalId;
+    if (!proposalId) {
+      proposalId = `proposal-exec0052e-unity-${Date.now()}`;
+      setSandboxUnityScriptProposalId(proposalId);
+    }
+
     try {
       const res = await fetch("/api/operator/sandbox-unity-script", {
         method: "POST",
@@ -1178,7 +1194,7 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
             authorityToken: "operator-approved",
             approvedBy: sandboxUnityScriptOperatorId.trim() || "operator",
             approvedAt: nowIso,
-            proposalId: `proposal-exec0052e-unity-${Date.now()}`,
+            proposalId,
             operationRequest,
           },
           expiresAt,
@@ -2079,6 +2095,22 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                 placeholder="operator"
               />
             </div>
+            <div className="rounded-[1rem] border border-violet-200 bg-violet-50/70 p-3">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate">Replay Protected</p>
+              <p className="mt-2 font-mono text-xs text-violet-900 break-all">{sandboxGameplayConfigProposalId || "(will generate on first dispatch)"}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSandboxGameplayConfigProposalId(null);
+                  setSandboxGameplayConfigDispatchState("idle");
+                  setSandboxGameplayConfigDispatchResult(null);
+                  setSandboxGameplayConfigDispatchApiError(null);
+                }}
+                className="mt-2 rounded-full border border-ink/10 bg-white/70 px-3 py-1 text-xs font-semibold text-ink transition hover:-translate-y-0.5"
+              >
+                Reset Proposal Identity
+              </button>
+            </div>
             <button
               type="button"
               className="rounded-[1.25rem] bg-ocean px-6 py-3 text-sm font-semibold text-white disabled:opacity-40"
@@ -2120,6 +2152,18 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                       <p className="mt-2 text-sm text-ember">{sandboxGameplayConfigDispatchResult.error ?? "Gameplay config dispatch failed"}</p>
                     ) : null}
                   </div>
+                  {sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt ? (
+                    <article className="rounded-[1.5rem] border border-violet-200 bg-violet-50/70 p-4">
+                      <p className="text-sm font-semibold text-violet-900">Replay Rejection Receipt</p>
+                      <div className="mt-2 space-y-1 font-mono text-xs text-violet-800">
+                        <p><strong>Reason:</strong> {sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt.replayRejectionReason}</p>
+                        <p><strong>Original Dispatch ID:</strong> {sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt.originalDispatchId}</p>
+                        <p><strong>Original Sandbox ID:</strong> {sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt.originalSandboxId}</p>
+                        <p><strong>Original Runtime:</strong> {sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt.originalRuntimeType}</p>
+                        <p><strong>Attempted At:</strong> {sandboxGameplayConfigDispatchResult.proposalReplayRejectionReceipt.attemptedAt}</p>
+                      </div>
+                    </article>
+                  ) : null}
                   {sandboxGameplayConfigDispatchResult.outputCapture.stdout ? (
                     <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
                       <p className="text-xs uppercase tracking-[0.18em] text-slate">Mutation output (before / after / diff)</p>
@@ -2211,6 +2255,22 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                 placeholder="operator"
               />
             </div>
+            <div className="rounded-[1rem] border border-violet-200 bg-violet-50/70 p-3">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate">Replay Protected</p>
+              <p className="mt-2 font-mono text-xs text-violet-900 break-all">{sandboxUnityScriptProposalId || "(will generate on first dispatch)"}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSandboxUnityScriptProposalId(null);
+                  setSandboxUnityScriptDispatchState("idle");
+                  setSandboxUnityScriptDispatchResult(null);
+                  setSandboxUnityScriptDispatchApiError(null);
+                }}
+                className="mt-2 rounded-full border border-ink/10 bg-white/70 px-3 py-1 text-xs font-semibold text-ink transition hover:-translate-y-0.5"
+              >
+                Reset Proposal Identity
+              </button>
+            </div>
             <button
               type="button"
               className="rounded-[1.25rem] bg-ocean px-6 py-3 text-sm font-semibold text-white disabled:opacity-40"
@@ -2259,6 +2319,18 @@ export function OperatorDashboardClient({ initialProviderResult }: { initialProv
                       <p className="mt-2 text-sm text-ember">{sandboxUnityScriptDispatchResult.error ?? "Unity script dispatch failed"}</p>
                     ) : null}
                   </div>
+                  {sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt ? (
+                    <article className="rounded-[1.5rem] border border-violet-200 bg-violet-50/70 p-4">
+                      <p className="text-sm font-semibold text-violet-900">Replay Rejection Receipt</p>
+                      <div className="mt-2 space-y-1 font-mono text-xs text-violet-800">
+                        <p><strong>Reason:</strong> {sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt.replayRejectionReason}</p>
+                        <p><strong>Original Dispatch ID:</strong> {sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt.originalDispatchId}</p>
+                        <p><strong>Original Sandbox ID:</strong> {sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt.originalSandboxId}</p>
+                        <p><strong>Original Runtime:</strong> {sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt.originalRuntimeType}</p>
+                        <p><strong>Attempted At:</strong> {sandboxUnityScriptDispatchResult.proposalReplayRejectionReceipt.attemptedAt}</p>
+                      </div>
+                    </article>
+                  ) : null}
                   {sandboxUnityScriptDispatchResult.outputCapture.stdout ? (
                     <article className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-4">
                       <p className="text-xs uppercase tracking-[0.18em] text-slate">Mutation output (before / after / summary)</p>
