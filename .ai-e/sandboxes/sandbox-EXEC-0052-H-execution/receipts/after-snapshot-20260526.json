@@ -1,0 +1,16 @@
+{
+  "sandboxId": "sandbox-EXEC-0052-H-execution",
+  "phase": "after",
+  "createdAt": "2026-05-26T12:00:05.000Z",
+  "fileCount": 2,
+  "files": [
+    {
+      "relativePath": "workspace/gameplayHelpers.cs",
+      "note": "patched ClampStaminaRegeneration (version 1)"
+    },
+    {
+      "relativePath": "workspace/sandboxGameplayConfig.json",
+      "note": "staminaRegenRate incremented by 0.25"
+    }
+  ]
+}

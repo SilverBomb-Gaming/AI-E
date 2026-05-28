@@ -1,0 +1,13 @@
+{
+  "proposalId": "EXEC-0052-H",
+  "sandboxId": "sandbox-EXEC-0052-H-execution",
+  "steps": [
+    "Patch gameplayHelpers.cs: ClampStaminaRegeneration()",
+    "Update sandboxGameplayConfig.json: staminaRegenRate += 0.25",
+    "Generate governed workflow summary",
+    "Generate rollback metadata and receipt"
+  ],
+  "summary": "Deterministic, approval-gated, rollback-aware, sandbox-only multi-step gameplay workflow. No production assets changed.",
+  "receiptId": "receipt-20260526-executed",
+  "createdAt": "2026-05-26T12:00:06.000Z"
+}

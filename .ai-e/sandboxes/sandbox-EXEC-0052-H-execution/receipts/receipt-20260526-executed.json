@@ -1,0 +1,101 @@
+{
+  "manifestVersion": "EXEC-0052-H",
+  "receiptId": "receipt-20260526-executed",
+  "sandboxId": "sandbox-EXEC-0052-H-execution",
+  "createdAt": "2026-05-26T12:00:06.000Z",
+  "operationPhase": "executed",
+  "approvalState": "approved",
+  "plannedActions": [
+    {
+      "actionId": "step-1-patch-clamp",
+      "title": "Patch gameplayHelpers.cs ClampStaminaRegeneration",
+      "description": "Introduce clamping logic variant safe for sandbox. Requires approval.",
+      "category": "write",
+      "requiresApproval": true,
+      "mutationExpected": true
+    },
+    {
+      "actionId": "step-2-update-config",
+      "title": "Update sandboxGameplayConfig.json staminaRegenRate",
+      "description": "Increase staminaRegenRate by 0.25 in sandbox config.",
+      "category": "write",
+      "requiresApproval": true,
+      "mutationExpected": true
+    },
+    {
+      "actionId": "step-3-generate-summary",
+      "title": "Generate governed workflow summary",
+      "description": "Produce deterministic summary describing the mutations performed.",
+      "category": "read",
+      "requiresApproval": false,
+      "mutationExpected": false
+    },
+    {
+      "actionId": "step-4-generate-rollback",
+      "title": "Generate rollback metadata and receipt",
+      "description": "Produce rollback metadata and receipt for verification and operator use.",
+      "category": "write",
+      "requiresApproval": false,
+      "mutationExpected": true
+    }
+  ],
+  "affectedFiles": [
+    {
+      "path": {
+        "base": "workspace",
+        "absolutePath": "E:\\AI projects 2025\\AI-E\\.ai-e\\sandboxes\\sandbox-EXEC-0052-H-execution\\workspace\\gameplayHelpers.cs",
+        "relativePath": ".ai-e/sandboxes/sandbox-EXEC-0052-H-execution/workspace/gameplayHelpers.cs",
+        "sandboxRelativePath": "workspace/gameplayHelpers.cs"
+      },
+      "changeKind": "patch",
+      "requiredApproval": true
+    },
+    {
+      "path": {
+        "base": "workspace",
+        "absolutePath": "E:\\AI projects 2025\\AI-E\\.ai-e\\sandboxes\\sandbox-EXEC-0052-H-execution\\workspace\\sandboxGameplayConfig.json",
+        "relativePath": ".ai-e/sandboxes/sandbox-EXEC-0052-H-execution/workspace/sandboxGameplayConfig.json",
+        "sandboxRelativePath": "workspace/sandboxGameplayConfig.json"
+      },
+      "changeKind": "patch",
+      "requiredApproval": true
+    }
+  ],
+  "snapshotReferences": [
+    {
+      "phase": "before",
+      "createdAt": "2026-05-26T12:00:00.000Z",
+      "fileCount": 2
+    },
+    {
+      "phase": "after",
+      "createdAt": "2026-05-26T12:00:05.000Z",
+      "fileCount": 2
+    }
+  ],
+  "verificationResults": [],
+  "warnings": [],
+  "errors": [],
+  "dryRun": false,
+  "receipt": {
+    "status": "written",
+    "path": {
+      "base": "receipts",
+      "absolutePath": "E:\\AI projects 2025\\AI-E\\.ai-e\\sandboxes\\sandbox-EXEC-0052-H-execution\\receipts\\receipt-20260526-executed.json",
+      "relativePath": ".ai-e/sandboxes/sandbox-EXEC-0052-H-execution/receipts/receipt-20260526-executed.json",
+      "sandboxRelativePath": "receipts/receipt-20260526-executed.json"
+    },
+    "written": true
+  },
+  "safetyBoundary": {
+    "receiptOnly": true,
+    "receiptDirectoryOnly": true,
+    "workspaceMutationEnabled": true,
+    "shellExecutionEnabled": false,
+    "networkExecutionEnabled": false,
+    "runtimeExecutionEnabled": false,
+    "rollbackExecutionEnabled": true,
+    "automaticRuntimeExecution": false,
+    "humanAuthorityRequired": true
+  }
+}

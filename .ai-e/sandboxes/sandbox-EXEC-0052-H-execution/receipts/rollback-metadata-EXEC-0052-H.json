@@ -1,0 +1,22 @@
+{
+  "proposalId": "EXEC-0052-H",
+  "sandboxId": "sandbox-EXEC-0052-H-execution",
+  "rollbackActions": [
+    {
+      "path": "workspace/gameplayHelpers.cs",
+      "action": "restore",
+      "original": {
+        "note": "restore to pre-patch contents recorded in before-snapshot-20260526.json"
+      }
+    },
+    {
+      "path": "workspace/sandboxGameplayConfig.json",
+      "action": "restore",
+      "original": {
+        "staminaRegenRate": 0.75
+      }
+    }
+  ],
+  "generatedAt": "2026-05-26T12:00:06.500Z",
+  "rollbackReady": true
+}

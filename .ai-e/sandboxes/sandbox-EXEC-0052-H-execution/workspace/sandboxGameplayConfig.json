@@ -1,0 +1,11 @@
+{
+  "sandboxId": "sandbox-EXEC-0052-H-execution",
+  "gameplay": {
+    "staminaRegenRate": 1.0
+  },
+  "metadata": {
+    "createdBy": "AI-E",
+    "createdAt": "2026-05-26T00:00:00.000Z",
+    "purpose": "EXEC-0052-H first multi-step governed workflow"
+  }
+}

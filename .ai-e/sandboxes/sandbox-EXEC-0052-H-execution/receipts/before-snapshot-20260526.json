@@ -1,0 +1,17 @@
+{
+  "sandboxId": "sandbox-EXEC-0052-H-execution",
+  "phase": "before",
+  "createdAt": "2026-05-26T12:00:00.000Z",
+  "fileCount": 2,
+  "files": [
+    
+    {
+      "relativePath": "workspace/gameplayHelpers.cs",
+      "note": "original helper before patch"
+    },
+    {
+      "relativePath": "workspace/sandboxGameplayConfig.json",
+      "note": "original gameplay config"
+    }
+  ]
+}
