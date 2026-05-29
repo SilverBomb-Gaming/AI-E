@@ -29,8 +29,10 @@ export default function OperatorWorkflowExecutionPage() {
 
   return (
     <div className="p-8">
-      <h1 className="text-2xl font-bold mb-4">Operator Console — Workflow Execution</h1>
-      <OperatorWorkflowCard view={view} />
+      <div className="mx-auto max-w-7xl">
+        <h1 className="text-3xl font-bold mb-6">Operator Console — Workflow Execution</h1>
+        <OperatorWorkflowCard view={view} />
+      </div>
     </div>
   );
 }
