@@ -56,39 +56,67 @@ export function loadSandboxWorkflowView(sandboxId = 'sandbox-EXEC-0052-H-executi
     const receiptFile = find(/^receipt-.*executed.*\.json$/) || find(/^receipt-.*\.json$/);
     if (receiptFile) {
       const receipt = JSON.parse(fs.readFileSync(path.join(receiptsDir, receiptFile), 'utf8'));
-      result.receiptId = receipt.receiptId || '';
-      result.proposalId = receipt.manifestVersion || result.proposalId;
+      result.receiptId = typeof receipt.receiptId === 'string' ? receipt.receiptId : '';
+      result.proposalId = typeof receipt.manifestVersion === 'string' ? receipt.manifestVersion : result.proposalId;
       // Prefer sandboxRelativePath if present for concise listing
-      result.mutatedFiles = (receipt.affectedFiles || []).map((f: any) => f.path?.sandboxRelativePath || f.path?.relativePath || f.path?.absolutePath || '');
+      const affected = Array.isArray(receipt.affectedFiles) ? receipt.affectedFiles : [];
+      result.mutatedFiles = affected
+        .map((f: any) => f && (f.path?.sandboxRelativePath || f.path?.relativePath || f.path?.absolutePath || ''))
+        .filter((x: any) => typeof x === 'string' && x.length > 0);
       // expose createdAt if present
-      if (receipt.createdAt) result.lifecycle = [{ step: 'queued', at: receipt.createdAt }];
+      if (receipt.createdAt) result.lifecycle = [{ step: 'queued', at: String(receipt.createdAt) }];
     }
 
     const lifecycleFile = find(/^lifecycle-trace.*\.json$/);
     if (lifecycleFile) {
-      const lifecycle = JSON.parse(fs.readFileSync(path.join(receiptsDir, lifecycleFile), 'utf8'));
+      const lifecycleRaw = JSON.parse(fs.readFileSync(path.join(receiptsDir, lifecycleFile), 'utf8'));
       // lifecycle files may store lifecycle under the root or nested field
-      result.lifecycle = lifecycle.lifecycle || lifecycle.trace || lifecycle || result.lifecycle;
+      let candidate = lifecycleRaw.lifecycle || lifecycleRaw.trace || lifecycleRaw;
+      // Normalize to array of {step, at}
+      if (Array.isArray(candidate)) {
+        const allowed: WorkflowStep[] = [
+          'queued',
+          'authorization_verified',
+          'replay_verified',
+          'dispatching',
+          'running_step_1',
+          'running_step_2',
+          'running_step_3',
+          'completed',
+          'replay_rejected'
+        ];
+        result.lifecycle = candidate
+          .map((it: any) => ({ step: String(it.step || it.status || ''), at: String(it.at || it.time || it.timestamp || '') }))
+          .filter((it: any) => it.step && it.at && allowed.includes(it.step as WorkflowStep)) as { step: WorkflowStep; at: string }[];
+      }
     }
 
     const summaryFile = find(/^workflow-summary.*\.json$/) || find(/^summary.*\.json$/);
     if (summaryFile) {
       const summary = JSON.parse(fs.readFileSync(path.join(receiptsDir, summaryFile), 'utf8'));
-      result.summary = summary.summary || summary.steps?.join('\n') || JSON.stringify(summary);
+      result.summary = typeof summary.summary === 'string' ? summary.summary : (Array.isArray(summary.steps) ? summary.steps.join('\n') : JSON.stringify(summary));
     }
 
     const rollbackFile = find(/^rollback-metadata.*\.json$/);
     if (rollbackFile) {
       const rb = JSON.parse(fs.readFileSync(path.join(receiptsDir, rollbackFile), 'utf8'));
-      result.rollbackReady = !!rb.rollbackReady || !!rb.rollbackActions;
+      result.rollbackReady = !!rb.rollbackReady || !!rb.rollbackActions || false;
     }
 
     const replayFile = find(/^replay-attempt.*\.json$/) || find(/^replay.*\.json$/);
     if (replayFile) {
-      result.replayAttempt = JSON.parse(fs.readFileSync(path.join(receiptsDir, replayFile), 'utf8'));
+      const raw = JSON.parse(fs.readFileSync(path.join(receiptsDir, replayFile), 'utf8'));
+      // Normalize common fields
+      result.replayAttempt = {
+        result: raw.result || raw.status || '',
+        reason: raw.reason || raw.message || '',
+        attemptedAt: raw.attemptedAt || raw.at || raw.timestamp || ''
+      };
     }
   } catch (err) {
     // swallow — UI will show missing data
+    // eslint-disable-next-line no-console
+    console.error('operatorWorkflowView load error:', err);
   }
 
   return result;
