@@ -24,8 +24,17 @@ export interface OperatorWorkflowView {
 }
 
 export function loadSandboxWorkflowView(sandboxId = 'sandbox-EXEC-0052-H-execution'): OperatorWorkflowView {
-  const root = process.cwd();
-  const receiptsDir = path.join(root, '.ai-e', 'sandboxes', sandboxId, 'receipts');
+  // Resolve possible repository root locations. Next server may run with cwd at `/web`.
+  const cwd = process.cwd();
+  const candidates = [cwd, path.resolve(cwd, '..'), path.resolve(cwd, '..', '..')];
+  let receiptsDir = '';
+  for (const c of candidates) {
+    const candidate = path.join(c, '.ai-e', 'sandboxes', sandboxId, 'receipts');
+    if (fs.existsSync(candidate)) {
+      receiptsDir = candidate;
+      break;
+    }
+  }
   const result: OperatorWorkflowView = {
     proposalId: 'EXEC-0052-H',
     receiptId: '',
@@ -38,35 +47,45 @@ export function loadSandboxWorkflowView(sandboxId = 'sandbox-EXEC-0052-H-executi
   };
 
   try {
-    const receiptPath = path.join(receiptsDir, 'receipt-20260526-executed.json');
-    if (fs.existsSync(receiptPath)) {
-      const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+    if (!receiptsDir) return result;
+
+    // Helper: find first matching file by prefix
+    const files = fs.readdirSync(receiptsDir);
+    const find = (pattern: RegExp) => files.find((f) => pattern.test(f));
+
+    const receiptFile = find(/^receipt-.*executed.*\.json$/) || find(/^receipt-.*\.json$/);
+    if (receiptFile) {
+      const receipt = JSON.parse(fs.readFileSync(path.join(receiptsDir, receiptFile), 'utf8'));
       result.receiptId = receipt.receiptId || '';
-      result.proposalId = receipt.plannedActions && receipt.plannedActions.length ? 'EXEC-0052-H' : result.proposalId;
-      result.mutatedFiles = (receipt.affectedFiles || []).map((f: any) => f.path.relativePath);
+      result.proposalId = receipt.manifestVersion || result.proposalId;
+      // Prefer sandboxRelativePath if present for concise listing
+      result.mutatedFiles = (receipt.affectedFiles || []).map((f: any) => f.path?.sandboxRelativePath || f.path?.relativePath || f.path?.absolutePath || '');
+      // expose createdAt if present
+      if (receipt.createdAt) result.lifecycle = [{ step: 'queued', at: receipt.createdAt }];
     }
 
-    const lifecyclePath = path.join(receiptsDir, 'lifecycle-trace-20260526.json');
-    if (fs.existsSync(lifecyclePath)) {
-      const lifecycle = JSON.parse(fs.readFileSync(lifecyclePath, 'utf8'));
-      result.lifecycle = lifecycle.lifecycle || [];
+    const lifecycleFile = find(/^lifecycle-trace.*\.json$/);
+    if (lifecycleFile) {
+      const lifecycle = JSON.parse(fs.readFileSync(path.join(receiptsDir, lifecycleFile), 'utf8'));
+      // lifecycle files may store lifecycle under the root or nested field
+      result.lifecycle = lifecycle.lifecycle || lifecycle.trace || lifecycle || result.lifecycle;
     }
 
-    const summaryPath = path.join(receiptsDir, 'workflow-summary-EXEC-0052-H.json');
-    if (fs.existsSync(summaryPath)) {
-      const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-      result.summary = summary.summary || '';
+    const summaryFile = find(/^workflow-summary.*\.json$/) || find(/^summary.*\.json$/);
+    if (summaryFile) {
+      const summary = JSON.parse(fs.readFileSync(path.join(receiptsDir, summaryFile), 'utf8'));
+      result.summary = summary.summary || summary.steps?.join('\n') || JSON.stringify(summary);
     }
 
-    const rollbackPath = path.join(receiptsDir, 'rollback-metadata-EXEC-0052-H.json');
-    if (fs.existsSync(rollbackPath)) {
-      const rb = JSON.parse(fs.readFileSync(rollbackPath, 'utf8'));
-      result.rollbackReady = !!rb.rollbackReady;
+    const rollbackFile = find(/^rollback-metadata.*\.json$/);
+    if (rollbackFile) {
+      const rb = JSON.parse(fs.readFileSync(path.join(receiptsDir, rollbackFile), 'utf8'));
+      result.rollbackReady = !!rb.rollbackReady || !!rb.rollbackActions;
     }
 
-    const replayPath = path.join(receiptsDir, 'replay-attempt-20260526.json');
-    if (fs.existsSync(replayPath)) {
-      result.replayAttempt = JSON.parse(fs.readFileSync(replayPath, 'utf8'));
+    const replayFile = find(/^replay-attempt.*\.json$/) || find(/^replay.*\.json$/);
+    if (replayFile) {
+      result.replayAttempt = JSON.parse(fs.readFileSync(path.join(receiptsDir, replayFile), 'utf8'));
     }
   } catch (err) {
     // swallow — UI will show missing data
