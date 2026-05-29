@@ -5,7 +5,6 @@ import {
   type ApprovalAuthorityToken,
   type GovernedExecutionApproval,
 } from "@/lib/aie/sandboxedRuntimeDispatch";
-import { executeGovernedWorkflow } from "@/lib/aie/governedWorkflowExecution";
 
 export const runtime = "nodejs";
 
@@ -108,7 +107,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await executeGovernedWorkflow({
+    // Log minimal request info for diagnostics (avoid logging tokens)
+    console.info("[api/operator/sandbox-workflow] request", {
+      proposalId: normalized.proposalId,
+      sandboxId: normalized.sandboxId,
+      operatorId: normalized.operatorId,
+    });
+
+    // Dynamically import the execution module to reduce dev-time bundling issues
+    const mod = await import("@/lib/aie/governedWorkflowExecution");
+    const result = await mod.executeGovernedWorkflow({
       workflowId: normalized.workflowId,
       proposalId: normalized.proposalId,
       approvalToken: normalized.approvalToken,
@@ -121,10 +129,16 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack : undefined;
     const isValidation = message.includes("rejected:");
-    console.error("[api/operator/sandbox-workflow] error", { message });
+    console.error("[api/operator/sandbox-workflow] error", { message, stack });
+
+    // In development include the underlying error message to aid debugging.
+    const showDebug = process.env.NODE_ENV !== "production" || process.env.AIE_SANDBOX_WORKFLOW_DEBUG === "true";
+    const responseError = isValidation ? message : showDebug ? message : SAFE_ERROR_MESSAGE;
+
     return NextResponse.json(
-      { error: isValidation ? message : SAFE_ERROR_MESSAGE },
+      { error: responseError, hint: showDebug ? { raw: message } : undefined },
       { status: isValidation ? 400 : 500 },
     );
   }
