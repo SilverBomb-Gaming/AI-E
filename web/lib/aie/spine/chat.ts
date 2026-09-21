@@ -14,36 +14,18 @@ function trimHistory(messages: ChatMessage[]): ChatMessage[] {
 }
 
 function formatPlanReply(plan: BoundedPlan, mode: ChatResponse["mode"]): string {
-  const stepLines = plan.steps.map((step, index) => `${index + 1}. ${step.title} — ${step.detail}`);
   const missing =
-    plan.intent.missingInputs.length > 0
-      ? `\nMissing inputs: ${plan.intent.missingInputs.join(", ")}.`
-      : "";
-  const blocked =
-    plan.blockedItems.length > 0 ? `\nBlocked: ${plan.blockedItems.join(" ")}` : "";
+    plan.intent.missingInputs.length > 0 ? ` Missing inputs: ${plan.intent.missingInputs.join(", ")}.` : "";
+  const modeLine =
+    mode === "demo"
+      ? "Demo mode used the local planner tool — no private LLM key."
+      : "A live model called the same local planner tool.";
 
   return [
-    `${plan.summary}`,
-    "",
-    `Status: ${plan.status}. Engine: ${plan.intent.engineTarget ?? "unspecified"}. Features: ${
-      plan.intent.features.join(", ") || "none extracted"
-    }.`,
-    `This tool ${plan.executed ? "executed" : "did not execute"} engine work. Review required: ${
-      plan.reviewRequired ? "yes" : "no"
-    }.`,
-    missing.trim(),
-    blocked.trim(),
-    "",
-    "Planned steps:",
-    ...stepLines,
-    "",
-    mode === "demo"
-      ? "Running in demo mode (no private LLM key). The planner above is the real local tool, not a pretend model answer."
-      : "A live model called the same local planner tool. The steps still come from AI-E, not from hidden engine automation.",
-  ]
-    .filter((line, index, lines) => line !== "" || lines[index - 1] !== "")
-    .join("\n")
-    .trim();
+    plan.summary,
+    `Status ${plan.status}. Engine ${plan.intent.engineTarget ?? "unspecified"}. Executed engine work: no.${missing}`,
+    modeLine,
+  ].join("\n");
 }
 
 function helpReply(mode: ChatResponse["mode"]): string {

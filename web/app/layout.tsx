@@ -19,6 +19,9 @@ export const metadata: Metadata = {
   title: "AI-E | Bounded plans for game-dev requests",
   description:
     "Public AI-E spine: chat plus a real planner tool that turns messy game-dev intent into a review-gated plan. Demo mode works without private keys.",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -76,7 +76,7 @@ export function DemoChat() {
         "This is the public AI-E spine. Ask it to plan a game-dev request. It will run `plan_bounded_request` — a real local planner that can also block unsupported work. It will not pretend to edit Unity.",
     },
   ]);
-  const listRef = useRef<HTMLDivElement>(null);
+  const lastMessageRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     void fetch("/api/demo/status")
@@ -95,7 +95,12 @@ export function DemoChat() {
   }, []);
 
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
+    const messageEl = lastMessageRef.current;
+    const container = messageEl?.parentElement;
+    if (!messageEl || !container) {
+      return;
+    }
+    container.scrollTop = Math.max(0, messageEl.offsetTop - 8);
   }, [messages, pending]);
 
   const modeLabel = useMemo(
@@ -161,9 +166,13 @@ export function DemoChat() {
         <span className="rounded-full bg-mist px-3 py-1 text-xs font-semibold text-ocean">{modeLabel}</span>
       </div>
 
-      <div ref={listRef} className="flex-1 space-y-4 overflow-y-auto px-5 py-5" aria-live="polite">
+      <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5" aria-live="polite">
         {messages.map((message, index) => (
-          <div key={`${message.role}-${index}`} className={message.role === "user" ? "ml-8" : "mr-4"}>
+          <div
+            key={`${message.role}-${index}`}
+            ref={index === messages.length - 1 ? lastMessageRef : undefined}
+            className={message.role === "user" ? "ml-8" : "mr-4"}
+          >
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-ocean">
               {message.role === "user" ? "You" : "AI-E"}
             </p>

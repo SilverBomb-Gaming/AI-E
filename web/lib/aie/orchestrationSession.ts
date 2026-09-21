@@ -1208,8 +1208,8 @@ export function normalizeExecutionOrchestrationState(value: unknown): ExecutionO
     return {
       entryNumber,
       stepNumber,
-      agentId,
-      agentRole,
+      agentId: agentId === PLANNER_AGENT_ID ? PLANNER_AGENT_ID : EXECUTOR_AGENT_ID,
+      agentRole: agentRole === "planner" ? "planner" : "executor",
       summary: normalizeText(String(item.summary)),
       handoffFrom: handoffFrom ?? null,
       handoffTo: handoffTo ?? null,

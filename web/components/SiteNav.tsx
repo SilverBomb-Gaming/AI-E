@@ -8,11 +8,11 @@ const links = [
 
 export function SiteNav({ current }: { current: "demo" | "analyze" | "upgrade" }) {
   return (
-    <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 pt-6 lg:px-10">
-      <Link href="/" className="headline text-lg font-semibold tracking-tight text-ink">
+    <header className="relative z-10 mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-6 pt-6 lg:px-10">
+      <Link href="/" className="headline shrink-0 whitespace-nowrap text-lg font-semibold tracking-tight text-ink">
         AI-E
       </Link>
-      <nav className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+      <nav className="flex flex-wrap justify-end gap-2 text-sm font-semibold">
         {links.map((link) => {
           const active =
             (current === "demo" && link.href === "/") ||

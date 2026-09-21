@@ -12,7 +12,7 @@ test("demo chat runs the planner tool on a Unity request", () => {
   assert.equal(result.toolCalls.length, 1);
   assert.equal(result.toolCalls[0]?.name, "plan_bounded_request");
   assert.equal(result.toolCalls[0]?.result.status, "supported_ready");
-  assert.match(result.reply, /did not execute engine work/i);
+  assert.match(result.reply, /executed engine work: no/i);
   assert.match(result.reply, /demo mode/i);
 });
 

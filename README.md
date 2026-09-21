@@ -4,6 +4,8 @@ AI-E turns a messy game-development request into a **bounded, reviewable plan**.
 
 This repository now has a **public spine** you can run in a browser: chat + one real agent tool. That is the demoable product surface. The Windows operator console and Unity sandbox runtime still exist locally; they are not what this public page claims to be.
 
+![AI-E public spine after running the planner tool](docs/screenshots/demo-chat.png)
+
 ## What the public demo does
 
 The homepage is a chat UI backed by `plan_bounded_request`.

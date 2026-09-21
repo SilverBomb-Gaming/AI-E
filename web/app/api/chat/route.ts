@@ -6,6 +6,7 @@ import { SPINE_TOOLS } from "@/lib/aie/spine/tools";
 import type { ChatMessage } from "@/lib/aie/spine/types";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const SAFE_ERROR = "The demo spine could not complete that turn. Please try again.";
 
