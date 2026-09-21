@@ -549,9 +549,30 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
       router.push("/result");
     } catch {
       setErrorMessage("We couldn't generate an analysis right now. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  function applyExamplePrompt(example: string) {
+    setForm((current) => ({ ...current, problemDescription: example }));
+    problemDescriptionRef.current?.focus();
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      <div className="space-y-3">
+        <p className="section-label">Free analysis</p>
+        <h1 className="headline text-4xl font-semibold sm:text-5xl">Paste your Unity issue. Get a step-by-step fix plan.</h1>
+        <p className="max-w-2xl text-base leading-8 body-muted">
+          The free pass turns a bug or blocker into a structured first read: what happened, what matters, and what to do next.
+        </p>
+      </div>
+
+      <div className="glass-card space-y-6 rounded-[2rem] p-6 shadow-float sm:p-8">
         <div>
-          <p className="label-text">Response mode</p>
-          <label className="mt-3 flex items-start gap-3 rounded-2xl border border-ink/10 bg-white/70 px-4 py-3 text-sm text-ink/85 shadow-soft">
+          <p className="section-label">Response mode</p>
+          <label className="mt-3 flex items-start gap-3 rounded-2xl border border-ink/10 bg-white/70 px-4 py-3 text-sm text-ink/85">
             <input
               type="checkbox"
               checked={lightMode}
@@ -566,7 +587,12 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
             </span>
           </label>
         </div>
-                </p>
+
+        {showStartHere ? (
+          <section className="rounded-[1.5rem] border border-ink/10 bg-mist/60 p-5">
+            <div className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr] lg:items-start">
+              <div>
+                <p className="section-label">Start here</p>
                 <p className="mt-2 text-sm leading-7 text-ink/85">
                   Type one issue, not a full backlog. Include when it happens, what you expected, and what actually occurs.
                 </p>
@@ -713,7 +739,7 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
             Optional code snippet
             <textarea
               rows={5}
-              value={form.codeSnippet}
+              value={form.codeSnippet ?? ""}
               onChange={(event) => setForm((current) => ({ ...current, codeSnippet: event.target.value }))}
               placeholder="Paste the key script fragment if the issue is code-level."
               className="rounded-[1.5rem] border border-ink/10 bg-white/80 px-5 py-4 text-sm text-ink outline-none transition placeholder:text-slate focus:border-coral focus:ring-2 focus:ring-coral/20"
@@ -725,7 +751,7 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
               Optional error message
               <textarea
                 rows={2}
-                value={form.errorMessage}
+                value={form.errorMessage ?? ""}
                 onChange={(event) => setForm((current) => ({ ...current, errorMessage: event.target.value }))}
                 placeholder="Paste the console error or warning if you have it."
                 className="rounded-[1.5rem] border border-ink/10 bg-white/80 px-5 py-4 text-sm text-ink outline-none transition placeholder:text-slate focus:border-coral focus:ring-2 focus:ring-coral/20"
@@ -736,7 +762,7 @@ export function AnalysisForm({ initialMode = "fresh" }: AnalysisFormProps) {
               Optional context
               <textarea
                 rows={2}
-                value={form.context}
+                value={form.context ?? ""}
                 onChange={(event) => setForm((current) => ({ ...current, context: event.target.value }))}
                 placeholder="Scene setup, Unity version, package info, or what you already tried."
                 className="rounded-[1.5rem] border border-ink/10 bg-white/80 px-5 py-4 text-sm text-ink outline-none transition placeholder:text-slate focus:border-coral focus:ring-2 focus:ring-coral/20"

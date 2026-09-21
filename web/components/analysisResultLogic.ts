@@ -1104,7 +1104,7 @@ export function buildNextStepGuidance(params: {
       : [analyzerSuggestedFocus, diagnosisFocus, currentFocus, observationFocus, alternateFocus]
   ).filter((focus, index, values): focus is string => Boolean(focus?.trim()) && values.indexOf(focus) === index);
   const orderedFocusCandidates = focusCandidates.filter((focus) => isConcreteProgressionFocus(focus));
-  const preferredFocusCandidates =
+  const preferredFocusCandidates: string[] =
     params.verificationState !== "falsified" && analyzerSuggestedFocus && isConcreteProgressionFocus(analyzerSuggestedFocus)
       ? [analyzerSuggestedFocus]
       : [];
@@ -1120,7 +1120,8 @@ export function buildNextStepGuidance(params: {
     verificationState: params.verificationState,
     latestMethod,
   });
-  let bestCandidate: { step: string; score: number } | null = null;
+  let bestStep: string | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
 
   for (const focusGroup of [preferredFocusCandidates, fallbackFocusCandidates]) {
     for (const focus of focusGroup) {
@@ -1148,18 +1149,19 @@ export function buildNextStepGuidance(params: {
           continue;
         }
 
-        if (!bestCandidate || score > bestCandidate.score) {
-          bestCandidate = { step, score };
+        if (score > bestScore) {
+          bestStep = step;
+          bestScore = score;
         }
       }
     }
 
-    if (bestCandidate) {
+    if (bestStep) {
       break;
     }
   }
 
-  return bestCandidate ? normalizeGuidedStepText(bestCandidate.step) : null;
+  return bestStep ? normalizeGuidedStepText(bestStep) : null;
 }
 
 export function getGuidedStepStack(params: {

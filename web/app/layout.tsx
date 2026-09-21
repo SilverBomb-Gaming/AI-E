@@ -16,9 +16,12 @@ const bodyFont = IBM_Plex_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "AI-E | Paste your Unity issue. Get a step-by-step fix plan.",
+  title: "AI-E | Bounded plans for game-dev requests",
   description:
-    "AI-E turns Unity bugs and blockers into a structured analysis: what happened, what matters, and what to do next.",
+    "Public AI-E spine: chat plus a real planner tool that turns messy game-dev intent into a review-gated plan. Demo mode works without private keys.",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

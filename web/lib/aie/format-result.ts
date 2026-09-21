@@ -1,10 +1,24 @@
-import type { FreeAnalysisResponse } from "@/lib/aie/types";
+import type { DryRunActionType, FreeAnalysisResponse } from "@/lib/aie/types";
 import { attachDryRunActionProposal } from "@/lib/aie/executionBridge";
+
+const ACTION_TYPES = new Set<DryRunActionType>([
+  "inspection",
+  "instrumentation",
+  "code-change",
+  "tuning-pass",
+  "design-iteration",
+  "validation-check",
+]);
 
 function normalizeLine(value: unknown): string {
   return String(value ?? "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeActionType(value: unknown): DryRunActionType | undefined {
+  const normalized = normalizeLine(value);
+  return ACTION_TYPES.has(normalized as DryRunActionType) ? (normalized as DryRunActionType) : undefined;
 }
 
 function normalizeList(values: unknown, fallback: string[]): string[] {
@@ -40,7 +54,7 @@ export function formatFreeAnalysis(payload: unknown): FreeAnalysisResponse {
     upgrade_hint:
       normalizeLine(source.upgrade_hint) ||
       "Upgrade for guided workflows, richer follow-up, and saved debugging history.",
-    actionType: normalizeLine(source.actionType) || undefined,
+    actionType: normalizeActionType(source.actionType),
     proposedAction: normalizeLine(source.proposedAction) || undefined,
     expectedOutcome: normalizeLine(source.expectedOutcome) || undefined,
   });

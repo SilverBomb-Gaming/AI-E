@@ -1,18 +1,13 @@
 import Link from "next/link";
 
+import { SiteNav } from "@/components/SiteNav";
+
 export default function UpgradePage() {
   return (
-    <main className="page-shell mx-auto max-w-5xl px-6 py-8 lg:px-10 lg:py-12">
-      <div className="mb-8 flex items-center justify-between gap-4">
-        <Link href="/" className="text-sm font-semibold text-ocean">
-          AI-E
-        </Link>
-        <Link href="/analyze" className="rounded-full border border-ink/10 px-4 py-2 text-sm font-semibold text-ink">
-          Try free analysis
-        </Link>
-      </div>
+    <main className="page-shell mx-auto max-w-5xl px-6 pb-12 pt-0 lg:px-10">
+      <SiteNav current="upgrade" />
 
-      <section className="glass-card rounded-[2rem] p-8 shadow-float sm:p-10">
+      <section className="mt-8 glass-card rounded-[2rem] p-8 shadow-float sm:p-10">
         <p className="section-label">Premium preview</p>
         <div className="mt-5 max-w-3xl space-y-4">
           <h1 className="headline text-4xl font-semibold sm:text-5xl">More than an answer: a structured path to the fix.</h1>

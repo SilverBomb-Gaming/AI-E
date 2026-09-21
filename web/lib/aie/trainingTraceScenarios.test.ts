@@ -136,7 +136,7 @@ test("captureTrainingScenarioTraces includes the game-dev bridge scenarios", asy
   ]);
   assert.equal(traces.length, 15);
   assert.ok(traces.every((trace) => typeof trace.sessionId === "string" && trace.sessionId.length > 0));
-  assert.ok(traces.every((trace) => Number.isInteger(trace.stepIndex) && trace.stepIndex > 0));
+  assert.ok(traces.every((trace) => Number.isInteger(trace.stepIndex) && (trace.stepIndex ?? 0) > 0));
   assert.ok(traces.every((trace) => typeof trace.goal === "string" && trace.goal.length > 0));
   assert.ok(traces.filter((trace) => trace.stage === "follow-up" && typeof trace.actionResult === "string" && trace.actionResult.length > 0).length >= 5);
 });
