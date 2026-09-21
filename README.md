@@ -73,7 +73,7 @@ The public app is the Next.js project in `web/`.
 3. Deploy with no env vars for demo mode, or add `OPENAI_API_KEY` for live chat.
 4. After the first successful deploy, update the GitHub repo homepage from the old 404 URL (`https://ai-e-ten.vercel.app`) to the new Vercel URL.
 
-`web/vercel.json` is the deploy config for that root directory. A repository-root `vercel.json` is also present as a fallback, but **Root Directory = `web` is the reliable setting**.
+Vercel Root Directory = `web`; Install/Build = defaults (`npm ci` / `next build`). `web/vercel.json` sets the framework to Next.js. There is no repository-root `vercel.json`.
 
 This PR cannot finish the Vercel production deploy or rewrite GitHub homepage metadata without Vercel project access.
 

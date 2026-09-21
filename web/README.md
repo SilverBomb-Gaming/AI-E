@@ -29,4 +29,4 @@ See `web/.env.example`.
 
 ## Deploy
 
-Set the Vercel **Root Directory** to `web`. Dockerfiles live at `web/Dockerfile` and the repository root. Full steps are in the root README.
+Vercel Root Directory = `web`; Install/Build = defaults (`npm ci` / `next build`). Dockerfiles live at `web/Dockerfile` and the repository root. Full steps are in the root README.
