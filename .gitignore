@@ -29,6 +29,12 @@ runner_artifacts/
 .tmp/
 temp_*
 
+# Local env files (never commit secrets)
+.env
+.env.local
+web/.env
+web/.env.local
+
 # Planned orchestrator lane runtime artifacts
 orchestrator_lane/runs/
 orchestrator_lane/workspaces/
