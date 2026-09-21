@@ -25,9 +25,9 @@ export default function HomePage() {
       <SiteNav current="demo" />
       <section className="relative z-10 mx-auto grid max-w-6xl gap-10 px-6 pb-8 pt-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-start lg:px-10 lg:pt-12">
         <div className="space-y-6">
-          <p className="section-label">AI-E public spine</p>
+          <p className="section-label">AI-E public spine - HELLO FROM ALFREDO!</p>
           <h1 className="headline text-5xl font-semibold leading-[0.94] text-ink sm:text-6xl">
-            Bounded plans for game-dev requests. No fake magic.
+            Bounded plans for game-dev asks. No fake Unity magic here.
           </h1>
           <p className="max-w-xl text-lg leading-8 body-muted">
             AI-E turns messy intent into a reviewable plan with guardrails. This page is the shipped public proof:
