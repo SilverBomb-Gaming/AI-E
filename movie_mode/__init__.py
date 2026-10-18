@@ -1,1 +1,1 @@
-"""SilverBomb Video Autopilot: planning-only package (no execution side effects)."""\n
+"""SilverBomb Video Autopilot: planning-only package (no execution side effects)."""
